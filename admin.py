@@ -58,15 +58,44 @@ def get_react_build_tips():
     ```
 
     #### 2. `nginx.conf`
-    React Router 사용 시 새로고침해도 404 에러가 나지 않도록 하는 필수 설정입니다.
+    React Router와 백엔드 API 프록시를 위한 필수 설정입니다. 프론트엔드에서 백엔드와 통신하고 싶은 경우 이 파일을 반드시 당신의 Git 저장소 최상단에 포함시켜야 합니다.
+
+    **[설정 설명]**
+    *   `location /`: 사용자가 웹사이트에 접속했을 때 React 앱을 보여주는 설정입니다. `try_files`는 React Router가 새로고침 시에도 '404 Not Found' 오류 없이 정상 작동하도록 해줍니다.
+    *   `location /api/`: **가장 중요한 부분입니다.** React 앱에서 `/api/`로 시작하는 모든 네트워크 요청을 가로채, `docker-compose.yml`에 정의된 `backend` 서비스로 전달해줍니다. 이를 통해 CORS 오류를 완벽하게 해결할 수 있습니다.
+    *   `location /healthz`: 로드 밸런서나 모니터링 시스템이 이 컨테이너가 살아있는지 쉽게 확인할 수 있도록 간단한 `OK` 응답을 반환하는 엔드포인트입니다. (운영 환경 권장 사항)
     ```nginx
     server {
-      # 모든파일의 컨테이너 내부포트를 반드시 일치시켜야해요(default : 3000)
-      listen 3000;
+      listen 3000; # 컨테이너 내부에서 사용할 포트
+
+      # 1. React 앱 라우팅 (메인 페이지 및 기타 경로)
       location / {
         root   /usr/share/nginx/html;
-        index  index.html index.htm;
-        try_files $uri $uri/ /index.html;
+        index  index.html;
+        # 이 설정은 어떤 경로로 접속하든 index.html을 먼저 보여주게 하여
+        # React Router가 클라이언트 사이드 라우팅을 할 수 있게 해줍니다.
+        try_files $uri /index.html;
+      }
+
+      # 2. 백엔드 API 프록시 설정 (CORS 해결)
+      # React 코드에서는 fetch('/api/users') 와 같이 요청을 보내면 됩니다.
+      location /api/ {
+        # 'backend'는 docker-compose.yml에 정의된 백엔드 서비스의 이름이어야 합니다.
+        # 백엔드 컨테이너의 내부 포트가 8000번이라면 'http://backend:8000/' 으로 수정하세요.
+        proxy_pass http://backend:3000/;
+        
+        # 실제 요청 정보를 백엔드 서버로 전달하기 위한 헤더 설정
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+      }
+      
+      # 3. 헬스 체크 엔드포인트 (운영 환경 권장)
+      location /healthz {
+        # 항상 '200 OK'를 반환하여 서비스가 살아있음을 알림
+        return 200 'OK';
+        add_header Content-Type text/plain;
       }
     }
     ```
