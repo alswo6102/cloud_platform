@@ -233,6 +233,19 @@ with st.sidebar:
     projects = get_projects()
     selected_project = st.selectbox("관리할 프로젝트 선택", options=projects, key="project_selector")
 
+      # --- [추가된 부분] 프로젝트 선택이 변경되면 모달 관련 상태를 모두 초기화 ---
+      # 이전에 선택된 프로젝트를 session_state에 저장하여 변경 여부를 감지
+    if 'last_project' not in st.session_state:
+                st.session_state.last_project = selected_project
+
+
+    if st.session_state.last_project != selected_project:
+        for key in ['show_env_modal', 'show_env_folder', 'env_vars']:
+            if key in st.session_state:
+                del st.session_state[key]
+        st.session_state.last_project = selected_project
+
+
     with st.expander("📁 신규 프로젝트 추가"):
         with st.form("new_project_form"):
             new_project_name = st.text_input("새 프로젝트 이름")
@@ -419,16 +432,19 @@ if selected_project:
                     st.rerun()
             st.markdown("---")
 
-    # --- Environment Variable Modal Logic ---
     if 'show_env_modal' in st.session_state and st.session_state.show_env_modal:
-        service_name = st.session_state.show_env_modal
+        # 이 블록의 변수들은 dialog 제목 표시에만 사용합니다.
+        service_name_in_title = st.session_state.show_env_modal
         service_folder_for_modal = st.session_state.show_env_folder
 
 
-        @st.dialog(f"Environment Variables for {service_name}", width="large")
+        @st.dialog(f"Environment Variables for {service_name_in_title}", width="large")
         def show_env_modal():
-            service_path = project_path / service_folder_for_modal
-            dockerfile_path = service_path / "Dockerfile"
+            # 함수 안에서는 session_state에서 직접 값을 가져와 사용합니다.
+            # 이것이 재실행 시에도 값이 보장되는 가장 안정적인 방법입니다.
+            current_service_name = st.session_state.show_env_modal
+            current_folder_name = st.session_state.show_env_folder
+            dockerfile_path = project_path / current_folder_name / "Dockerfile"
 
             st.info("Dockerfile에 `ARG VAR_NAME`과 `ENV VAR_NAME=$VAR_NAME` 형식으로 추가/수정됩니다.")
 
@@ -453,61 +469,67 @@ if selected_project:
             st.markdown("---")
 
             if st.button("환경변수 저장", type="primary"):
-                with st.spinner(f"'{service_name}' 환경변수를 저장 중입니다..."):
-                    try:
+                try:
+                    with st.spinner(f"'{current_service_name}' 환경변수를 저장 중입니다..."):
                         if not dockerfile_path.exists():
                             st.error(f"Dockerfile not found at {dockerfile_path}")
-                            st.stop()
+                            return
 
+                        # 1. Identify all variable keys managed by this UI (those with an ARG)
                         dfp = DockerfileParser(path=str(dockerfile_path))
+                        manageable_keys = {inst['value'].split('=')[0].strip() for inst in dfp.structure if
+                                           inst['instruction'].upper() == 'ARG'}
 
-                        # Get the keys of variables we are managing from the UI state
-                        managed_keys = {var.get('key', '').strip() for var in st.session_state.env_vars if
-                                        var.get('key')}
-
-                        # Preserve ARG/ENV instructions that are NOT managed by our UI
-                        other_instructions = []
+                        # 2. Filter the Dockerfile, keeping only lines that are NOT managed by this UI
+                        preserved_instructions = []
                         for inst in dfp.structure:
-                            inst_type = inst['instruction'].upper()
-                            if inst_type in ('ARG', 'ENV'):
-                                # Extract key. Handles "KEY=VALUE" and "KEY VALUE"
+                            if inst['instruction'].upper() in ('ARG', 'ENV'):
                                 key = inst['value'].split('=', 1)[0].split(None, 1)[0].strip()
-                                if key not in managed_keys:
-                                    other_instructions.append(inst['content'])
+                                if key not in manageable_keys:
+                                    preserved_instructions.append(inst['content'])
                             else:
-                                other_instructions.append(inst['content'])
+                                preserved_instructions.append(inst['content'])
 
-                        # Create new ARG/ENV instructions
+                        # 3. Create the new ARG/ENV lines from the current UI state
                         new_env_instructions = []
                         for var in st.session_state.env_vars:
                             key = var.get('key', '').strip()
-                            value = var.get('value', '').strip()
-                            if key:  # Only add if key is not empty
+                            if key:
                                 new_env_instructions.append(f"ARG {key}")
-                                new_env_instructions.append(f"ENV {key}={value}")
+                                new_env_instructions.append(f"ENV {key}=${key}")
 
-                        # Find a good place to insert them (e.g., after the first FROM)
-                        insert_pos = 1
-                        for i, inst in enumerate(dfp.structure):
-                            if inst['instruction'].upper() == 'FROM':
-                                insert_pos = i + 1
-                                break
+                        # 4. Find the correct insertion point (after FROM) in the PRESERVED list
+                        insert_pos = next((i for i, line in enumerate(preserved_instructions) if
+                                           line.strip().upper().startswith('FROM')), 0) + 1
 
-                        final_instructions = other_instructions[
-                                                 :insert_pos] + new_env_instructions + other_instructions[insert_pos:]
+                        # 5. Assemble the final Dockerfile content
+                        final_instructions = preserved_instructions[
+                                                 :insert_pos] + new_env_instructions + preserved_instructions[
+                                                 insert_pos:]
 
+                        # 6. Update docker-compose.yml with build args
+                        with open(compose_file, 'r') as f:
+                            compose_data = yaml.safe_load(f)
+
+                        service_def = compose_data['services'][current_service_name]
+                        service_def.setdefault('build', {})['args'] = {
+                            var.get('key'): var.get('value')
+                            for var in st.session_state.env_vars if var.get('key')
+                        }
+                        with open(compose_file, 'w') as f:
+                            yaml.dump(compose_data, f, sort_keys=False)
+
+                        # 7. Write the new content to Dockerfile
                         with open(dockerfile_path, "w") as f:
                             f.write("\n".join(final_instructions))
 
-                        st.session_state.last_action_message = (f"✅ '{service_name}' 환경변수를 저장했습니다.")
-                        del st.session_state['show_env_modal']
-                        del st.session_state['env_vars']
-                        st.rerun()
+                    st.session_state.last_action_message = f"Variables for '{current_service_name}' saved."
+                    del st.session_state['show_env_modal']
+                    del st.session_state['env_vars']
+                    st.rerun()
 
-                    except subprocess.CalledProcessError as e:
-                        st.error(f"An error occurred: {e.stderr}")
-                    except Exception as e:
-                        st.error(f"An unexpected error occurred: {e}")
+                except Exception as e:
+                    st.error(f"An unexpected error occurred: {e}")
 
 
         show_env_modal()
