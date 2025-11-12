@@ -285,10 +285,10 @@ if selected_project:
                         if service_path.exists() and (service_path / ".git").is_dir():
                             # Stash local changes, pull, and then pop. This is safer.
                             subprocess.run(["git", "stash"], cwd=service_path, check=True, capture_output=True)
-                            subprocess.run(["git", "pull", "origin", "main"], cwd=service_path, check=True,
+                            subprocess.run(["git","pull", "origin", "main"], cwd=service_path, check=True,
                                            capture_output=True)
-                            subprocess.run(["git", "stash", "pop"], cwd=service_path,
-                                           capture_output=True)  # Ignore errors if nothing to pop
+                            subprocess.run(["git", "reset", "--hard", "origin", "main"], cwd=service_path, check=True,
+                                           capture_output=True)
                     if compose_file.exists():
                         subprocess.run(["docker-compose", "-p", selected_project, "build", "--no-cache"],
                                        cwd=project_path, check=True, capture_output=True)
@@ -365,18 +365,30 @@ if selected_project:
                     if dockerfile_path.exists():
                         try:
                             dfp = DockerfileParser(path=str(dockerfile_path))
-                            # Find existing ARG and ENV and pair them
-                            args = {inst['value']: None for inst in dfp.structure if
+                            # Find all ARG keys first, this is safe
+                            args = {inst['value'].split('=')[0].strip(): None for inst in dfp.structure if
                                     inst['instruction'].upper() == 'ARG'}
+
                             for inst in dfp.structure:
                                 if inst['instruction'].upper() == 'ENV':
-                                    key, val = inst['value'].split('=', 1)
-                                    if key in args:
-                                        # Remove the shell variable format like $VAR
-                                        st.session_state.env_vars.append(
-                                            {'key': key.strip(), 'value': val.replace(f'${key.strip()}', '').strip()})
+                                    env_line = inst['value']
+                                    parts = []
+                                    # Safely parse both "KEY=VALUE" and "KEY VALUE" formats
+                                    if '=' in env_line:
+                                        parts = env_line.split('=', 1)
+                                    else:
+                                        parts = env_line.split(None, 1)
+
+                                    # Only proceed if we successfully unpacked into two parts
+                                    if len(parts) == 2:
+                                        key, val = parts
+                                        key = key.strip()
+                                        # Only show variables in the UI that are paired with an ARG
+                                        if key in args:
+                                            val = val.strip().replace(f'${{{key}}}', '').replace(f'${key}', '')
+                                            st.session_state.env_vars.append({'key': key, 'value': val})
                         except Exception as e:
-                            st.error(f"Error parsing Dockerfile: {e}")
+                            st.error(f"Dockerfile 파싱 오류: {e}")
 
                 # Delete Button
                 if action_cols[2].button("🗑️", key=f"delete_{service_name}", help="Delete", use_container_width=True):
@@ -449,11 +461,21 @@ if selected_project:
 
                         dfp = DockerfileParser(path=str(dockerfile_path))
 
-                        # Filter out old ARG/ENV instructions
-                        other_instructions = [
-                            inst['content'] for inst in dfp.structure
-                            if inst['instruction'].upper() not in ('ARG', 'ENV')
-                        ]
+                        # Get the keys of variables we are managing from the UI state
+                        managed_keys = {var.get('key', '').strip() for var in st.session_state.env_vars if
+                                        var.get('key')}
+
+                        # Preserve ARG/ENV instructions that are NOT managed by our UI
+                        other_instructions = []
+                        for inst in dfp.structure:
+                            inst_type = inst['instruction'].upper()
+                            if inst_type in ('ARG', 'ENV'):
+                                # Extract key. Handles "KEY=VALUE" and "KEY VALUE"
+                                key = inst['value'].split('=', 1)[0].split(None, 1)[0].strip()
+                                if key not in managed_keys:
+                                    other_instructions.append(inst['content'])
+                            else:
+                                other_instructions.append(inst['content'])
 
                         # Create new ARG/ENV instructions
                         new_env_instructions = []
