@@ -1,9 +1,7 @@
 import streamlit as st
 import subprocess
 from pathlib import Path
-import json
 import socket
-import pandas as pd
 import yaml
 import docker
 import shutil
@@ -81,7 +79,7 @@ def get_react_build_tips():
       # React 코드에서는 fetch('/api/users') 와 같이 요청을 보내면 됩니다.
       location /api/ {
         # 'backend'는 docker-compose.yml에 정의된 백엔드 서비스의 이름이어야 합니다.
-        # 백엔드 컨테이너의 내부 포트가 8000번이라면 'http://backend:8000/' 으로 수정하세요.
+        # 백엔드 컨테이너의 내부 포트가 3000번이라면 'http://backend:3000/' 으로 수정하세요.
         proxy_pass http://backend:3000/;
         
         # 실제 요청 정보를 백엔드 서버로 전달하기 위한 헤더 설정
@@ -318,29 +316,33 @@ if selected_project:
                 st.write("Could not retrieve container stats.")
 
     if st.button(f"Update Entire Project(모든 서비스 최신화): [{selected_project}]", type="primary", use_container_width=True):
-        st.warning("모든 서비스의 원격 Git 저장소 코드를 pull 합니다. 로컬에서 수정한 Dockerfile이 덮어씌워질 수 있습니다. 계속하시겠습니까?")
-        if st.button("Confirm Update"):
-            with st.spinner(f"Updating all services in '{selected_project}'..."):
-                try:
-                    for service_info in service_metadata.values():
-                        service_path = project_path / service_info['folder']
-                        if service_path.exists() and (service_path / ".git").is_dir():
-                            # Stash local changes, pull, and then pop. This is safer.
-                            subprocess.run(["git", "stash"], cwd=service_path, check=True, capture_output=True)
-                            subprocess.run(["git","pull", "origin", "main"], cwd=service_path, check=True,
-                                           capture_output=True)
-                            subprocess.run(["git", "reset", "--hard", "origin", "main"], cwd=service_path, check=True,
-                                           capture_output=True)
-                    if compose_file.exists():
-                        subprocess.run(["docker-compose", "-p", selected_project, "build", "--no-cache"],
-                                       cwd=project_path, check=True, capture_output=True)
-                        subprocess.run(["docker-compose", "-p", selected_project, "up", "-d", "--force-recreate"],
-                                       cwd=project_path, check=True, capture_output=True)
-                    st.session_state.last_action_message = (f"✅ Project '{selected_project}' updated!");
-                    st.rerun()
-                except subprocess.CalledProcessError as e:
-                    st.error("Update failed:")
-                    st.code(e.stderr.decode(), language='bash')
+        with st.spinner(f"Updating all services in '{selected_project}'..."):
+            try:
+                for service_info in service_metadata.values():
+                    service_path = project_path / service_info['folder']
+                    if service_path.exists() and (service_path / ".git").is_dir():
+                        subprocess.run(["git", "fetch", "origin"], cwd=service_path, check=True, capture_output=True)
+                        subprocess.run(["git", "reset", "--hard", "origin/main"], cwd=service_path, check=True,
+                                       capture_output=True)
+
+                if compose_file.exists():
+                    # 1. 먼저 새로 빌드합니다.
+                    subprocess.run(["docker-compose", "-p", selected_project, "build", "--no-cache"],
+                                   cwd=project_path, check=True, capture_output=True)
+
+                    # 2. 기존의 손상되었을 수 있는 컨테이너를 'down'으로 확실하게 제거합니다. (핵심 수정)
+                    subprocess.run(["docker-compose", "-p", selected_project, "down"],
+                                   cwd=project_path, check=True, capture_output=True)
+
+                    # 3. 깨끗한 상태에서 새로 빌드된 이미지로 컨테이너를 올립니다.
+                    subprocess.run(["docker-compose", "-p", selected_project, "up", "-d"],
+                                   cwd=project_path, check=True, capture_output=True)
+
+                st.session_state.last_action_message = (f"✅ Project '{selected_project}' updated!");
+                st.rerun()
+            except subprocess.CalledProcessError as e:
+                st.error("Update failed:")
+                st.code(e.stderr.decode(), language='bash')
 
     st.markdown("---")
 
