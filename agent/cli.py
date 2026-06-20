@@ -11,6 +11,7 @@ from runtime import (
     READ_ONLY_SKILLS,
     command_catalog,
     execute_skill,
+    entity_resolve,
     inspect_repository,
     project_list,
     skill_documents,
@@ -48,6 +49,13 @@ def main() -> int:
     commands.add_parser("skills", help="List allowlisted skills and schemas")
     commands.add_parser("projects", help="List managed projects and services")
     commands.add_parser("frameworks", help="List framework deployment presets")
+    resolve_parser = commands.add_parser(
+        "resolve",
+        help="Resolve an entity name against live platform data",
+    )
+    resolve_parser.add_argument("entity", choices=("project", "service", "framework"))
+    resolve_parser.add_argument("query")
+    resolve_parser.add_argument("--project")
     describe_parser = commands.add_parser(
         "describe",
         help="Describe one allowlisted skill",
@@ -55,7 +63,7 @@ def main() -> int:
     describe_parser.add_argument("skill")
     inspect_parser = commands.add_parser(
         "inspect-repo",
-        help="Inspect a public GitHub repository and suggest framework presets",
+        help="Inspect a public GitHub repository and return framework evidence",
     )
     inspect_parser.add_argument("repo_url")
 
@@ -97,6 +105,9 @@ def main() -> int:
             return 0
         if args.command == "frameworks":
             emit({"frameworks": preset_catalog()})
+            return 0
+        if args.command == "resolve":
+            emit(entity_resolve(args.entity, args.query, args.project))
             return 0
         if args.command == "inspect-repo":
             emit(inspect_repository(args.repo_url))

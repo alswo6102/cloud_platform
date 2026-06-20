@@ -20,7 +20,7 @@ import runtime
 
 (PROJECTS / "demoa").mkdir()
 (PROJECTS / "demoa" / "docker-compose.yml").write_text(
-    "version: '3.8'\nservices: {}\n"
+    "version: '3.8'\nservices:\n  demo-a:\n    image: example/demo\n"
 )
 (PROJECTS / "rea").mkdir()
 
@@ -103,6 +103,68 @@ assert known_project["project"] == "demoa", known_project
 assert known_project["service"] == "horseracefront", known_project
 print("OK cli_verified_project_mention")
 
+exact_project = runtime.entity_resolve("project", "demoa")
+assert exact_project["status"] == "exact", exact_project
+similar_project = runtime.entity_resolve("project", "demo-a")
+assert similar_project["status"] == "single", similar_project
+assert similar_project["match"] == "demoa", similar_project
+missing_project = runtime.entity_resolve("project", "totally-new-project")
+assert missing_project["status"] == "none", missing_project
+print("OK cli_entity_resolution")
+
+similar_context = {
+    "skill": "service.deploy",
+    "arguments": {},
+    "missing": [{"field": "project"}],
+}
+similar_response = app.cli_proposal_for_input(
+    "demo-a 프로젝트에 서비스를 배포할래",
+    "service.deploy",
+    similar_context,
+)
+assert similar_response and similar_response["context"]["proposed"], similar_response
+assert "demoa" in similar_response["message"], similar_response
+assert "project" not in similar_response["arguments"], similar_response
+confirmed_context, confirmation_response = app.handle_proposed_input(
+    "맞아, 그걸로 진행해줘",
+    similar_response["context"],
+)
+assert confirmation_response is None, confirmation_response
+assert confirmed_context["arguments"]["project"] == "demoa", confirmed_context
+assert "proposed" not in confirmed_context, confirmed_context
+print("OK proposed_requires_confirmation")
+
+preserved_response = app.cli_proposal_for_input(
+    "demo-a 프로젝트에 frontend 서비스 만들래",
+    "service.deploy",
+    similar_context,
+)
+assert preserved_response["arguments"]["service"] == "frontend", preserved_response
+preserved_context, response = app.handle_proposed_input(
+    "맞아",
+    preserved_response["context"],
+)
+assert response is None, response
+assert preserved_context["arguments"] == {
+    "project": "demoa",
+    "service": "frontend",
+}, preserved_context
+print("OK proposal_preserves_other_slots")
+
+port_arguments = app.strict_arguments(
+    "demoa 프로젝트의 demo-a 서비스 호스트 포트를 9003번으로 바꿔줘",
+    "port.manage",
+    None,
+    {"project": "invented", "service": "wrong", "operation": "change_host"},
+)
+assert port_arguments == {
+    "project": "demoa",
+    "service": "demo-a",
+    "operation": "change_host",
+    "host_port": 9003,
+}, port_arguments
+print("OK cli_verified_port_arguments")
+
 problem = app.project_problem_response(
     "service.deploy",
     {"project": "rea", "service": "reafront"},
@@ -149,22 +211,23 @@ assert javascript_help and "하나로 결정할 수 없습니다" in javascript_
 assert "Next.js" in javascript_help["message"]
 print("OK javascript_framework_clarification")
 
-confirmed_recommendation = app.strict_arguments(
-    "그걸로 진행해줘",
-    "service.deploy",
+framework_proposal = app.proposal_context(
+    framework_context,
     {
-        "skill": "service.deploy",
-        "arguments": {
-            "project": "demoa",
-            "service": "frontend",
-            "repo_url": "https://github.com/example/frontend",
-        },
-        "missing": [{"field": "framework"}],
-        "suggestions": {"framework": "static"},
+        "field": "framework",
+        "entity": "framework",
+        "query": "저장소 구조",
+        "candidate": "static",
+        "candidates": [{"value": "static", "score": 1.0}],
+        "source": "repository.inspect CLI",
     },
-    {"framework": "vite"},
 )
-assert confirmed_recommendation["framework"] == "static", confirmed_recommendation
+confirmed_recommendation, response = app.handle_proposed_input(
+    "그걸로 진행해줘",
+    framework_proposal,
+)
+assert response is None, response
+assert confirmed_recommendation["arguments"]["framework"] == "static"
 print("OK confirmed_cli_recommendation")
 
 session_id = "qa-session-1234"

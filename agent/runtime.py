@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+from difflib import SequenceMatcher
 import shutil
 import subprocess
 import tempfile
@@ -35,6 +36,7 @@ PORT_END = int(os.getenv("PORT_END", "9100"))
 NAME_PATTERN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$")
 ENV_NAME_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
 API_SKILL_NAMES = {
+    "entity-resolve": "entity.resolve",
     "framework-list": "framework.list",
     "help-search": "help.search",
     "platform-help": "platform.help",
@@ -264,7 +266,6 @@ def inspect_repository(repo_url: str) -> dict[str, Any]:
         return {
             "repo_url": repo_url,
             "candidates": candidates,
-            "recommended": candidates[0] if len(candidates) == 1 else None,
             "evidence": evidence,
             "has_dockerfile": (root / "Dockerfile").is_file(),
         }
@@ -418,6 +419,78 @@ def framework_list() -> dict[str, Any]:
     return {"frameworks": preset_catalog()}
 
 
+def normalize_entity_name(value: str) -> str:
+    return re.sub(r"[\s_.-]+", "", value).casefold()
+
+
+def entity_resolve(
+    entity: str,
+    query: str,
+    project: str | None = None,
+) -> dict[str, Any]:
+    query = str(query).strip()
+    if not query:
+        raise SkillError("query is required")
+    if entity == "project":
+        choices = [item["name"] for item in project_list()["projects"]]
+    elif entity == "service":
+        if not project:
+            raise SkillError("project is required when resolving a service")
+        choices = sorted(load_compose(project)["services"])
+    elif entity == "framework":
+        choices = [item["id"] for item in preset_catalog()]
+    else:
+        raise SkillError(f"Unsupported entity type: {entity}")
+
+    if query in choices:
+        return {
+            "entity": entity,
+            "query": query,
+            "status": "exact",
+            "match": query,
+            "candidates": [],
+            "source": "live CLI catalog",
+        }
+
+    normalized_query = normalize_entity_name(query)
+    scored = []
+    for choice in choices:
+        normalized_choice = normalize_entity_name(choice)
+        score = SequenceMatcher(None, normalized_query, normalized_choice).ratio()
+        if normalized_query == normalized_choice:
+            score = 1.0
+        if score >= 0.68:
+            scored.append(
+                {
+                    "value": choice,
+                    "score": round(score, 3),
+                    "reason": (
+                        "대소문자·공백·하이픈·언더바 차이"
+                        if normalized_query == normalized_choice
+                        else "이름 철자가 유사함"
+                    ),
+                }
+            )
+    scored.sort(key=lambda item: (-item["score"], item["value"]))
+    if not scored:
+        status = "none"
+    elif (
+        scored[0]["score"] >= 0.78
+        and (len(scored) == 1 or scored[0]["score"] - scored[1]["score"] >= 0.12)
+    ):
+        status = "single"
+    else:
+        status = "multiple"
+    return {
+        "entity": entity,
+        "query": query,
+        "status": status,
+        "match": scored[0]["value"] if status == "single" else None,
+        "candidates": scored[:5],
+        "source": "live CLI catalog",
+    }
+
+
 def command_catalog() -> dict[str, Any]:
     return {
         "commands": {
@@ -426,6 +499,7 @@ def command_catalog() -> dict[str, Any]:
             "describe <skill>": "Describe one skill",
             "projects": "List valid and incomplete projects",
             "frameworks": "List framework presets",
+            "resolve <entity> <query>": "Resolve a project, service, or framework against live CLI data",
             "inspect-repo <url>": "Inspect a public GitHub repository read-only",
             "preview <skill>": "Validate and preview a mutation",
             "execute <skill>": "Execute a skill; mutations require approval",
@@ -433,6 +507,7 @@ def command_catalog() -> dict[str, Any]:
         "examples": [
             "cloud-platform projects",
             "cloud-platform frameworks",
+            "cloud-platform resolve project horserace",
             "cloud-platform inspect-repo https://github.com/owner/repository",
             "cloud-platform preview service.deploy --arguments '{...}'",
         ],
@@ -973,6 +1048,7 @@ def qa_run() -> dict[str, Any]:
 
 
 READ_ONLY_SKILLS = {
+    "entity.resolve",
     "framework.list",
     "help.search",
     "platform.help",
@@ -990,6 +1066,12 @@ def execute_skill(skill: str, arguments: dict[str, Any], dry_run: bool) -> dict[
     try:
         if skill == "help.search":
             result = help_search(str(arguments.get("query", "")))
+        elif skill == "entity.resolve":
+            result = entity_resolve(
+                str(arguments["entity"]),
+                str(arguments["query"]),
+                arguments.get("project"),
+            )
         elif skill == "framework.list":
             result = framework_list()
         elif skill == "platform.help":
@@ -1100,6 +1182,7 @@ def call_llm(
     if not api_key or not api_url or not models:
         return None
     discovery_skills = {
+        "entity.resolve",
         "framework.list",
         "help.search",
         "platform.help",
@@ -1173,7 +1256,9 @@ def call_llm(
                 "then use conversation-reply to explain them naturally in Korean. "
                 "Use mutation or operational tools only when the user is providing or confirming "
                 "the required operation. Never invent projects, services, repository URLs, "
-                "frameworks, paths, commands, or function names. Preserve verified context. "
+                "frameworks, paths, commands, or function names. Similar CLI matches are "
+                "unconfirmed proposals and must not become operation arguments until the user "
+                "explicitly confirms them. Preserve verified context. "
                 "Do not expose raw JSON unless the user asks for it."
                 + context_instruction
             ),

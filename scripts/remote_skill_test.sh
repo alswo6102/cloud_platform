@@ -18,6 +18,7 @@ skills = requests.get(f"{base}/skills", timeout=10)
 skills.raise_for_status()
 names = {skill["name"] for skill in skills.json()["skills"]}
 expected = {
+    "entity.resolve",
     "framework.list",
     "help.search",
     "platform.help",

@@ -1,0 +1,21 @@
+{
+  "type": "object",
+  "required": ["entity", "query"],
+  "properties": {
+    "entity": {
+      "type": "string",
+      "enum": ["project", "service", "framework"]
+    },
+    "query": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "project": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    }
+  },
+  "additionalProperties": false
+}

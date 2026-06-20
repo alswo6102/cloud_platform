@@ -17,7 +17,6 @@ from runtime import (
     call_llm,
     execute_cli_skill,
     fallback_plan,
-    inspect_repository,
     llm_status,
     skill_documents,
 )
@@ -285,12 +284,105 @@ def strict_arguments(
     context: dict[str, Any] | None,
     planner_arguments: dict[str, Any],
 ) -> dict[str, Any]:
+    cli_verified_skills = {
+        "service.status",
+        "service.logs",
+        "service.control",
+        "port.manage",
+    }
+    if skill in cli_verified_skills:
+        verified: dict[str, Any] = {}
+        project = explicit_name(message, "project")
+        service = explicit_name(message, "service")
+        if project:
+            resolution = execute_cli_skill(
+                "entity.resolve",
+                {"entity": "project", "query": project},
+                dry_run=False,
+            )
+            if resolution["status"] == "exact":
+                verified["project"] = resolution["match"]
+        if service and verified.get("project"):
+            resolution = execute_cli_skill(
+                "entity.resolve",
+                {
+                    "entity": "service",
+                    "query": service,
+                    "project": verified["project"],
+                },
+                dry_run=False,
+            )
+            if resolution["status"] == "exact":
+                verified["service"] = resolution["match"]
+        lowered = message.lower()
+        if skill == "service.control":
+            if any(word in lowered for word in ("재시작", "restart")):
+                verified["action"] = "restart"
+            elif any(word in lowered for word in ("중지", "정지", "stop")):
+                verified["action"] = "stop"
+            elif any(word in lowered for word in ("시작", "start")):
+                verified["action"] = "start"
+        elif skill == "service.logs":
+            lines = re.search(r"(\d{1,3})\s*줄", message)
+            verified["lines"] = int(lines.group(1)) if lines else 40
+        elif skill == "port.manage":
+            host_port = re.search(
+                r"호스트\s*포트(?:를|을|는|은|:|=)?\s*(\d{1,5})",
+                message,
+                re.IGNORECASE,
+            )
+            container_port = re.search(
+                r"컨테이너\s*포트(?:를|을|는|은|:|=)?\s*(\d{1,5})",
+                message,
+                re.IGNORECASE,
+            )
+            if host_port:
+                verified["operation"] = "change_host"
+                verified["host_port"] = int(host_port.group(1))
+            elif container_port:
+                verified["operation"] = "change_container"
+                verified["container_port"] = int(container_port.group(1))
+        return verified
     if skill not in {"project.create", "service.deploy", "service.redeploy"}:
         return planner_arguments
     verified = {}
     if context and context.get("skill") == skill:
         verified.update(context.get("arguments") or {})
-    verified.update(explicit_arguments(message, skill))
+    explicit = explicit_arguments(message, skill)
+    if skill in {"service.deploy", "service.redeploy"} and explicit.get("project"):
+        resolution = execute_cli_skill(
+            "entity.resolve",
+            {"entity": "project", "query": explicit["project"]},
+            dry_run=False,
+        )
+        if resolution["status"] == "exact":
+            verified["project"] = resolution["match"]
+        explicit.pop("project", None)
+    if skill == "service.redeploy" and explicit.get("service"):
+        project = verified.get("project")
+        if project:
+            resolution = execute_cli_skill(
+                "entity.resolve",
+                {
+                    "entity": "service",
+                    "query": explicit["service"],
+                    "project": project,
+                },
+                dry_run=False,
+            )
+            if resolution["status"] == "exact":
+                verified["service"] = resolution["match"]
+            explicit.pop("service", None)
+    if skill == "service.deploy" and explicit.get("framework"):
+        resolution = execute_cli_skill(
+            "entity.resolve",
+            {"entity": "framework", "query": explicit["framework"]},
+            dry_run=False,
+        )
+        if resolution["status"] == "exact":
+            verified["framework"] = resolution["match"]
+        explicit.pop("framework", None)
+    verified.update(explicit)
     if skill in {"service.deploy", "service.redeploy"} and "project" not in verified:
         try:
             projects = execute_cli_skill("project.list", {}, dry_run=False).get(
@@ -322,22 +414,311 @@ def strict_arguments(
             r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}",
             bare,
         ):
-            verified[field] = bare
+            if field == "project" and skill in {"service.deploy", "service.redeploy"}:
+                resolution = execute_cli_skill(
+                    "entity.resolve",
+                    {"entity": "project", "query": bare},
+                    dry_run=False,
+                )
+                if resolution["status"] == "exact":
+                    verified[field] = resolution["match"]
+            elif field == "service" and skill == "service.redeploy":
+                project = verified.get("project")
+                if project:
+                    resolution = execute_cli_skill(
+                        "entity.resolve",
+                        {
+                            "entity": "service",
+                            "query": bare,
+                            "project": project,
+                        },
+                        dry_run=False,
+                    )
+                    if resolution["status"] == "exact":
+                        verified[field] = resolution["match"]
+            else:
+                verified[field] = bare
         elif field == "repo_url" and GITHUB_URL_RE.fullmatch(bare):
             verified[field] = bare
         elif field == "framework":
             framework = FRAMEWORK_ALIASES.get(bare.lower())
             if framework:
-                verified[field] = framework
-            elif (
-                any(
-                    phrase in re.sub(r"\s+", "", bare.lower())
-                    for phrase in ("그걸로", "추천한걸로", "추천대로", "그프리셋으로")
+                resolution = execute_cli_skill(
+                    "entity.resolve",
+                    {"entity": "framework", "query": framework},
+                    dry_run=False,
                 )
-                and (context or {}).get("suggestions", {}).get("framework")
-            ):
-                verified[field] = context["suggestions"]["framework"]
+                if resolution["status"] == "exact":
+                    verified[field] = resolution["match"]
     return verified
+
+
+def affirmative(message: str) -> bool:
+    normalized = re.sub(r"[\s.!?]+", "", message.lower())
+    return any(
+        phrase in normalized
+        for phrase in (
+            "맞아",
+            "응",
+            "어어",
+            "그래",
+            "그거야",
+            "그걸로",
+            "진행해",
+            "맞습니다",
+        )
+    )
+
+
+def negative(message: str) -> bool:
+    normalized = re.sub(r"[\s.!?]+", "", message.lower())
+    return any(
+        phrase in normalized
+        for phrase in ("아니", "아님", "틀려", "그거말고", "새로생성", "새로만들")
+    )
+
+
+def proposal_context(
+    context: dict[str, Any] | None,
+    proposal: dict[str, Any],
+) -> dict[str, Any]:
+    updated = dict(context or {})
+    updated.setdefault("arguments", {})
+    updated["confirmed"] = dict(updated["arguments"])
+    updated["proposed"] = proposal
+    return updated
+
+
+def proposal_response(
+    context: dict[str, Any] | None,
+    resolution: dict[str, Any],
+    *,
+    field: str,
+    evidence: list[str] | None = None,
+) -> dict[str, Any]:
+    entity_labels = {
+        "project": "프로젝트",
+        "service": "서비스",
+        "framework": "프레임워크",
+    }
+    label = entity_labels[resolution["entity"]]
+    proposal = {
+        "field": field,
+        "entity": resolution["entity"],
+        "query": resolution["query"],
+        "candidate": resolution.get("match"),
+        "candidates": resolution.get("candidates", []),
+        "source": resolution.get("source"),
+        "evidence": evidence or [],
+    }
+    updated = proposal_context(context, proposal)
+    if resolution["status"] == "single":
+        candidate = resolution["match"]
+        reason = resolution["candidates"][0]["reason"]
+        if resolution.get("source") == "repository.inspect CLI":
+            message = (
+                f"CLI가 저장소 파일과 의존성을 읽기 전용으로 확인한 결과, "
+                f"**`{candidate}`** 프리셋 후보가 하나 발견됐습니다.\n\n"
+                f"이 프리셋으로 진행할까요?\n\n"
+                f"- 맞으면: `맞아` 또는 `그걸로 진행해줘`\n"
+                f"- 아니면: 실제 {label} 이름을 알려주세요."
+            )
+        else:
+            message = (
+                f"CLI에서 `{resolution['query']}`와 정확히 일치하는 {label}를 찾지 못했습니다.\n\n"
+                f"실제 목록에서 가장 가까운 값은 **`{candidate}`**입니다 "
+                f"({reason}). 이 값을 말씀하신 게 맞나요?\n\n"
+                f"- 맞으면: `맞아` 또는 `그걸로 진행해줘`\n"
+                f"- 아니면: 정확한 {label} 이름을 알려주세요."
+            )
+        if resolution["entity"] == "project":
+            message += (
+                f"\n- 새 프로젝트라면: **`{resolution['query']}`를 새로 생성해줘**"
+            )
+    elif resolution["status"] == "multiple":
+        choices = "\n".join(
+            f"{index}. `{item['value']}`"
+            for index, item in enumerate(resolution["candidates"], 1)
+        )
+        message = (
+            f"CLI 실제 목록에서 `{resolution['query']}`와 비슷한 {label}가 여러 개 발견됐습니다.\n\n"
+            f"{choices}\n\n번호나 정확한 이름으로 선택해주세요."
+        )
+    else:
+        message = (
+            f"CLI 실제 목록에는 `{resolution['query']}`와 일치하거나 충분히 비슷한 "
+            f"{label}가 없습니다.\n\n정확한 이름을 다시 알려주세요."
+        )
+        if resolution["entity"] == "project":
+            message += (
+                f"\n새 프로젝트라면 **`{resolution['query']}`를 새로 생성해줘**라고 요청할 수 있습니다."
+            )
+    if evidence:
+        message += "\n\nCLI 확인 근거: " + ", ".join(evidence)
+    return {
+        "mode": "local",
+        "kind": "clarification",
+        "message": message,
+        "skill": updated.get("skill"),
+        "arguments": updated.get("arguments", {}),
+        "missing": updated.get("missing", []),
+        "context": updated,
+        "requires_approval": False,
+    }
+
+
+def handle_proposed_input(
+    message: str,
+    context: dict[str, Any] | None,
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    proposal = (context or {}).get("proposed")
+    if not proposal:
+        return context, None
+    candidates = proposal.get("candidates") or []
+    selected = proposal.get("candidate")
+    number = re.fullmatch(r"\s*(\d+)\s*(?:번)?\s*", message)
+    if number and candidates:
+        index = int(number.group(1)) - 1
+        if 0 <= index < len(candidates):
+            selected = candidates[index]["value"]
+    elif not affirmative(message):
+        selected = None
+
+    if selected and (affirmative(message) or number):
+        updated = dict(context or {})
+        arguments = dict(updated.get("arguments") or {})
+        arguments[proposal["field"]] = selected
+        updated["arguments"] = arguments
+        updated["confirmed"] = dict(arguments)
+        updated.pop("proposed", None)
+        return updated, None
+
+    if negative(message):
+        if (
+            proposal["entity"] == "project"
+            and any(word in re.sub(r"\s+", "", message.lower()) for word in ("새로", "생성", "만들"))
+        ):
+            project = proposal["query"]
+            preview = execute_cli_skill(
+                "project.create",
+                {"project": project},
+                dry_run=True,
+            )
+            resume = dict(context or {})
+            resume.pop("proposed", None)
+            return context, {
+                "mode": "local",
+                "message": (
+                    f"`{project}`는 기존 프로젝트가 아닌 새 프로젝트로 생성하겠습니다. "
+                    "아래 계획을 확인하고 승인해주세요."
+                ),
+                "skill": "project.create",
+                "arguments": {"project": project},
+                "preview": preview,
+                "resume": resume,
+                "requires_approval": True,
+            }
+        updated = dict(context or {})
+        updated.pop("proposed", None)
+        return updated, {
+            "mode": "local",
+            "kind": "clarification",
+            "message": (
+                "알겠습니다. 제안한 후보는 사용하지 않겠습니다. "
+                "CLI에서 확인할 정확한 이름을 다시 알려주세요."
+            ),
+            "skill": updated.get("skill"),
+            "arguments": updated.get("arguments", {}),
+            "missing": updated.get("missing", []),
+            "context": updated,
+            "requires_approval": False,
+        }
+    if re.search(r"[A-Za-z0-9][A-Za-z0-9_.-]{1,63}", message):
+        updated = dict(context or {})
+        updated.pop("proposed", None)
+        return updated, None
+    return context, {
+        "mode": "local",
+        "kind": "clarification",
+        "message": "제안한 후보가 맞는지 `맞아` 또는 `아니야`로 확인해주세요.",
+        "skill": context.get("skill") if context else None,
+        "arguments": (context or {}).get("arguments", {}),
+        "missing": (context or {}).get("missing", []),
+        "context": context,
+        "requires_approval": False,
+    }
+
+
+def cli_proposal_for_input(
+    message: str,
+    skill: str | None,
+    context: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    if skill not in {"service.deploy", "service.redeploy"}:
+        return None
+    working_context = dict(context or {})
+    arguments = dict(working_context.get("arguments") or {})
+    explicit = explicit_arguments(message, skill)
+    for field, value in explicit.items():
+        if field != "project":
+            arguments[field] = value
+    working_context["arguments"] = arguments
+    working_context["confirmed"] = dict(arguments)
+    working_context["missing"] = [
+        item
+        for item in working_context.get("missing", [])
+        if item.get("field") not in arguments
+    ]
+    project_query = explicit.get("project")
+    if not project_query:
+        leading_project = re.match(
+            r"\s*([A-Za-z0-9][A-Za-z0-9_.-]{0,63})(?:에|의)\s",
+            message,
+        )
+        if leading_project:
+            project_query = leading_project.group(1)
+    if not project_query and "project" not in arguments:
+        bare = message.strip()
+        if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}", bare):
+            project_query = bare
+    if project_query and "project" not in arguments:
+        resolution = execute_cli_skill(
+            "entity.resolve",
+            {"entity": "project", "query": project_query},
+            dry_run=False,
+        )
+        if resolution["status"] != "exact":
+            return proposal_response(working_context, resolution, field="project")
+    if skill == "service.redeploy":
+        project = arguments.get("project")
+        service_query = explicit.get("service")
+        if project and service_query and "service" not in arguments:
+            resolution = execute_cli_skill(
+                "entity.resolve",
+                {
+                    "entity": "service",
+                    "query": service_query,
+                    "project": project,
+                },
+                dry_run=False,
+            )
+            if resolution["status"] != "exact":
+                return proposal_response(working_context, resolution, field="service")
+    missing = {item.get("field") for item in (context or {}).get("missing", [])}
+    if skill == "service.deploy" and "framework" in missing:
+        bare = message.strip().lower()
+        if (
+            re.fullmatch(r"[A-Za-z0-9_. -]{2,40}", bare)
+            and bare not in FRAMEWORK_ALIASES
+        ):
+            resolution = execute_cli_skill(
+                "entity.resolve",
+                {"entity": "framework", "query": bare},
+                dry_run=False,
+            )
+            if resolution["status"] != "none":
+                return proposal_response(working_context, resolution, field="framework")
+    return None
 
 
 def project_state(name: str) -> str:
@@ -628,7 +1009,11 @@ def framework_context_help(
         repo_url = arguments.get("repo_url")
         if repo_url:
             try:
-                analysis = inspect_repository(str(repo_url))
+                analysis = execute_cli_skill(
+                    "repository.inspect",
+                    {"repo_url": str(repo_url)},
+                    dry_run=False,
+                )
                 if analysis["candidates"]:
                     candidates = [
                         item
@@ -642,18 +1027,7 @@ def framework_context_help(
             "아래 프리셋 중 실제 프로젝트 구조와 맞는 것을 선택해주세요.\n\n"
             + framework_choices_text(candidates)
         )
-        if analysis and analysis.get("recommended"):
-            recommended = analysis["recommended"]
-            label = next(
-                item["label"]
-                for item in preset_catalog()
-                if item["id"] == recommended
-            )
-            message_text += (
-                f"\n\n저장소를 읽기 전용으로 분석한 결과 **{label}**로 보입니다. "
-                f"`{label}로 진행해줘`라고 확인해주세요."
-            )
-        elif analysis and analysis.get("evidence"):
+        if analysis and analysis.get("evidence"):
             message_text += (
                 "\n\n저장소 분석 근거: "
                 + ", ".join(analysis["evidence"])
@@ -741,6 +1115,13 @@ def chat(request: ChatRequest):
     def respond(payload: dict[str, Any]) -> dict[str, Any]:
         return remember_response(request.session_id, request.message, payload)
 
+    request.context, proposed_response = handle_proposed_input(
+        request.message,
+        request.context,
+    )
+    if proposed_response:
+        return respond(proposed_response)
+
     normalized = request.message.strip().lower()
     if normalized in HELP_COMMANDS and not os.getenv("LLM_API_KEY"):
         return respond({
@@ -771,6 +1152,13 @@ def chat(request: ChatRequest):
     documents = skill_documents()
     try:
         preferred_skill = preferred_skill_for(request.message, request.context)
+        cli_proposal = cli_proposal_for_input(
+            request.message,
+            preferred_skill,
+            request.context,
+        )
+        if cli_proposal:
+            return respond(cli_proposal)
         llm_context = dict(request.context or {})
         if preferred_skill in {
             "project.create",
@@ -805,6 +1193,45 @@ def chat(request: ChatRequest):
                     ),
                 }
             )
+            repository_observation = (
+                llm_context.get("cli_observations", {}).get("repository", {})
+            )
+            candidates = repository_observation.get("candidates") or []
+            explicit_framework = explicit_arguments(
+                request.message,
+                preferred_skill,
+            ).get("framework")
+            if (
+                preferred_skill == "service.deploy"
+                and "framework" in {
+                    item.get("field") for item in current_missing
+                }
+                and not explicit_framework
+                and len(candidates) == 1
+            ):
+                candidate = candidates[0]
+                resolution = {
+                    "entity": "framework",
+                    "query": "저장소 구조",
+                    "status": "single",
+                    "match": candidate,
+                    "candidates": [
+                        {
+                            "value": candidate,
+                            "score": 1.0,
+                            "reason": "저장소 파일·의존성 근거가 하나의 프리셋과 일치함",
+                        }
+                    ],
+                    "source": "repository.inspect CLI",
+                }
+                return respond(
+                    proposal_response(
+                        llm_context,
+                        resolution,
+                        field="framework",
+                        evidence=repository_observation.get("evidence", []),
+                    )
+                )
         plan = call_llm(
             request.message,
             documents,
@@ -843,14 +1270,6 @@ def chat(request: ChatRequest):
                     "arguments": verified_arguments,
                     "missing": missing,
                 }
-                repository_observation = (
-                    llm_context.get("cli_observations", {})
-                    .get("repository", {})
-                )
-                if repository_observation.get("recommended"):
-                    context["suggestions"] = {
-                        "framework": repository_observation["recommended"]
-                    }
                 message = plan["message"]
                 confirmed = confirmed_information(verified_arguments)
                 if confirmed and "지금까지 확인된 정보" not in message:
@@ -858,7 +1277,10 @@ def chat(request: ChatRequest):
                 if current_preview and not missing:
                     return respond({
                         "mode": "llm",
-                        "message": plan["message"],
+                        "message": (
+                            "CLI에서 모든 입력값과 현재 서버 상태를 검증했습니다. "
+                            "아래 실행 계획을 확인하고 승인해주세요."
+                        ),
                         "model": plan.get("model"),
                         "skill": preferred_skill,
                         "arguments": verified_arguments,
@@ -984,7 +1406,10 @@ def chat(request: ChatRequest):
             })
         return respond({
             "mode": "llm" if os.getenv("LLM_API_KEY") else "fallback",
-            "message": plan.get("explanation", "Approval is required."),
+            "message": (
+                "CLI에서 모든 입력값과 현재 서버 상태를 검증했습니다. "
+                "아래 실행 계획을 확인하고 승인해주세요."
+            ),
             "skill": skill,
             "model": plan.get("model"),
             "arguments": arguments,
