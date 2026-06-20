@@ -145,8 +145,10 @@ Implemented skills:
 | --- | --- | --- |
 | `help.search` | No | Search local deployment documentation |
 | `server.health` | No | Inspect Docker, memory, disk, and containers |
+| `project.create` | Yes | Create an empty managed Compose project |
 | `project.list` | No | List valid projects and services |
 | `service.deploy` | Yes | Clone, build, register, and verify a new service |
+| `service.redeploy` | Yes | Safely rebuild a service from fresh Git source |
 | `service.status` | No | Inspect service state, health, and ports |
 | `service.logs` | No | Read a bounded log tail |
 | `service.control` | Yes | Start, stop, or restart a service |
@@ -173,6 +175,17 @@ executable code.
 into an existing managed project, requires a root-level Dockerfile, writes one
 fixed Compose service definition, builds and starts that service, verifies its
 published port, and rolls back the Compose file and clone on failure.
+
+Project creation, new service deployment, and service redeployment support
+multi-turn information collection. When required fields are absent, `/chat`
+returns a clarification response instead of inventing values or generating an
+approval request.
+
+`service.redeploy` reads the existing service Git origin, clones fresh source
+into a temporary sibling directory, swaps source only after validation, builds
+and force-recreates the target service, verifies it, and restores the previous
+source and container on failure. It does not run `git pull` in the active
+working tree.
 
 ## 7. LLM Configuration
 

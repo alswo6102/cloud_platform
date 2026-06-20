@@ -1,6 +1,6 @@
 ---
 name: service-deploy
-description: Deploy a new service into an existing managed Compose project from a public GitHub repository. Use only when the user explicitly provides the project, service name, repository URL, and container port. Always require dry-run preview and approval.
+description: Deploy a new service into an existing managed Compose project from a public GitHub repository. Use when the user wants to add or deploy a service. Omit missing arguments so the application can ask follow-up questions. Always require dry-run preview and approval.
 ---
 
 # Service Deploy

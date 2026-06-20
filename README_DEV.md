@@ -45,6 +45,17 @@ Run isolated natural-language mutation QA:
 The mutation script uses only `/srv/projects/skill-qa` and removes it on exit.
 Never run destructive QA against an existing managed project.
 
+The assistant supports multi-turn deployment setup. Missing project names,
+service names, repository URLs, or container ports are requested before a
+mutation preview is generated. Explicit new intents override pending context,
+so a user can switch from service deployment to project creation when no
+project exists.
+
+Existing services are redeployed without running `git pull` in the active
+working tree. The Agent clones fresh source beside the service, swaps it in,
+builds and force-recreates the target container, and restores the prior source
+if verification fails.
+
 ## Secrets
 
 Runtime LLM settings are stored in `.agent.env`. Do not commit or print API

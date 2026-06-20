@@ -1,18 +1,17 @@
 {
   "type": "object",
-  "required": ["project", "service", "repo_url", "container_port"],
   "properties": {
     "project": {
       "type": "string",
-      "description": "Existing managed Compose project name"
+      "description": "Existing managed Compose project name. Omit when unknown."
     },
     "service": {
       "type": "string",
-      "description": "New Compose service and destination directory name"
+      "description": "New Compose service and destination directory name. Omit when unknown."
     },
     "repo_url": {
       "type": "string",
-      "description": "Public GitHub HTTPS repository URL"
+      "description": "Public GitHub HTTPS repository URL. Omit when unknown."
     },
     "container_port": {
       "type": "integer",

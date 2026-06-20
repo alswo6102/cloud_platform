@@ -20,8 +20,10 @@ names = {skill["name"] for skill in skills.json()["skills"]}
 expected = {
     "help.search",
     "server.health",
+    "project.create",
     "project.list",
     "service.deploy",
+    "service.redeploy",
     "service.status",
     "service.logs",
     "service.control",

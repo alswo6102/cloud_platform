@@ -1,0 +1,10 @@
+{
+  "type": "object",
+  "properties": {
+    "project": {
+      "type": "string",
+      "description": "New managed project name. Omit when the user has not provided it."
+    }
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,14 @@
+{
+  "type": "object",
+  "properties": {
+    "project": {
+      "type": "string",
+      "description": "Existing managed project name. Omit when unknown."
+    },
+    "service": {
+      "type": "string",
+      "description": "Existing service name to rebuild. Omit when unknown."
+    }
+  },
+  "additionalProperties": false
+}

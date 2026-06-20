@@ -27,8 +27,10 @@ NAME_PATTERN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$")
 API_SKILL_NAMES = {
     "help-search": "help.search",
     "server-health": "server.health",
+    "project-create": "project.create",
     "project-list": "project.list",
     "service-deploy": "service.deploy",
+    "service-redeploy": "service.redeploy",
     "service-status": "service.status",
     "service-logs": "service.logs",
     "service-control": "service.control",
@@ -349,6 +351,77 @@ def project_list() -> dict[str, Any]:
     return {"projects": projects}
 
 
+def missing_input(
+    skill: str,
+    fields: list[tuple[str, str]],
+    arguments: dict[str, Any],
+) -> dict[str, Any] | None:
+    missing = [
+        {"field": field, "label": label}
+        for field, label in fields
+        if arguments.get(field) in (None, "")
+    ]
+    if not missing:
+        return None
+    labels = ", ".join(item["label"] for item in missing)
+    return {
+        "dry_run": True,
+        "needs_input": missing,
+        "message": f"`{skill}` 작업을 위해 다음 정보가 필요합니다: {labels}.",
+    }
+
+
+def project_create(project: str | None, dry_run: bool) -> dict[str, Any]:
+    arguments = {"project": project}
+    incomplete = missing_input(
+        "project.create",
+        [("project", "새 프로젝트 이름(영문·숫자·점·밑줄·하이픈)")],
+        arguments,
+    )
+    if incomplete:
+        projects = project_list()["projects"]
+        incomplete["available_projects"] = projects
+        if projects:
+            incomplete["project_guidance"] = (
+                "현재 프로젝트와 서비스: "
+                + "; ".join(
+                    f"{item['name']}({', '.join(item['services']) or '서비스 없음'})"
+                    for item in projects
+                )
+            )
+        return incomplete
+
+    project = validate_name(str(project), "project")
+    destination = PROJECTS_ROOT / project
+    if destination.exists():
+        raise SkillError(f"Project already exists: {project}")
+    plan = {
+        "project": project,
+        "path": str(destination),
+        "steps": [
+            "create the managed project directory",
+            "create an empty docker-compose.yml",
+            "verify the project appears in the managed project list",
+        ],
+    }
+    if dry_run:
+        return {"dry_run": True, **plan}
+
+    try:
+        destination.mkdir(parents=False)
+        (destination / "docker-compose.yml").write_text(
+            "version: '3.8'\nservices: {}\n"
+        )
+        projects = {item["name"] for item in project_list()["projects"]}
+        if project not in projects:
+            raise SkillError("Created project was not found during verification")
+        return {"dry_run": False, **plan, "verified": True}
+    except Exception:
+        if destination.exists():
+            shutil.rmtree(destination)
+        raise
+
+
 def service_status(project: str, service: str | None = None) -> dict[str, Any]:
     data = load_compose(project)
     names = [service] if service else sorted(data["services"])
@@ -411,14 +484,55 @@ def service_control(project: str, service: str, action: str, dry_run: bool) -> d
 
 
 def service_deploy(
-    project: str,
-    service: str,
-    repo_url: str,
-    container_port: int,
+    project: str | None,
+    service: str | None,
+    repo_url: str | None,
+    container_port: int | None,
     host_port: int | None,
     is_web: bool,
     dry_run: bool,
 ) -> dict[str, Any]:
+    arguments = {
+        "project": project,
+        "service": service,
+        "repo_url": repo_url,
+        "container_port": container_port,
+    }
+    incomplete = missing_input(
+        "service.deploy",
+        [
+            ("project", "기존 프로젝트 이름"),
+            ("service", "새 서비스 이름"),
+            ("repo_url", "공개 GitHub HTTPS 저장소 URL"),
+            ("container_port", "애플리케이션 컨테이너 포트"),
+        ],
+        arguments,
+    )
+    if incomplete:
+        projects = [item["name"] for item in project_list()["projects"]]
+        incomplete["available_projects"] = projects
+        if not project:
+            if projects:
+                incomplete["project_guidance"] = (
+                    "서비스는 기존 프로젝트 안에 배포됩니다. "
+                    f"현재 프로젝트: {', '.join(projects)}. 이 중 하나를 알려주세요. "
+                    "새 프로젝트가 필요하면 먼저 프로젝트 생성을 요청할 수 있습니다."
+                )
+            else:
+                incomplete["project_guidance"] = (
+                    "현재 관리 중인 프로젝트가 없습니다. 서비스를 배포하려면 먼저 "
+                    "`신규 프로젝트를 만들어줘`라고 요청해 프로젝트를 생성해야 합니다."
+                )
+        incomplete["optional"] = [
+            "호스트 포트(생략 시 9000~9100에서 자동 선택)",
+            "웹 서비스 여부(생략 시 웹 서비스)",
+        ]
+        return incomplete
+
+    project = str(project)
+    service = str(service)
+    repo_url = str(repo_url)
+    container_port = int(container_port)
     validate_name(service, "service")
     data = load_compose(project)
     if service in data["services"]:
@@ -494,6 +608,113 @@ def service_deploy(
             backup.replace(compose_path(project))
         if destination.exists():
             shutil.rmtree(destination)
+        raise
+
+
+def normalized_github_remote(repo_url: str) -> str:
+    if GITHUB_HTTPS_PATTERN.fullmatch(repo_url):
+        return repo_url
+    match = re.fullmatch(
+        r"git@github\.com:([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+(?:\.git)?)",
+        repo_url,
+    )
+    if match:
+        return f"https://github.com/{match.group(1)}/{match.group(2)}"
+    raise SkillError("Existing service remote must be a GitHub repository")
+
+
+def service_redeploy(
+    project: str | None,
+    service: str | None,
+    dry_run: bool,
+) -> dict[str, Any]:
+    arguments = {"project": project, "service": service}
+    incomplete = missing_input(
+        "service.redeploy",
+        [
+            ("project", "기존 프로젝트 이름"),
+            ("service", "재배포할 서비스 이름"),
+        ],
+        arguments,
+    )
+    if incomplete:
+        projects = project_list()["projects"]
+        incomplete["available_projects"] = projects
+        if projects:
+            incomplete["project_guidance"] = (
+                "현재 프로젝트와 서비스: "
+                + "; ".join(
+                    f"{item['name']}({', '.join(item['services']) or '서비스 없음'})"
+                    for item in projects
+                )
+            )
+        return incomplete
+
+    project = str(project)
+    service = str(service)
+    service_config(project, service)
+    source = project_path(project) / service
+    if not (source / ".git").is_dir():
+        raise SkillError(f"Service source is not a Git checkout: {project}/{service}")
+    remote_result = subprocess.run(
+        ["git", "-C", str(source), "remote", "get-url", "origin"],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    repo_url = normalized_github_remote(remote_result.stdout.strip())
+    plan = {
+        "project": project,
+        "service": service,
+        "repo_url": repo_url,
+        "steps": [
+            "clone the latest default branch into a temporary directory",
+            "validate the new root-level Dockerfile",
+            "atomically swap the service source directory",
+            "build a new image and force-recreate only the target service",
+            "verify the new container stays running",
+            "restore the previous source and container if verification fails",
+        ],
+    }
+    if dry_run:
+        return {"dry_run": True, **plan}
+
+    root = project_path(project)
+    fresh = root / f".{service}.skill-agent.fresh"
+    backup = root / f".{service}.skill-agent.backup"
+    if fresh.exists() or backup.exists():
+        raise SkillError("A previous redeploy workspace still exists")
+
+    try:
+        git_clone(repo_url, fresh)
+        if not (fresh / "Dockerfile").is_file():
+            raise SkillError("Latest repository root does not contain a Dockerfile")
+        source.rename(backup)
+        fresh.rename(source)
+        compose_command(
+            project,
+            "up",
+            "-d",
+            "--build",
+            "--force-recreate",
+            service,
+            timeout=900,
+        )
+        verified = wait_stable(project, service)
+        shutil.rmtree(backup)
+        return {"dry_run": False, **plan, "verified": verified}
+    except Exception:
+        if fresh.exists():
+            shutil.rmtree(fresh)
+        if backup.exists():
+            if source.exists():
+                shutil.rmtree(source)
+            backup.rename(source)
+            try:
+                compose_command(project, "up", "-d", "--no-build", service)
+            except Exception:
+                pass
         raise
 
 
@@ -595,14 +816,22 @@ def execute_skill(skill: str, arguments: dict[str, Any], dry_run: bool) -> dict[
             result = server_health()
         elif skill == "project.list":
             result = project_list()
+        elif skill == "project.create":
+            result = project_create(arguments.get("project"), dry_run)
         elif skill == "service.deploy":
             result = service_deploy(
-                arguments["project"],
-                arguments["service"],
-                arguments["repo_url"],
-                int(arguments["container_port"]),
+                arguments.get("project"),
+                arguments.get("service"),
+                arguments.get("repo_url"),
+                int(arguments["container_port"]) if arguments.get("container_port") is not None else None,
                 int(arguments["host_port"]) if arguments.get("host_port") is not None else None,
                 bool(arguments.get("is_web", True)),
+                dry_run,
+            )
+        elif skill == "service.redeploy":
+            result = service_redeploy(
+                arguments.get("project"),
+                arguments.get("service"),
                 dry_run,
             )
         elif skill == "service.status":
@@ -635,7 +864,12 @@ def execute_skill(skill: str, arguments: dict[str, Any], dry_run: bool) -> dict[
         raise
 
 
-def call_llm(message: str, skills: list[dict[str, Any]]) -> dict[str, Any] | None:
+def call_llm(
+    message: str,
+    skills: list[dict[str, Any]],
+    context: dict[str, Any] | None = None,
+    preferred_skill: str | None = None,
+) -> dict[str, Any] | None:
     api_key = os.getenv("LLM_API_KEY", "")
     api_url = os.getenv("LLM_API_URL", "")
     models = llm_models()
@@ -644,6 +878,8 @@ def call_llm(message: str, skills: list[dict[str, Any]]) -> dict[str, Any] | Non
     tool_names: dict[str, str] = {}
     tools = []
     for item in skills:
+        if preferred_skill and item["name"] != preferred_skill:
+            continue
         api_name = SKILL_API_NAMES.get(item["name"], item["document_name"])
         tool_names[api_name] = item["name"]
         tools.append(
@@ -656,6 +892,15 @@ def call_llm(message: str, skills: list[dict[str, Any]]) -> dict[str, Any] | Non
                 },
             }
         )
+    if not tools:
+        raise SkillError(f"Preferred skill is not available: {preferred_skill}")
+    context_instruction = ""
+    if context:
+        context_instruction = (
+            " Continue the previous request using this context. Preserve known arguments, "
+            "add only information supplied by the follow-up, and do not invent missing values: "
+            + json.dumps(context, ensure_ascii=False)
+        )
     request_body = {
         "temperature": 0,
         "messages": [
@@ -665,7 +910,10 @@ def call_llm(message: str, skills: list[dict[str, Any]]) -> dict[str, Any] | Non
                     "Select exactly one provided function for this Docker deployment request. "
                     "Never invent projects, services, repository URLs, paths, commands, or function names. "
                     "Use only arguments explicitly present in the user request. "
+                    "When required operational details are missing, still call the intended "
+                    "function and omit those arguments so the application can ask for them. "
                     "Do not answer with JSON or prose; call one function."
+                    + context_instruction
                 ),
             },
             {"role": "user", "content": message},

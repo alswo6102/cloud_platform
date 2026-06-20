@@ -412,8 +412,10 @@ if st.session_state.get("assistant_visible"):
                     "Docker 배포 작업을 자연어로 요청할 수 있습니다.\n\n"
                     "- `서버 상태를 확인해줘`\n"
                     "- `프로젝트와 서비스 목록 보여줘`\n"
+                    "- `새 프로젝트를 만들고 싶어`\n"
                     "- `demoa의 demo-a 상태를 확인해줘`\n"
                     "- `GitHub 저장소를 새 서비스로 배포해줘`\n"
+                    "- `기존 서비스를 최신 코드로 재배포해줘`\n"
                     "- `사용 가능한 포트를 추천해줘`\n\n"
                     "전체 기능과 예시는 `도움말`을 입력해 확인하세요. "
                     "서버를 변경하는 작업은 실행 전에 승인을 요청합니다."
@@ -453,10 +455,19 @@ if st.session_state.get("assistant_visible"):
                     st.session_state.assistant_messages.append(
                         {
                             "role": "assistant",
-                            "text": f"`{pending['skill']}` 실행과 검증이 완료됐습니다.",
+                            "text": (
+                                f"`{pending['skill']}` 실행과 검증이 완료됐습니다.\n\n"
+                                + (
+                                    "프로젝트가 준비됐습니다. 이제 `서비스를 새로 배포하고 싶어`라고 "
+                                    "입력하면 저장소와 포트 정보를 이어서 안내받을 수 있습니다."
+                                    if pending["skill"] == "project.create"
+                                    else ""
+                                )
+                            ),
                             "data": executed["result"],
                         }
                     )
+                    st.session_state.pop("assistant_clarification", None)
                 except (requests.RequestException, RuntimeError) as exc:
                     st.session_state.assistant_messages.append(
                         {"role": "assistant", "text": f"실행에 실패했습니다: {exc}"}
@@ -474,8 +485,13 @@ if st.session_state.get("assistant_visible"):
             st.session_state.assistant_messages.append({"role": "user", "text": prompt})
             try:
                 with st.spinner("Selecting and running a skill..."):
-                    answer = skill_agent_request("/chat", {"message": prompt})
+                    payload = {"message": prompt}
+                    clarification = st.session_state.get("assistant_clarification")
+                    if clarification:
+                        payload["context"] = clarification
+                    answer = skill_agent_request("/chat", payload)
                 if answer.get("requires_approval"):
+                    st.session_state.pop("assistant_clarification", None)
                     st.session_state.assistant_pending = {
                         "skill": answer["skill"],
                         "arguments": answer["arguments"],
@@ -486,8 +502,18 @@ if st.session_state.get("assistant_visible"):
                         "아래 계획을 확인하고 승인해주세요."
                     )
                     assistant_data = answer["preview"]
+                elif answer.get("kind") == "clarification":
+                    st.session_state.assistant_clarification = answer["context"]
+                    assistant_text = answer["message"]
+                    assistant_data = {
+                        "필요한 정보": [
+                            item["label"] for item in answer.get("missing", [])
+                        ],
+                        "현재까지 파악한 값": answer.get("arguments", {}),
+                    }
                 else:
-                    if answer.get("kind") == "help":
+                    st.session_state.pop("assistant_clarification", None)
+                    if answer.get("kind") in {"help", "guide"}:
                         assistant_text = answer["message"]
                     else:
                         assistant_text = f"{answer['message']} 사용한 Skill: `{answer['skill']}`"
