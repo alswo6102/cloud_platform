@@ -20,6 +20,7 @@ ok "skill_agent_build"
 {
   printf 'LLM_API_KEY=%s\n' "${LLM_API_KEY:-}"
   printf 'LLM_API_URL=%s\n' "${LLM_API_URL:-}"
+  printf 'LLM_MODELS=%s\n' "${LLM_MODELS:-}"
   printf 'LLM_MODEL=%s\n' "${LLM_MODEL:-}"
   printf 'PROJECTS_ROOT=/srv/projects\n'
   printf 'SKILLS_ROOT=/app/skills\n'

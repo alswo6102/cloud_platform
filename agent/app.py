@@ -12,6 +12,7 @@ from runtime import (
     call_llm,
     execute_skill,
     fallback_plan,
+    llm_status,
     skill_documents,
 )
 
@@ -57,11 +58,12 @@ class ExecuteRequest(BaseModel):
 
 @app.get("/health")
 def health():
+    llm = llm_status()
     return {
         "status": "ok",
-        "llm_configured": all(
-            os.getenv(name) for name in ("LLM_API_KEY", "LLM_API_URL", "LLM_MODEL")
-        ),
+        "llm_configured": llm["configured"],
+        "llm_models": llm["models"],
+        "llm_cooldowns": llm["cooldowns"],
     }
 
 
@@ -95,6 +97,7 @@ def chat(request: ChatRequest):
                 "mode": "llm" if os.getenv("LLM_API_KEY") else "fallback",
                 "message": plan.get("explanation", "Completed."),
                 "skill": skill,
+                "model": plan.get("model"),
                 "result": result,
                 "requires_approval": False,
             }
@@ -103,6 +106,7 @@ def chat(request: ChatRequest):
             "mode": "llm" if os.getenv("LLM_API_KEY") else "fallback",
             "message": plan.get("explanation", "Approval is required."),
             "skill": skill,
+            "model": plan.get("model"),
             "arguments": arguments,
             "preview": preview,
             "requires_approval": True,

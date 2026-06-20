@@ -5,10 +5,12 @@ import os
 import re
 import shutil
 import subprocess
+import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import docker
 import psutil
@@ -38,6 +40,8 @@ SKILL_API_NAMES = {value: key for key, value in API_SKILL_NAMES.items()}
 GITHUB_HTTPS_PATTERN = re.compile(
     r"^https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:\.git)?$"
 )
+MODEL_COOLDOWNS: dict[str, float] = {}
+MODEL_COOLDOWN_LOCK = threading.Lock()
 
 
 class SkillError(RuntimeError):
@@ -254,6 +258,51 @@ def skill_documents() -> list[dict[str, Any]]:
             }
         )
     return documents
+
+
+def llm_models() -> list[str]:
+    configured = os.getenv("LLM_MODELS", "")
+    if configured:
+        models = [item.strip() for item in configured.split(",") if item.strip()]
+    else:
+        model = os.getenv("LLM_MODEL", "").strip()
+        models = [model] if model else []
+    return list(dict.fromkeys(models))
+
+
+def llm_status() -> dict[str, Any]:
+    models = llm_models()
+    now = time.monotonic()
+    with MODEL_COOLDOWN_LOCK:
+        cooldowns = {
+            model: max(0, round(until - now))
+            for model, until in MODEL_COOLDOWNS.items()
+            if until > now
+        }
+    return {
+        "configured": bool(
+            os.getenv("LLM_API_KEY", "") and os.getenv("LLM_API_URL", "") and models
+        ),
+        "models": models,
+        "cooldowns": cooldowns,
+    }
+
+
+def rate_limit_cooldown(response: requests.Response) -> int:
+    retry_after = response.headers.get("Retry-After", "")
+    try:
+        seconds = max(1, int(float(retry_after)))
+    except ValueError:
+        seconds = 60
+
+    body = response.text.lower()
+    if "perday" in body or "per_day" in body or "requestsperday" in body:
+        now = datetime.now(ZoneInfo("America/Los_Angeles"))
+        reset = (now + timedelta(days=1)).replace(
+            hour=0, minute=0, second=5, microsecond=0
+        )
+        seconds = max(seconds, int((reset - now).total_seconds()))
+    return seconds
 
 
 def help_search(query: str) -> dict[str, Any]:
@@ -589,8 +638,8 @@ def execute_skill(skill: str, arguments: dict[str, Any], dry_run: bool) -> dict[
 def call_llm(message: str, skills: list[dict[str, Any]]) -> dict[str, Any] | None:
     api_key = os.getenv("LLM_API_KEY", "")
     api_url = os.getenv("LLM_API_URL", "")
-    model = os.getenv("LLM_MODEL", "")
-    if not api_key or not api_url or not model:
+    models = llm_models()
+    if not api_key or not api_url or not models:
         return None
     tool_names: dict[str, str] = {}
     tools = []
@@ -607,30 +656,60 @@ def call_llm(message: str, skills: list[dict[str, Any]]) -> dict[str, Any] | Non
                 },
             }
         )
-    response = requests.post(
-        api_url.rstrip("/") + "/chat/completions",
-        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-        json={
-            "model": model,
-            "temperature": 0,
-            "messages": [
-                {
-                    "role": "system",
-                    "content": (
-                        "Select exactly one provided function for this Docker deployment request. "
-                        "Never invent projects, services, repository URLs, paths, commands, or function names. "
-                        "Use only arguments explicitly present in the user request. "
-                        "Do not answer with JSON or prose; call one function."
-                    ),
-                },
-                {"role": "user", "content": message},
-            ],
-            "tools": tools,
-            "tool_choice": "required",
-        },
-        timeout=30,
-    )
-    response.raise_for_status()
+    request_body = {
+        "temperature": 0,
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    "Select exactly one provided function for this Docker deployment request. "
+                    "Never invent projects, services, repository URLs, paths, commands, or function names. "
+                    "Use only arguments explicitly present in the user request. "
+                    "Do not answer with JSON or prose; call one function."
+                ),
+            },
+            {"role": "user", "content": message},
+        ],
+        "tools": tools,
+        "tool_choice": "required",
+    }
+
+    attempted = []
+    response = None
+    selected_model = None
+    for model in models:
+        now = time.monotonic()
+        with MODEL_COOLDOWN_LOCK:
+            cooldown_until = MODEL_COOLDOWNS.get(model, 0)
+        if cooldown_until > now:
+            continue
+
+        attempted.append(model)
+        response = requests.post(
+            api_url.rstrip("/") + "/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json={"model": model, **request_body},
+            timeout=30,
+        )
+        if response.status_code != 429:
+            response.raise_for_status()
+            selected_model = model
+            break
+
+        cooldown = rate_limit_cooldown(response)
+        with MODEL_COOLDOWN_LOCK:
+            MODEL_COOLDOWNS[model] = time.monotonic() + cooldown
+
+    if response is None or selected_model is None:
+        cooling = llm_status()["cooldowns"]
+        raise SkillError(
+            "All configured LLM models are rate-limited or cooling down. "
+            f"Attempted: {attempted or 'none'}; cooldowns: {cooling}"
+        )
+
     response_message = response.json()["choices"][0]["message"]
     tool_calls = response_message.get("tool_calls") or []
     if len(tool_calls) != 1:
@@ -647,7 +726,8 @@ def call_llm(message: str, skills: list[dict[str, Any]]) -> dict[str, Any] | Non
     return {
         "skill": skill,
         "arguments": arguments,
-        "explanation": f"Selected `{skill}`.",
+        "explanation": f"Selected `{skill}` with `{selected_model}`.",
+        "model": selected_model,
     }
 
 

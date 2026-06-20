@@ -191,8 +191,13 @@ Gemini can be used through its OpenAI-compatible endpoint:
 ```env
 LLM_API_KEY=<secret>
 LLM_API_URL=https://generativelanguage.googleapis.com/v1beta/openai
-LLM_MODEL=gemini-2.5-flash-lite
+LLM_MODELS=gemini-3.1-flash-lite,gemini-3-flash-preview,gemini-2.5-flash,gemini-2.5-flash-lite
 ```
+
+`LLM_MODEL` remains supported as a legacy single-model setting when
+`LLM_MODELS` is blank. The Agent falls through the configured list only after
+HTTP 429 responses. Limited models enter a cooldown so each new request does
+not repeatedly consume a failed attempt. Other HTTP errors fail immediately.
 
 After changing `.agent.env`, recreate the Skill Agent container so it receives
 the new environment. A simple container restart does not reload an env file.

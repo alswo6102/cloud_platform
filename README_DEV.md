@@ -51,6 +51,17 @@ Runtime LLM settings are stored in `.agent.env`. Do not commit or print API
 keys. Recreate the Skill Agent after changing the environment file; restarting
 the existing container does not reload it.
 
+Multiple planner models can be configured in preferred order:
+
+```env
+LLM_MODELS=gemini-3.1-flash-lite,gemini-3-flash-preview,gemini-2.5-flash,gemini-2.5-flash-lite
+```
+
+The Agent moves to the next model only for HTTP 429 rate-limit responses and
+temporarily skips models that are cooling down. Authentication, malformed
+request, and permission errors fail immediately instead of being hidden by a
+fallback.
+
 ## Output Rule
 
 QA scripts should print compact `OK` or `FAIL` lines. Detailed logs should be
