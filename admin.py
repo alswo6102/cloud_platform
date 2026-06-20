@@ -1,16 +1,21 @@
 import streamlit as st
 import subprocess
 from pathlib import Path
-import socket
+import os
+import time
+import urllib.request
 import yaml
 import docker
 import shutil
 import psutil
+import requests
 from dockerfile_parse import DockerfileParser
 
 # --- 설정값 ---
 PROJECTS_ROOT = Path("/srv/projects")
-START_PORT = 9001
+START_PORT = 9000
+END_PORT = 9100
+SKILL_AGENT_URL = os.getenv("SKILL_AGENT_URL", "http://skill-agent:8080").rstrip("/")
 
 
 # --- Dockerfile 템플릿 (설명을 위한 용도) ---
@@ -162,20 +167,23 @@ def get_other_build_tips():
 def get_public_ip() -> str:
     if 'public_ip' in st.session_state and st.session_state.public_ip:
         return st.session_state.public_ip
-    try:
-        cmd = ["curl", "-s", "http://169.254.169.254/latest/meta-data/public-ipv4", "--connect-timeout", "2"]
-        result = subprocess.run(cmd, check=True, capture_output=True, text=True)
-        ip = result.stdout.strip()
-        if ip and '.' in ip: st.session_state.public_ip = ip; return ip
-    except:
-        pass
-    try:
-        cmd = ["curl", "-s", "ifconfig.me", "--connect-timeout", "2"]
-        result = subprocess.run(cmd, check=True, capture_output=True, text=True)
-        ip = result.stdout.strip()
-        if ip and '.' in ip: st.session_state.public_ip = ip; return ip
-    except:
-        pass
+    configured_ip = os.getenv("PUBLIC_IP", "").strip()
+    if configured_ip:
+        st.session_state.public_ip = configured_ip
+        return configured_ip
+
+    for url in (
+        "http://169.254.169.254/latest/meta-data/public-ipv4",
+        "https://ifconfig.me/ip",
+    ):
+        try:
+            with urllib.request.urlopen(url, timeout=2) as response:
+                ip = response.read().decode().strip()
+            if ip and '.' in ip:
+                st.session_state.public_ip = ip
+                return ip
+        except Exception:
+            continue
     return None
 
 
@@ -219,15 +227,124 @@ def get_project_services(project_name: str) -> (dict, dict):
     return service_metadata, docker_status
 
 
+def get_published_ports(port_config) -> set:
+    if isinstance(port_config, dict):
+        published = port_config.get('published')
+        if published is None:
+            return set()
+        published = str(published)
+        if '-' in published:
+            start, end = published.split('-', 1)
+            if start.isdigit() and end.isdigit():
+                return set(range(int(start), int(end) + 1))
+            return set()
+        return {int(published)} if published.isdigit() else set()
+    elif not isinstance(port_config, str):
+        return set()
+
+    value = port_config.split('/')[0]
+    parts = value.rsplit(':', 2)
+    if len(parts) < 2:
+        return set()
+
+    published = parts[-2]
+    if '-' in published:
+        start, end = published.split('-', 1)
+        if start.isdigit() and end.isdigit():
+            return set(range(int(start), int(end) + 1))
+        return set()
+    return {int(published)} if published.isdigit() else set()
+
+
+def get_reserved_host_ports() -> set:
+    reserved_ports = set()
+
+    if PROJECTS_ROOT.exists():
+        for compose_file in PROJECTS_ROOT.glob("*/docker-compose.yml"):
+            try:
+                with open(compose_file, 'r') as f:
+                    compose_data = yaml.safe_load(f) or {}
+                for service in compose_data.get('services', {}).values():
+                    for port_config in service.get('ports', []):
+                        reserved_ports.update(get_published_ports(port_config))
+            except (OSError, yaml.YAMLError, AttributeError):
+                continue
+
+    try:
+        client = docker.from_env()
+        for container in client.containers.list(all=True):
+            port_bindings = container.attrs.get('HostConfig', {}).get('PortBindings', {}) or {}
+            for bindings in port_bindings.values():
+                for binding in bindings or []:
+                    host_port = str(binding.get('HostPort', ''))
+                    if host_port.isdigit():
+                        reserved_ports.add(int(host_port))
+    except docker.errors.DockerException:
+        pass
+
+    return reserved_ports
+
+
 def find_next_available_port() -> int:
-    port = START_PORT
-    while is_port_in_use(port): port += 1
-    return port
+    reserved_ports = get_reserved_host_ports()
+    for port in range(START_PORT, END_PORT + 1):
+        if port not in reserved_ports:
+            return port
+    raise RuntimeError(f"No available host ports between {START_PORT} and {END_PORT}.")
 
 
-def is_port_in_use(port: int) -> bool:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        return s.connect_ex(('localhost', port)) == 0
+def start_service(project_name: str, project_path: Path, service_name: str) -> None:
+    subprocess.run(
+        ["docker-compose", "-p", project_name, "up", "-d", "--no-build", service_name],
+        cwd=project_path,
+        check=True,
+        capture_output=True,
+    )
+
+    client = docker.from_env()
+    filters = {
+        "label": [
+            f"com.docker.compose.project={project_name}",
+            f"com.docker.compose.service={service_name}",
+        ]
+    }
+    containers = client.containers.list(all=True, filters=filters)
+    if not containers:
+        raise RuntimeError(f"Container for '{service_name}' was not created.")
+
+    container = containers[0]
+    container.reload()
+    initial_restart_count = container.attrs.get("RestartCount", 0)
+    time.sleep(4)
+    container.reload()
+    restart_count = container.attrs.get("RestartCount", 0)
+
+    if container.status != "running" or restart_count > initial_restart_count:
+        logs = container.logs(tail=20).decode(errors="replace").strip()
+        detail = logs or f"Container status: {container.status}"
+        raise RuntimeError(f"Service '{service_name}' failed to stay running.\n\n{detail}")
+
+
+def skill_agent_request(path: str, payload: dict | None = None) -> dict:
+    url = f"{SKILL_AGENT_URL}{path}"
+    if payload is None:
+        response = requests.get(url, timeout=10)
+    else:
+        response = requests.post(url, json=payload, timeout=320)
+    if response.ok:
+        return response.json()
+    try:
+        detail = response.json().get("detail", response.text)
+    except ValueError:
+        detail = response.text
+    raise RuntimeError(f"Skill Agent error ({response.status_code}): {detail}")
+
+
+def render_assistant_message(message: dict) -> None:
+    st.markdown(message["text"])
+    if message.get("data") is not None:
+        with st.expander("Result", expanded=False):
+            st.json(message["data"])
 
 
 # --- UI 및 메인 로직 ---
@@ -243,6 +360,8 @@ if 'last_action_message' in st.session_state:
 public_ip = get_public_ip()
 
 with st.sidebar:
+    st.toggle("AI Assistant", key="assistant_visible", value=False)
+    st.markdown("---")
     st.header("Server Monitor")
     cpu_usage = psutil.cpu_percent()
     st.progress(int(cpu_usage), text=f"CPU Usage: {cpu_usage}%")
@@ -283,6 +402,104 @@ with st.sidebar:
                     st.rerun()
                 else:
                     st.warning("프로젝트 이름을 영문/숫자로 입력하세요.")
+
+if st.session_state.get("assistant_visible"):
+    if "assistant_messages" not in st.session_state:
+        st.session_state.assistant_messages = [
+            {
+                "role": "assistant",
+                "text": (
+                    "Docker 배포 작업을 자연어로 요청할 수 있습니다.\n\n"
+                    "- `서버 상태를 확인해줘`\n"
+                    "- `프로젝트와 서비스 목록 보여줘`\n"
+                    "- `demoa의 demo-a 상태를 확인해줘`\n"
+                    "- `GitHub 저장소를 새 서비스로 배포해줘`\n"
+                    "- `사용 가능한 포트를 추천해줘`\n\n"
+                    "전체 기능과 예시는 `도움말`을 입력해 확인하세요. "
+                    "서버를 변경하는 작업은 실행 전에 승인을 요청합니다."
+                ),
+            }
+        ]
+
+    with st.container(border=True):
+        header_col, status_col = st.columns((4, 1))
+        header_col.subheader("Deployment Assistant")
+        try:
+            agent_health = skill_agent_request("/health")
+            status_col.success("LLM" if agent_health["llm_configured"] else "Skill mode")
+        except (requests.RequestException, RuntimeError):
+            status_col.error("Offline")
+
+        for chat_message in st.session_state.assistant_messages:
+            with st.chat_message(chat_message["role"]):
+                render_assistant_message(chat_message)
+
+        pending = st.session_state.get("assistant_pending")
+        if pending:
+            st.warning("This action changes the server and requires approval.")
+            st.json(pending["preview"])
+            approve_col, cancel_col = st.columns(2)
+            if approve_col.button("Approve", type="primary", use_container_width=True):
+                try:
+                    with st.spinner("Executing and verifying..."):
+                        executed = skill_agent_request(
+                            "/execute",
+                            {
+                                "skill": pending["skill"],
+                                "arguments": pending["arguments"],
+                                "approved": True,
+                            },
+                        )
+                    st.session_state.assistant_messages.append(
+                        {
+                            "role": "assistant",
+                            "text": f"`{pending['skill']}` 실행과 검증이 완료됐습니다.",
+                            "data": executed["result"],
+                        }
+                    )
+                except (requests.RequestException, RuntimeError) as exc:
+                    st.session_state.assistant_messages.append(
+                        {"role": "assistant", "text": f"실행에 실패했습니다: {exc}"}
+                    )
+                del st.session_state["assistant_pending"]
+                st.rerun()
+            if cancel_col.button("Cancel", use_container_width=True):
+                st.session_state.assistant_messages.append(
+                    {"role": "assistant", "text": "요청한 변경을 취소했습니다."}
+                )
+                del st.session_state["assistant_pending"]
+                st.rerun()
+
+        if prompt := st.chat_input("명령 또는 질문 입력 · 전체 기능은 '도움말'"):
+            st.session_state.assistant_messages.append({"role": "user", "text": prompt})
+            try:
+                with st.spinner("Selecting and running a skill..."):
+                    answer = skill_agent_request("/chat", {"message": prompt})
+                if answer.get("requires_approval"):
+                    st.session_state.assistant_pending = {
+                        "skill": answer["skill"],
+                        "arguments": answer["arguments"],
+                        "preview": answer["preview"],
+                    }
+                    assistant_text = (
+                        f"{answer['message']} `{answer['skill']}` 실행 전 검증이 통과했습니다. "
+                        "아래 계획을 확인하고 승인해주세요."
+                    )
+                    assistant_data = answer["preview"]
+                else:
+                    if answer.get("kind") == "help":
+                        assistant_text = answer["message"]
+                    else:
+                        assistant_text = f"{answer['message']} 사용한 Skill: `{answer['skill']}`"
+                    assistant_data = answer.get("result")
+                st.session_state.assistant_messages.append(
+                    {"role": "assistant", "text": assistant_text, "data": assistant_data}
+                )
+            except (requests.RequestException, RuntimeError) as exc:
+                st.session_state.assistant_messages.append(
+                    {"role": "assistant", "text": f"요청 처리에 실패했습니다: {exc}"}
+                )
+            st.rerun()
 
 if selected_project:
     st.header(f"Dashboard: [{selected_project}]")
@@ -372,7 +589,7 @@ if selected_project:
             port = status_info.get('port', '-');
             cols[3].write(port)
             if meta['is_web'] and str(port).isdigit() and public_ip:
-                cols[4].markdown(f"[🔗 Link](http://{public_ip}:{port})", unsafe_allow_html=True)
+                cols[4].link_button("Open", f"http://{public_ip}:{port}")
             else:
                 cols[4].write("-")
 
@@ -391,12 +608,13 @@ if selected_project:
                 else:
                     if action_cols[0].button("🟩", key=f"start_{service_name}", help="Start", use_container_width=True):
                         try:
-                            subprocess.run(["docker-compose", "-p", selected_project, "start", service_name],
-                                           cwd=project_path, check=True, capture_output=True)
+                            start_service(selected_project, project_path, service_name)
                             st.session_state.last_action_message = (f"✅ Service '{service_name}' started!");
                             st.rerun()
                         except subprocess.CalledProcessError as e:
                             st.error(e.stderr.decode())
+                        except (docker.errors.DockerException, RuntimeError) as e:
+                            st.error(str(e))
 
                 # Environment Variable Button
                 if action_cols[1].button("⚙️", key=f"env_{service_name}", help="Environment Variables",
@@ -622,6 +840,7 @@ if selected_project:
                 with st.spinner(f"Adding service '{service_name}'..."):
                     service_path = project_path / service_name
                     try:
+                        new_port = find_next_available_port()
                         subprocess.run(["git", "clone", git_url, str(service_path)], check=True, capture_output=True)
                         if not (service_path / "Dockerfile").exists():
                             st.error(f"배포 실패: '{service_path}' 폴더 안에 Dockerfile이 없습니다. 위 매뉴얼을 확인해주세요.");
@@ -634,7 +853,6 @@ if selected_project:
                                 loaded = yaml.safe_load(f)
                                 if loaded: compose_data = loaded
 
-                        new_port = find_next_available_port()
                         service_definition = {
                             'build': {'context': f'./{service_name}'}, 'restart': 'always',
                             'ports': [f"{new_port}:{container_port}"], 'mem_limit': '1g', 'memswap_limit': '3g'

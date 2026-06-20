@@ -1,51 +1,57 @@
-# cloud_platform Codex Development Workflow
+# cloud_platform Server Development Workflow
 
-This repo is developed locally and verified on the NCP server through scripts.
-Codex should edit local files only. The server is a deployment and QA target.
+This repository is developed directly on the NCP server at
+`/opt/cloud_platform`. The server Git repository is the source of truth. Local
+machines are used only to remotely control the server. Do not rsync a local
+checkout over this directory.
 
-## Loop
+## Runtime Paths
 
-1. Edit local code.
-2. Run local checks.
-3. Review `git diff`.
-4. Deploy to NCP with `scripts/deploy_to_ncp.sh`.
-5. Run `scripts/qa_all.sh`.
-6. If QA fails, inspect short logs with `scripts/remote_logs.sh`.
-7. Repeat until all checks pass.
+- Application source and Git repository: `/opt/cloud_platform`
+- Managed project data: `/srv/projects`
+- Dashboard container: `cloud-platform-dashboard`
+- Skill Agent container: `cloud-platform-skill-agent`
+- Dashboard URL: port `8501`
 
-## Token Rule
+Both application containers use `restart: unless-stopped`.
 
-Scripts should print compact `OK` / `FAIL` lines by default.
-Long command output should be hidden unless a check fails.
+## Development Loop
 
-## Required Local Config
+1. Inspect Git status and the running Docker containers.
+2. Edit files in `/opt/cloud_platform`.
+3. Run focused syntax and behavior checks.
+4. Review `git diff`.
+5. Rebuild and recreate only the affected application container.
+6. Run server-native QA.
+7. Commit and push from the server.
 
-Copy `.env.example` to `.env.local` and fill in the server values.
+Do not mix this workflow with the legacy local-to-server rsync scripts without
+reviewing every difference first.
+
+## Server-Native Checks
 
 ```sh
-cp .env.example .env.local
+python3 -c 'from pathlib import Path; [compile(Path(f).read_text(), f, "exec") for f in ["admin.py", "agent/app.py", "agent/runtime.py"]]'
+curl -fsS http://127.0.0.1:8501/_stcore/health
+docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'
 ```
 
-Do not commit `.env.local`.
+Run isolated natural-language mutation QA:
 
-For password SSH, wrap passwords containing shell characters in single quotes.
+```sh
+./scripts/server_skill_mutation_test.sh
+```
 
-The server preparation script installs Docker and Docker Compose, creates
-`/srv/projects`, and maintains a 2GB swap file.
+The mutation script uses only `/srv/projects/skill-qa` and removes it on exit.
+Never run destructive QA against an existing managed project.
 
-## MVP QA Scope
+## Secrets
 
-- SSH connection works.
-- Remote base tools exist: Python, Docker, Docker Compose, and 2GB swap.
-- Project directory exists.
-- App can be deployed.
-- App process starts.
-- Dashboard health endpoint responds.
-- Docker access works from the app user.
+Runtime LLM settings are stored in `.agent.env`. Do not commit or print API
+keys. Recreate the Skill Agent after changing the environment file; restarting
+the existing container does not reload it.
 
-## Later
+## Output Rule
 
-- Add LLM skill CLI tests.
-- Add Streamlit smoke tests.
-- Add GitHub push/PR automation.
-- Add login and HTTPS.
+QA scripts should print compact `OK` or `FAIL` lines. Detailed logs should be
+shown only when a check fails.

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Port Suggest"
+  short_description: "Suggest an available deployment port"
+  default_prompt: "Suggest the next available deployment port."

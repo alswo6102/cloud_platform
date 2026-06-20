@@ -1,0 +1,34 @@
+{
+  "type": "object",
+  "required": ["project", "service", "repo_url", "container_port"],
+  "properties": {
+    "project": {
+      "type": "string",
+      "description": "Existing managed Compose project name"
+    },
+    "service": {
+      "type": "string",
+      "description": "New Compose service and destination directory name"
+    },
+    "repo_url": {
+      "type": "string",
+      "description": "Public GitHub HTTPS repository URL"
+    },
+    "container_port": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 65535
+    },
+    "host_port": {
+      "type": "integer",
+      "minimum": 9000,
+      "maximum": 9100,
+      "description": "Optional published host port; omit to allocate automatically"
+    },
+    "is_web": {
+      "type": "boolean",
+      "default": true
+    }
+  },
+  "additionalProperties": false
+}

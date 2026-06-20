@@ -23,10 +23,29 @@ run_sudo() {
 
 if ! command -v docker >/dev/null; then
   run_sudo apt-get update
-  run_sudo apt-get install -y docker.io docker-compose
+  run_sudo apt-get install -y docker.io docker-compose curl
 fi
 
 run_sudo systemctl enable --now docker >/dev/null 2>&1 || true
+
+if ! command -v curl >/dev/null; then
+  run_sudo apt-get update
+  run_sudo apt-get install -y curl
+fi
+
+COMPOSE_VERSION="v2.29.7"
+compose_version="$(docker-compose version --short 2>/dev/null || true)"
+if [[ "$compose_version" != 2.* ]]; then
+  case "$(uname -m)" in
+    x86_64) compose_arch="x86_64" ;;
+    aarch64|arm64) compose_arch="aarch64" ;;
+    *) echo "Unsupported architecture: $(uname -m)"; exit 1 ;;
+  esac
+  run_sudo curl -fsSL --retry 3 \
+    "https://github.com/docker/compose/releases/download/$COMPOSE_VERSION/docker-compose-linux-$compose_arch" \
+    -o /usr/local/bin/docker-compose
+  run_sudo chmod +x /usr/local/bin/docker-compose
+fi
 
 if ! docker ps >/dev/null 2>&1; then
   if [ "$(id -u)" -ne 0 ]; then

@@ -18,6 +18,7 @@ load_env() {
   : "${REMOTE_PORT:=8501}"
   : "${REMOTE_PROJECTS_ROOT:=/srv/projects}"
   : "${REMOTE_SERVICE_NAME:=cloud-platform-dashboard}"
+  : "${REMOTE_AGENT_NAME:=cloud-platform-skill-agent}"
 
   if [[ "$NCP_AUTH_METHOD" == "key" ]]; then
     : "${NCP_SSH_KEY:?NCP_SSH_KEY is required when NCP_AUTH_METHOD=key.}"

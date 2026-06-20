@@ -1,0 +1,10 @@
+{
+  "type": "object",
+  "required": ["project", "service", "action"],
+  "properties": {
+    "project": {"type": "string"},
+    "service": {"type": "string"},
+    "action": {"type": "string", "enum": ["start", "stop", "restart"]}
+  },
+  "additionalProperties": false
+}

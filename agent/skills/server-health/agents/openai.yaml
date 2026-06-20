@@ -1,0 +1,4 @@
+interface:
+  display_name: "server-health"
+  short_description: "Cloud platform operation skill"
+  default_prompt: "Use this skill to manage the cloud platform safely."

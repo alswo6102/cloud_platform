@@ -3,13 +3,10 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-"$SCRIPT_DIR/remote_prepare_server.sh"
 "$SCRIPT_DIR/server_env_check.sh"
-"$SCRIPT_DIR/deploy_to_ncp.sh"
 "$SCRIPT_DIR/remote_healthcheck.sh"
-"$SCRIPT_DIR/remote_smoke_test.sh"
 "$SCRIPT_DIR/remote_skill_test.sh"
 "$SCRIPT_DIR/remote_audit.sh"
 "$SCRIPT_DIR/external_access_check.sh"
 
-printf 'OK qa_all\n'
+printf 'OK qa_fast\n'

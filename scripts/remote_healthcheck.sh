@@ -12,7 +12,7 @@ else
   fail "dashboard_container"
 fi
 
-if ssh_base "curl -fsS 'http://127.0.0.1:$REMOTE_PORT/_stcore/health' >/dev/null"; then
+if ssh_base "for attempt in \$(seq 1 30); do curl -fsS 'http://127.0.0.1:$REMOTE_PORT/_stcore/health' >/dev/null 2>&1 && exit 0; sleep 1; done; exit 1"; then
   ok "streamlit_health"
 else
   fail "streamlit_health"
@@ -28,4 +28,16 @@ if ssh_base "docker exec '$REMOTE_SERVICE_NAME' docker ps >/dev/null"; then
   ok "dashboard_docker_access"
 else
   fail "dashboard_docker_access"
+fi
+
+if ssh_base "docker inspect -f '{{.State.Running}}' '$REMOTE_AGENT_NAME' 2>/dev/null | grep -qx true"; then
+  ok "skill_agent_container"
+else
+  fail "skill_agent_container"
+fi
+
+if ssh_base "for attempt in \$(seq 1 30); do docker exec '$REMOTE_SERVICE_NAME' python -c \"import requests; requests.get('http://$REMOTE_AGENT_NAME:8080/health', timeout=5).raise_for_status()\" >/dev/null 2>&1 && exit 0; sleep 1; done; exit 1"; then
+  ok "skill_agent_health"
+else
+  fail "skill_agent_health"
 fi

@@ -1,0 +1,12 @@
+{
+  "type": "object",
+  "required": ["project", "service", "operation"],
+  "properties": {
+    "project": {"type": "string"},
+    "service": {"type": "string"},
+    "operation": {"type": "string", "enum": ["change_host", "change_container"]},
+    "host_port": {"type": "integer", "minimum": 9000, "maximum": 9100},
+    "container_port": {"type": "integer", "minimum": 1, "maximum": 65535}
+  },
+  "additionalProperties": false
+}

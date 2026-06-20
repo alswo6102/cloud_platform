@@ -3,3 +3,4 @@ pyyaml
 docker
 psutil
 dockerfile-parse
+requests
