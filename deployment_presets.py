@@ -11,6 +11,12 @@ FRAMEWORK_PRESETS: dict[str, dict[str, Any]] = {
         "description": "저장소 루트의 Dockerfile을 그대로 사용합니다.",
         "environment": [],
     },
+    "static": {
+        "label": "Static HTML / JavaScript",
+        "category": "Frontend",
+        "description": "빌드 없이 HTML, CSS, JavaScript 파일을 Nginx가 3000번 포트로 제공합니다.",
+        "environment": [],
+    },
     "vite": {
         "label": "Vite (React/Vue/Svelte)",
         "category": "Frontend",
@@ -106,6 +112,12 @@ def render_dockerfile(framework: str) -> str:
         raise ValueError("The existing preset does not generate a Dockerfile")
 
     templates = {
+        "static": """FROM nginx:stable-alpine
+COPY . /usr/share/nginx/html
+RUN printf 'server { listen 3000; location / { root /usr/share/nginx/html; index index.html main.html; try_files $uri $uri/ /index.html /main.html; } location /healthz { return 200 "OK"; } }' > /etc/nginx/conf.d/default.conf
+EXPOSE 3000
+CMD ["nginx", "-g", "daemon off;"]
+""",
         "vite": """FROM node:20-alpine AS builder
 WORKDIR /app
 COPY package*.json ./

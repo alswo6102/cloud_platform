@@ -6,7 +6,15 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from runtime import READ_ONLY_SKILLS, execute_skill, project_list, skill_documents
+from deployment_presets import preset_catalog
+from runtime import (
+    READ_ONLY_SKILLS,
+    command_catalog,
+    execute_skill,
+    inspect_repository,
+    project_list,
+    skill_documents,
+)
 
 
 def load_arguments(value: str | None, file_path: str | None) -> dict[str, Any]:
@@ -36,8 +44,20 @@ def main() -> int:
         description="Strict CLI adapter for the allowlisted skill runtime.",
     )
     commands = parser.add_subparsers(dest="command", required=True)
+    commands.add_parser("help", help="Show the machine-readable command catalog")
     commands.add_parser("skills", help="List allowlisted skills and schemas")
     commands.add_parser("projects", help="List managed projects and services")
+    commands.add_parser("frameworks", help="List framework deployment presets")
+    describe_parser = commands.add_parser(
+        "describe",
+        help="Describe one allowlisted skill",
+    )
+    describe_parser.add_argument("skill")
+    inspect_parser = commands.add_parser(
+        "inspect-repo",
+        help="Inspect a public GitHub repository and suggest framework presets",
+    )
+    inspect_parser.add_argument("repo_url")
 
     for command in ("preview", "execute"):
         sub = commands.add_parser(command)
@@ -53,11 +73,33 @@ def main() -> int:
 
     args = parser.parse_args()
     try:
+        if args.command == "help":
+            emit(command_catalog())
+            return 0
         if args.command == "skills":
             emit({"skills": skill_documents()})
             return 0
+        if args.command == "describe":
+            skill = next(
+                (
+                    item
+                    for item in skill_documents()
+                    if item["name"] == args.skill
+                ),
+                None,
+            )
+            if skill is None:
+                raise ValueError(f"Unknown skill: {args.skill}")
+            emit({"skill": skill})
+            return 0
         if args.command == "projects":
             emit(project_list())
+            return 0
+        if args.command == "frameworks":
+            emit({"frameworks": preset_catalog()})
+            return 0
+        if args.command == "inspect-repo":
+            emit(inspect_repository(args.repo_url))
             return 0
 
         arguments = load_arguments(args.arguments, args.arguments_file)

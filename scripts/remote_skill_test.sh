@@ -18,10 +18,13 @@ skills = requests.get(f"{base}/skills", timeout=10)
 skills.raise_for_status()
 names = {skill["name"] for skill in skills.json()["skills"]}
 expected = {
+    "framework.list",
     "help.search",
+    "platform.help",
     "server.health",
     "project.create",
     "project.list",
+    "repository.inspect",
     "service.deploy",
     "service.redeploy",
     "service.status",

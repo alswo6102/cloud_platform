@@ -32,7 +32,7 @@
     },
     "framework": {
       "type": "string",
-      "enum": ["existing", "vite", "react", "nextjs", "express", "fastapi", "flask", "django", "spring-maven", "spring-gradle", "go"],
+      "enum": ["existing", "static", "vite", "react", "nextjs", "express", "fastapi", "flask", "django", "spring-maven", "spring-gradle", "go"],
       "description": "Framework preset used to generate a Dockerfile, or existing to use the repository Dockerfile."
     },
     "environment_names": {

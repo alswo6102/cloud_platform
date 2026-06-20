@@ -76,7 +76,7 @@ h=requests.get(b+"/health",timeout=5).json()
 s=requests.get(b+"/skills",timeout=5).json()
 f=requests.get(b+"/frameworks",timeout=5).json()
 assert h["status"]=="ok"
-assert len(s["skills"])==12, len(s["skills"])
+assert len(s["skills"])==15, len(s["skills"])
 assert len(f["frameworks"])>=10, len(f["frameworks"])
 '
 }
@@ -98,9 +98,14 @@ check_cli() {
     docker exec cloud-platform-skill-agent cloud-platform skills | python3 -c '
 import json, sys
 data=json.load(sys.stdin)
-assert len(data["skills"]) == 12
+assert len(data["skills"]) == 15
 '
     docker exec cloud-platform-skill-agent cloud-platform projects >/dev/null
+    docker exec cloud-platform-skill-agent cloud-platform frameworks | python3 -c '
+import json, sys
+data=json.load(sys.stdin)
+assert len(data["frameworks"]) >= 10
+'
     if docker exec cloud-platform-skill-agent cloud-platform execute project.create \
         --arguments '{"project":"must-not-run"}' >/dev/null 2>&1; then
         return 1

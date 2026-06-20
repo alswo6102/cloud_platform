@@ -5,6 +5,7 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
 import threading
 import time
 from datetime import datetime, timedelta, timezone
@@ -20,6 +21,7 @@ from deployment_presets import (
     DEFAULT_CONTAINER_PORT,
     FRAMEWORK_PRESETS,
     framework_manual,
+    preset_catalog,
     render_dockerfile,
     validate_framework,
 )
@@ -33,12 +35,15 @@ PORT_END = int(os.getenv("PORT_END", "9100"))
 NAME_PATTERN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$")
 ENV_NAME_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
 API_SKILL_NAMES = {
+    "framework-list": "framework.list",
     "help-search": "help.search",
+    "platform-help": "platform.help",
     "server-health": "server.health",
     "project-create": "project.create",
     "project-list": "project.list",
     "service-deploy": "service.deploy",
     "service-redeploy": "service.redeploy",
+    "repository-inspect": "repository.inspect",
     "service-status": "service.status",
     "service-logs": "service.logs",
     "service-control": "service.control",
@@ -185,6 +190,86 @@ def git_clone(repo_url: str, destination: Path) -> None:
     )
 
 
+def inspect_repository(repo_url: str) -> dict[str, Any]:
+    if not GITHUB_HTTPS_PATTERN.fullmatch(repo_url):
+        raise SkillError("repo_url must be a public GitHub HTTPS repository URL")
+    with tempfile.TemporaryDirectory(prefix="cloud-platform-inspect-") as temp_dir:
+        root = Path(temp_dir) / "repository"
+        git_clone(repo_url, root)
+        candidates: list[str] = []
+        evidence: list[str] = []
+
+        package_path = root / "package.json"
+        if package_path.is_file():
+            package = json.loads(package_path.read_text())
+            dependencies = {
+                **(package.get("dependencies") or {}),
+                **(package.get("devDependencies") or {}),
+            }
+            scripts = package.get("scripts") or {}
+            if "next" in dependencies:
+                candidates.append("nextjs")
+                evidence.append("package.json contains next")
+            if "vite" in dependencies:
+                candidates.append("vite")
+                evidence.append("package.json contains vite")
+            if "react-scripts" in dependencies:
+                candidates.append("react")
+                evidence.append("package.json contains react-scripts")
+            if "@nestjs/core" in dependencies or "express" in dependencies:
+                candidates.append("express")
+                evidence.append("package.json contains NestJS or Express")
+            if not candidates and "react" in dependencies:
+                candidates.extend(["vite", "react"])
+                evidence.append("package.json contains React but the build framework is ambiguous")
+            if "start" in scripts:
+                evidence.append("package.json contains a start script")
+
+        dependency_text = ""
+        for dependency_file in ("requirements.txt", "pyproject.toml"):
+            path = root / dependency_file
+            if path.is_file():
+                dependency_text += "\n" + path.read_text(errors="replace").lower()
+        if "fastapi" in dependency_text:
+            candidates.append("fastapi")
+            evidence.append("Python dependencies contain FastAPI")
+        if "flask" in dependency_text:
+            candidates.append("flask")
+            evidence.append("Python dependencies contain Flask")
+        if (root / "manage.py").is_file() or "django" in dependency_text:
+            candidates.append("django")
+            evidence.append("Django manage.py or dependency detected")
+        if (root / "pom.xml").is_file():
+            candidates.append("spring-maven")
+            evidence.append("pom.xml detected")
+        if (root / "build.gradle").is_file() or (root / "build.gradle.kts").is_file():
+            candidates.append("spring-gradle")
+            evidence.append("Gradle build file detected")
+        if (root / "go.mod").is_file():
+            candidates.append("go")
+            evidence.append("go.mod detected")
+        if (root / "Dockerfile").is_file():
+            evidence.append("repository already contains a Dockerfile")
+        if (
+            not candidates
+            and not package_path.is_file()
+            and any(root.glob("*.html"))
+        ):
+            candidates.append("static")
+            evidence.append(
+                "root HTML files detected without a package manager; static site preset applies"
+            )
+
+        candidates = list(dict.fromkeys(candidates))
+        return {
+            "repo_url": repo_url,
+            "candidates": candidates,
+            "recommended": candidates[0] if len(candidates) == 1 else None,
+            "evidence": evidence,
+            "has_dockerfile": (root / "Dockerfile").is_file(),
+        }
+
+
 def wait_stable(project: str, service: str, seconds: int = 4) -> dict[str, Any]:
     container = find_container(project, service)
     if container is None:
@@ -327,6 +412,31 @@ def help_search(query: str) -> dict[str, Any]:
             snippets = [line for line in lines if any(word in line.lower() for word in words)][:4]
             matches.append({"source": str(path.relative_to(Path("/app"))), "score": score, "snippets": snippets})
     return {"query": query, "matches": sorted(matches, key=lambda item: item["score"], reverse=True)[:5]}
+
+
+def framework_list() -> dict[str, Any]:
+    return {"frameworks": preset_catalog()}
+
+
+def command_catalog() -> dict[str, Any]:
+    return {
+        "commands": {
+            "help": "Show the command catalog",
+            "skills": "List allowlisted skills and schemas",
+            "describe <skill>": "Describe one skill",
+            "projects": "List valid and incomplete projects",
+            "frameworks": "List framework presets",
+            "inspect-repo <url>": "Inspect a public GitHub repository read-only",
+            "preview <skill>": "Validate and preview a mutation",
+            "execute <skill>": "Execute a skill; mutations require approval",
+        },
+        "examples": [
+            "cloud-platform projects",
+            "cloud-platform frameworks",
+            "cloud-platform inspect-repo https://github.com/owner/repository",
+            "cloud-platform preview service.deploy --arguments '{...}'",
+        ],
+    }
 
 
 def server_health() -> dict[str, Any]:
@@ -863,9 +973,12 @@ def qa_run() -> dict[str, Any]:
 
 
 READ_ONLY_SKILLS = {
+    "framework.list",
     "help.search",
+    "platform.help",
     "server.health",
     "project.list",
+    "repository.inspect",
     "service.status",
     "service.logs",
     "port.suggest",
@@ -877,10 +990,16 @@ def execute_skill(skill: str, arguments: dict[str, Any], dry_run: bool) -> dict[
     try:
         if skill == "help.search":
             result = help_search(str(arguments.get("query", "")))
+        elif skill == "framework.list":
+            result = framework_list()
+        elif skill == "platform.help":
+            result = command_catalog()
         elif skill == "server.health":
             result = server_health()
         elif skill == "project.list":
             result = project_list()
+        elif skill == "repository.inspect":
+            result = inspect_repository(arguments["repo_url"])
         elif skill == "project.create":
             result = project_create(arguments.get("project"), dry_run)
         elif skill == "service.deploy":
@@ -931,21 +1050,70 @@ def execute_skill(skill: str, arguments: dict[str, Any], dry_run: bool) -> dict[
         raise
 
 
+def execute_cli_skill(
+    skill: str,
+    arguments: dict[str, Any],
+    *,
+    dry_run: bool,
+    approved: bool = False,
+) -> dict[str, Any]:
+    command = [
+        "cloud-platform",
+        "preview" if dry_run else "execute",
+        skill,
+        "--arguments",
+        json.dumps(arguments, ensure_ascii=False),
+    ]
+    if not dry_run and approved:
+        command.append("--approve")
+    completed = subprocess.run(
+        command,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=1000,
+    )
+    try:
+        payload = json.loads(completed.stdout or "{}")
+    except json.JSONDecodeError as exc:
+        raise SkillError(
+            completed.stderr.strip() or "CLI returned malformed JSON"
+        ) from exc
+    if completed.returncode != 0:
+        raise SkillError(payload.get("detail", "CLI execution failed"))
+    key = "preview" if dry_run else "result"
+    if key not in payload:
+        raise SkillError(f"CLI response is missing {key}")
+    return payload[key]
+
+
 def call_llm(
     message: str,
     skills: list[dict[str, Any]],
     context: dict[str, Any] | None = None,
     preferred_skill: str | None = None,
+    history: list[dict[str, str]] | None = None,
 ) -> dict[str, Any] | None:
     api_key = os.getenv("LLM_API_KEY", "")
     api_url = os.getenv("LLM_API_URL", "")
     models = llm_models()
     if not api_key or not api_url or not models:
         return None
+    discovery_skills = {
+        "framework.list",
+        "help.search",
+        "platform.help",
+        "project.list",
+        "repository.inspect",
+    }
     tool_names: dict[str, str] = {}
     tools = []
     for item in skills:
-        if preferred_skill and item["name"] != preferred_skill:
+        if (
+            preferred_skill
+            and item["name"] != preferred_skill
+            and item["name"] not in discovery_skills
+        ):
             continue
         api_name = SKILL_API_NAMES.get(item["name"], item["document_name"])
         tool_names[api_name] = item["name"]
@@ -962,6 +1130,27 @@ def call_llm(
                 },
             }
         )
+    tools.append(
+        {
+            "type": "function",
+            "function": {
+                "name": "conversation-reply",
+                "description": (
+                    "Reply naturally to the user after using discovery tools. "
+                    "Use for explanations, choices, and follow-up questions. "
+                    "Do not claim an operation was executed."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "required": ["message"],
+                    "properties": {
+                        "message": {"type": "string"},
+                    },
+                    "additionalProperties": False,
+                },
+            },
+        }
+    )
     if not tools:
         raise SkillError(f"Preferred skill is not available: {preferred_skill}")
     context_instruction = ""
@@ -971,82 +1160,131 @@ def call_llm(
             "add only information supplied by the follow-up, and do not invent missing values: "
             + json.dumps(context, ensure_ascii=False)
         )
-    request_body = {
-        "temperature": 0,
-        "messages": [
-            {
-                "role": "system",
-                "content": (
-                    "Select exactly one provided function for this Docker deployment request. "
-                    "Never invent projects, services, repository URLs, paths, commands, or function names. "
-                    "Use only arguments explicitly present in the user request. "
-                    "When required operational details are missing, still call the intended "
-                    "function and omit those arguments so the application can ask for them. "
-                    "Do not answer with JSON or prose; call one function."
-                    + context_instruction
-                ),
-            },
-            {"role": "user", "content": message},
-        ],
-        "tools": tools,
-        "tool_choice": "required",
-    }
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "You are a tool orchestrator for a Docker deployment platform. "
+                "Use discovery tools whenever the user asks what exists, which option applies, "
+                "why a value is needed, how deployment works, or what commands are available. "
+                "If verified cli_observations are already present in context, use them as "
+                "authoritative and do not repeat the same lookup. "
+                "Feed discovery results back into the conversation, "
+                "then use conversation-reply to explain them naturally in Korean. "
+                "Use mutation or operational tools only when the user is providing or confirming "
+                "the required operation. Never invent projects, services, repository URLs, "
+                "frameworks, paths, commands, or function names. Preserve verified context. "
+                "Do not expose raw JSON unless the user asks for it."
+                + context_instruction
+            ),
+        },
+    ]
+    for item in (history or [])[-16:]:
+        role = item.get("role")
+        content = str(item.get("content", "")).strip()
+        if role in {"user", "assistant"} and content:
+            messages.append({"role": role, "content": content})
+    messages.append({"role": "user", "content": message})
 
-    attempted = []
-    response = None
-    selected_model = None
-    for model in models:
-        now = time.monotonic()
-        with MODEL_COOLDOWN_LOCK:
-            cooldown_until = MODEL_COOLDOWNS.get(model, 0)
-        if cooldown_until > now:
-            continue
-
-        attempted.append(model)
-        response = requests.post(
-            api_url.rstrip("/") + "/chat/completions",
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            },
-            json={"model": model, **request_body},
-            timeout=30,
-        )
-        if response.status_code != 429:
-            response.raise_for_status()
-            selected_model = model
-            break
-
-        cooldown = rate_limit_cooldown(response)
-        with MODEL_COOLDOWN_LOCK:
-            MODEL_COOLDOWNS[model] = time.monotonic() + cooldown
-
-    if response is None or selected_model is None:
+    def post_with_fallback() -> tuple[dict[str, Any], str]:
+        attempted = []
+        for model in models:
+            now = time.monotonic()
+            with MODEL_COOLDOWN_LOCK:
+                cooldown_until = MODEL_COOLDOWNS.get(model, 0)
+            if cooldown_until > now:
+                continue
+            attempted.append(model)
+            response = requests.post(
+                api_url.rstrip("/") + "/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": model,
+                    "temperature": 0,
+                    "messages": messages,
+                    "tools": tools,
+                    "tool_choice": "required",
+                },
+                timeout=30,
+            )
+            if response.status_code != 429:
+                response.raise_for_status()
+                return response.json()["choices"][0]["message"], model
+            cooldown = rate_limit_cooldown(response)
+            with MODEL_COOLDOWN_LOCK:
+                MODEL_COOLDOWNS[model] = time.monotonic() + cooldown
         cooling = llm_status()["cooldowns"]
         raise SkillError(
             "All configured LLM models are rate-limited or cooling down. "
             f"Attempted: {attempted or 'none'}; cooldowns: {cooling}"
         )
 
-    response_message = response.json()["choices"][0]["message"]
-    tool_calls = response_message.get("tool_calls") or []
-    if len(tool_calls) != 1:
-        raise SkillError(f"Planner must select exactly one skill; received {len(tool_calls)}")
-    function = tool_calls[0].get("function") or {}
-    api_name = function.get("name", "")
-    skill = tool_names.get(api_name)
-    if skill is None:
-        raise SkillError(f"Planner selected unknown skill: {api_name}")
-    raw_arguments = function.get("arguments") or "{}"
-    arguments = json.loads(raw_arguments) if isinstance(raw_arguments, str) else raw_arguments
-    if not isinstance(arguments, dict):
-        raise SkillError("Planner arguments must be an object")
-    return {
-        "skill": skill,
-        "arguments": arguments,
-        "explanation": f"Selected `{skill}` with `{selected_model}`.",
-        "model": selected_model,
-    }
+    last_model = None
+    for _ in range(4):
+        response_message, last_model = post_with_fallback()
+        tool_calls = response_message.get("tool_calls") or []
+        if len(tool_calls) != 1:
+            raise SkillError(
+                f"Planner must select exactly one tool; received {len(tool_calls)}"
+            )
+        tool_call = tool_calls[0]
+        function = tool_call.get("function") or {}
+        api_name = function.get("name", "")
+        raw_arguments = function.get("arguments") or "{}"
+        arguments = (
+            json.loads(raw_arguments)
+            if isinstance(raw_arguments, str)
+            else raw_arguments
+        )
+        if not isinstance(arguments, dict):
+            raise SkillError("Planner arguments must be an object")
+
+        if api_name == "conversation-reply":
+            return {
+                "kind": "answer",
+                "message": str(arguments.get("message", "")).strip(),
+                "model": last_model,
+            }
+
+        skill = tool_names.get(api_name)
+        if skill is None:
+            raise SkillError(f"Planner selected unknown skill: {api_name}")
+        if skill not in discovery_skills:
+            return {
+                "skill": skill,
+                "arguments": arguments,
+                "explanation": f"Selected `{skill}` with `{last_model}`.",
+                "model": last_model,
+            }
+
+        try:
+            discovery_result = execute_cli_skill(
+                skill,
+                arguments,
+                dry_run=False,
+            )
+        except Exception as exc:
+            discovery_result = {
+                "error": type(exc).__name__,
+                "detail": str(exc),
+            }
+        messages.append(response_message)
+        messages.append(
+            {
+                "role": "tool",
+                "tool_call_id": tool_call.get("id", api_name),
+                "content": json.dumps(
+                    discovery_result,
+                    ensure_ascii=False,
+                    default=str,
+                ),
+            }
+        )
+
+    raise SkillError("Planner exceeded the discovery tool limit")
 
 
 def fallback_plan(message: str) -> dict[str, Any]:

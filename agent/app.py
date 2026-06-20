@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import os
 import re
+import threading
+import time
 from typing import Any
 from pathlib import Path
 
@@ -13,14 +15,19 @@ from runtime import (
     READ_ONLY_SKILLS,
     SkillError,
     call_llm,
-    execute_skill,
+    execute_cli_skill,
     fallback_plan,
+    inspect_repository,
     llm_status,
     skill_documents,
 )
 
 app = FastAPI(title="Cloud Platform Skill Agent", version="0.1.0")
 PROJECTS_ROOT = Path(os.getenv("PROJECTS_ROOT", "/srv/projects"))
+SESSION_TTL_SECONDS = 60 * 60 * 12
+SESSION_HISTORY_LIMIT = 24
+SESSION_LOCK = threading.Lock()
+SESSIONS: dict[str, dict[str, Any]] = {}
 GITHUB_URL_RE = re.compile(
     r"https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:\.git)?"
 )
@@ -28,6 +35,10 @@ FRAMEWORK_ALIASES = {
     "기존 dockerfile": "existing",
     "기존 도커파일": "existing",
     "existing": "existing",
+    "static": "static",
+    "정적": "static",
+    "바닐라 javascript": "static",
+    "바닐라 자바스크립트": "static",
     "vite": "vite",
     "react": "react",
     "리액트": "react",
@@ -114,16 +125,28 @@ DEPLOYMENT_GUIDE_PHRASES = {
 
 def preferred_skill_for(message: str, context: dict[str, Any] | None) -> str | None:
     text = message.lower()
-    if "프로젝트" in text and any(word in text for word in ("신규", "새 ", "새로", "추가", "생성", "만들", "복구")):
+    if any(
+        phrase in text
+        for phrase in (
+            "신규 프로젝트",
+            "새 프로젝트",
+            "프로젝트를 새로",
+            "프로젝트 생성해",
+            "프로젝트 만들어",
+            "프로젝트를 만들어",
+            "프로젝트 복구",
+            "프로젝트를 복구",
+        )
+    ):
         return "project.create"
+    if context and context.get("skill"):
+        return str(context["skill"])
     if "서비스" in text and any(word in text for word in ("재배포", "최신 코드", "다시 배포", "새 이미지")):
         return "service.redeploy"
     if "서비스" in text and any(word in text for word in ("새로", "신규", "추가", "새 서비스", "등록")):
         return "service.deploy"
     if "서비스" in text and "배포" in text:
         return "service.deploy"
-    if context and context.get("skill"):
-        return str(context["skill"])
     return None
 
 
@@ -268,6 +291,26 @@ def strict_arguments(
     if context and context.get("skill") == skill:
         verified.update(context.get("arguments") or {})
     verified.update(explicit_arguments(message, skill))
+    if skill in {"service.deploy", "service.redeploy"} and "project" not in verified:
+        try:
+            projects = execute_cli_skill("project.list", {}, dry_run=False).get(
+                "projects",
+                [],
+            )
+            mentioned = [
+                str(item["name"])
+                for item in projects
+                if re.search(
+                    rf"(?<![A-Za-z0-9_.-]){re.escape(str(item['name']))}"
+                    rf"(?![A-Za-z0-9_.-])",
+                    message,
+                    re.IGNORECASE,
+                )
+            ]
+            if len(mentioned) == 1:
+                verified["project"] = mentioned[0]
+        except (SkillError, KeyError, TypeError):
+            pass
     missing_fields = {
         item.get("field")
         for item in (context or {}).get("missing", [])
@@ -286,6 +329,14 @@ def strict_arguments(
             framework = FRAMEWORK_ALIASES.get(bare.lower())
             if framework:
                 verified[field] = framework
+            elif (
+                any(
+                    phrase in re.sub(r"\s+", "", bare.lower())
+                    for phrase in ("그걸로", "추천한걸로", "추천대로", "그프리셋으로")
+                )
+                and (context or {}).get("suggestions", {}).get("framework")
+            ):
+                verified[field] = context["suggestions"]["framework"]
     return verified
 
 
@@ -394,8 +445,249 @@ def no_project_transition(
     }
 
 
+def confirmed_information(arguments: dict[str, Any]) -> str:
+    labels = {
+        "project": "프로젝트",
+        "service": "서비스",
+        "repo_url": "GitHub 저장소",
+        "framework": "프레임워크",
+        "container_port": "컨테이너 포트",
+        "host_port": "호스트 포트",
+        "environment_names": "환경변수 이름",
+    }
+    lines = []
+    for key, label in labels.items():
+        value = arguments.get(key)
+        if value not in (None, "", []):
+            if isinstance(value, list):
+                value = ", ".join(str(item) for item in value)
+            lines.append(f"- **{label}:** `{value}`")
+    if not lines:
+        return ""
+    return "### 지금까지 확인된 정보\n\n" + "\n".join(lines)
+
+
+def load_session(
+    session_id: str | None,
+    client_context: dict[str, Any] | None,
+) -> tuple[dict[str, Any] | None, list[dict[str, str]]]:
+    if not session_id:
+        return client_context, []
+    now = time.time()
+    with SESSION_LOCK:
+        expired = [
+            key
+            for key, value in SESSIONS.items()
+            if now - float(value.get("updated_at", now)) > SESSION_TTL_SECONDS
+        ]
+        for key in expired:
+            SESSIONS.pop(key, None)
+        session = SESSIONS.setdefault(
+            session_id,
+            {"context": None, "history": [], "updated_at": now},
+        )
+        if client_context and not session.get("context"):
+            session["context"] = client_context
+        session["updated_at"] = now
+        context = session.get("context")
+        history = list(session.get("history") or [])
+    return context, history
+
+
+def remember_response(
+    session_id: str | None,
+    user_message: str,
+    response: dict[str, Any],
+) -> dict[str, Any]:
+    if not session_id:
+        return response
+    assistant_message = str(response.get("message", "")).strip()
+    with SESSION_LOCK:
+        session = SESSIONS.setdefault(
+            session_id,
+            {"context": None, "history": [], "updated_at": time.time()},
+        )
+        history = session.setdefault("history", [])
+        history.append({"role": "user", "content": user_message})
+        if assistant_message:
+            history.append({"role": "assistant", "content": assistant_message})
+        session["history"] = history[-SESSION_HISTORY_LIMIT:]
+        if "context" in response:
+            session["context"] = response.get("context")
+        elif response.get("requires_approval"):
+            session["context"] = {
+                "original_request": user_message,
+                "skill": response.get("skill"),
+                "arguments": response.get("arguments", {}),
+                "missing": [],
+            }
+        session["updated_at"] = time.time()
+    response["session_id"] = session_id
+    return response
+
+
+def remember_execution(
+    session_id: str | None,
+    skill: str,
+    resume: dict[str, Any] | None,
+) -> None:
+    if not session_id:
+        return
+    with SESSION_LOCK:
+        session = SESSIONS.setdefault(
+            session_id,
+            {"context": None, "history": [], "updated_at": time.time()},
+        )
+        session["context"] = resume
+        history = session.setdefault("history", [])
+        history.append(
+            {
+                "role": "assistant",
+                "content": f"{skill} 작업이 승인되어 실행과 검증을 완료했습니다.",
+            }
+        )
+        session["history"] = history[-SESSION_HISTORY_LIMIT:]
+        session["updated_at"] = time.time()
+
+
+def framework_choices_text(candidates: list[str] | None = None) -> str:
+    items = preset_catalog()
+    if candidates:
+        candidate_set = set(candidates)
+        items = [item for item in items if item["id"] in candidate_set]
+    return "\n".join(
+        f"- **{item['label']}** (`{item['id']}`): {item['description']}"
+        for item in items
+    )
+
+
+def collect_cli_observations(
+    skill: str | None,
+    arguments: dict[str, Any],
+    missing: list[dict[str, Any]],
+) -> dict[str, Any]:
+    observations: dict[str, Any] = {}
+    if skill in {"project.create", "service.deploy", "service.redeploy"}:
+        try:
+            observations["projects"] = execute_cli_skill(
+                "project.list",
+                {},
+                dry_run=False,
+            )
+        except SkillError as exc:
+            observations["projects"] = {"error": str(exc)}
+    missing_fields = {item.get("field") for item in missing}
+    if skill == "service.deploy" and "framework" in missing_fields:
+        try:
+            observations["frameworks"] = execute_cli_skill(
+                "framework.list",
+                {},
+                dry_run=False,
+            )
+        except SkillError as exc:
+            observations["frameworks"] = {"error": str(exc)}
+        repo_url = arguments.get("repo_url")
+        if repo_url:
+            try:
+                observations["repository"] = execute_cli_skill(
+                    "repository.inspect",
+                    {"repo_url": repo_url},
+                    dry_run=False,
+                )
+            except SkillError as exc:
+                observations["repository"] = {"error": str(exc)}
+    return observations
+
+
+def framework_context_help(
+    message: str,
+    context: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    if not context or context.get("skill") != "service.deploy":
+        return None
+    missing = {item.get("field") for item in context.get("missing", [])}
+    if "framework" not in missing:
+        return None
+
+    normalized = re.sub(r"\s+", "", message.lower())
+    arguments = dict(context.get("arguments") or {})
+    asks_catalog = (
+        "프리셋" in normalized
+        and any(word in normalized for word in ("뭐", "무엇", "목록", "어떤", "있"))
+    )
+    javascript = any(
+        word in normalized
+        for word in ("javascript", "자바스크립트", "node", "nodejs", "js로")
+    )
+    if not asks_catalog and not javascript:
+        return None
+
+    if javascript:
+        candidates = ["static", "vite", "react", "nextjs", "express"]
+        analysis = None
+        repo_url = arguments.get("repo_url")
+        if repo_url:
+            try:
+                analysis = inspect_repository(str(repo_url))
+                if analysis["candidates"]:
+                    candidates = [
+                        item
+                        for item in analysis["candidates"]
+                        if item in {"static", "vite", "react", "nextjs", "express"}
+                    ] or candidates
+            except SkillError:
+                analysis = None
+        message_text = (
+            "JavaScript만으로는 실행 방식을 하나로 결정할 수 없습니다. "
+            "아래 프리셋 중 실제 프로젝트 구조와 맞는 것을 선택해주세요.\n\n"
+            + framework_choices_text(candidates)
+        )
+        if analysis and analysis.get("recommended"):
+            recommended = analysis["recommended"]
+            label = next(
+                item["label"]
+                for item in preset_catalog()
+                if item["id"] == recommended
+            )
+            message_text += (
+                f"\n\n저장소를 읽기 전용으로 분석한 결과 **{label}**로 보입니다. "
+                f"`{label}로 진행해줘`라고 확인해주세요."
+            )
+        elif analysis and analysis.get("evidence"):
+            message_text += (
+                "\n\n저장소 분석 근거: "
+                + ", ".join(analysis["evidence"])
+            )
+        else:
+            message_text += (
+                "\n\n판별 기준: `vite.config.*` 또는 Vite 의존성은 Vite, "
+                "`react-scripts`는 Create React App, `next`는 Next.js, "
+                "Express/NestJS 서버는 Express 프리셋입니다."
+            )
+    else:
+        message_text = (
+            "사용 가능한 프레임워크 프리셋입니다. 하나를 이름으로 선택해주세요.\n\n"
+            + framework_choices_text()
+        )
+
+    confirmed = confirmed_information(arguments)
+    if confirmed:
+        message_text += "\n\n" + confirmed
+    return {
+        "mode": "local",
+        "kind": "clarification",
+        "message": message_text,
+        "skill": "service.deploy",
+        "arguments": arguments,
+        "missing": context.get("missing", []),
+        "context": context,
+        "requires_approval": False,
+    }
+
+
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=2000)
+    session_id: str | None = Field(default=None, min_length=8, max_length=128)
     context: dict[str, Any] | None = None
 
 
@@ -403,6 +695,8 @@ class ExecuteRequest(BaseModel):
     skill: str
     arguments: dict[str, Any] = Field(default_factory=dict)
     approved: bool = False
+    session_id: str | None = Field(default=None, min_length=8, max_length=128)
+    resume: dict[str, Any] | None = None
 
 
 class PreviewRequest(BaseModel):
@@ -438,36 +732,168 @@ def help_guide():
 
 @app.post("/chat")
 def chat(request: ChatRequest):
+    session_context, session_history = load_session(
+        request.session_id,
+        request.context,
+    )
+    request.context = session_context
+
+    def respond(payload: dict[str, Any]) -> dict[str, Any]:
+        return remember_response(request.session_id, request.message, payload)
+
     normalized = request.message.strip().lower()
-    if normalized in HELP_COMMANDS:
-        return {
+    if normalized in HELP_COMMANDS and not os.getenv("LLM_API_KEY"):
+        return respond({
             "mode": "local",
             "kind": "help",
             "message": HELP_MESSAGE,
             "requires_approval": False,
-        }
-    if any(phrase in normalized for phrase in DEPLOYMENT_GUIDE_PHRASES):
-        return {
+        })
+    if (
+        any(phrase in normalized for phrase in DEPLOYMENT_GUIDE_PHRASES)
+        and not os.getenv("LLM_API_KEY")
+    ):
+        return respond({
             "mode": "local",
             "kind": "guide",
             "message": DEPLOYMENT_GUIDE,
             "requires_approval": False,
-        }
+        })
     ambiguous = ambiguity_for(request.message, request.context)
     if ambiguous:
-        return ambiguous
+        return respond(ambiguous)
     no_project = no_project_transition(request.message, request.context)
     if no_project:
-        return no_project
+        return respond(no_project)
+    framework_help = framework_context_help(request.message, request.context)
+    if framework_help and not os.getenv("LLM_API_KEY"):
+        return respond(framework_help)
     documents = skill_documents()
     try:
         preferred_skill = preferred_skill_for(request.message, request.context)
+        llm_context = dict(request.context or {})
+        if preferred_skill in {
+            "project.create",
+            "service.deploy",
+            "service.redeploy",
+        }:
+            current_arguments = strict_arguments(
+                request.message,
+                preferred_skill,
+                request.context,
+                {},
+            )
+            current_missing = list(llm_context.get("missing") or [])
+            try:
+                current_preview = execute_cli_skill(
+                    preferred_skill,
+                    current_arguments,
+                    dry_run=True,
+                )
+                current_missing = current_preview.get("needs_input", [])
+            except SkillError:
+                pass
+            llm_context.update(
+                {
+                    "skill": preferred_skill,
+                    "arguments": current_arguments,
+                    "missing": current_missing,
+                    "cli_observations": collect_cli_observations(
+                        preferred_skill,
+                        current_arguments,
+                        current_missing,
+                    ),
+                }
+            )
         plan = call_llm(
             request.message,
             documents,
-            request.context,
+            llm_context or None,
             preferred_skill,
+            session_history,
         ) or fallback_plan(request.message)
+        if plan.get("kind") == "answer":
+            if preferred_skill in {
+                "project.create",
+                "service.deploy",
+                "service.redeploy",
+            }:
+                verified_arguments = strict_arguments(
+                    request.message,
+                    preferred_skill,
+                    request.context,
+                    {},
+                )
+                try:
+                    current_preview = execute_cli_skill(
+                        preferred_skill,
+                        verified_arguments,
+                        dry_run=True,
+                    )
+                except SkillError:
+                    current_preview = {}
+                missing = current_preview.get("needs_input", [])
+                context = {
+                    "original_request": (
+                        request.context.get("original_request")
+                        if request.context
+                        else request.message
+                    ),
+                    "skill": preferred_skill,
+                    "arguments": verified_arguments,
+                    "missing": missing,
+                }
+                repository_observation = (
+                    llm_context.get("cli_observations", {})
+                    .get("repository", {})
+                )
+                if repository_observation.get("recommended"):
+                    context["suggestions"] = {
+                        "framework": repository_observation["recommended"]
+                    }
+                message = plan["message"]
+                confirmed = confirmed_information(verified_arguments)
+                if confirmed and "지금까지 확인된 정보" not in message:
+                    message += "\n\n" + confirmed
+                if current_preview and not missing:
+                    return respond({
+                        "mode": "llm",
+                        "message": plan["message"],
+                        "model": plan.get("model"),
+                        "skill": preferred_skill,
+                        "arguments": verified_arguments,
+                        "preview": current_preview,
+                        "requires_approval": True,
+                    })
+                return respond({
+                    "mode": "llm",
+                    "kind": "clarification",
+                    "message": message,
+                    "model": plan.get("model"),
+                    "skill": preferred_skill,
+                    "arguments": verified_arguments,
+                    "missing": missing,
+                    "context": context,
+                    "requires_approval": False,
+                })
+            return respond({
+                "mode": "llm",
+                "kind": "clarification" if request.context else "help",
+                "message": plan["message"],
+                "model": plan.get("model"),
+                "arguments": (
+                    request.context.get("arguments", {})
+                    if request.context
+                    else {}
+                ),
+                "missing": (
+                    request.context.get("missing", [])
+                    if request.context
+                    else []
+                ),
+                "context": request.context,
+                "requires_approval": False,
+            })
         skill = plan["skill"]
         arguments = strict_arguments(
             request.message,
@@ -481,21 +907,29 @@ def chat(request: ChatRequest):
             request,
         )
         if project_problem:
-            return project_problem
+            return respond(project_problem)
         if skill in READ_ONLY_SKILLS:
-            result = execute_skill(skill, arguments, dry_run=False)
-            return {
+            result = execute_cli_skill(
+                skill,
+                arguments,
+                dry_run=False,
+            )
+            return respond({
                 "mode": "llm" if os.getenv("LLM_API_KEY") else "fallback",
                 "message": plan.get("explanation", "Completed."),
                 "skill": skill,
                 "model": plan.get("model"),
                 "result": result,
                 "requires_approval": False,
-            }
+            })
         try:
-            preview = execute_skill(skill, arguments, dry_run=True)
+            preview = execute_cli_skill(
+                skill,
+                arguments,
+                dry_run=True,
+            )
         except SkillError as exc:
-            return {
+            return respond({
                 "mode": "local",
                 "kind": "clarification",
                 "message": (
@@ -516,7 +950,7 @@ def chat(request: ChatRequest):
                     "missing": [],
                 },
                 "requires_approval": False,
-            }
+            })
         if preview.get("needs_input"):
             details = preview.get("project_guidance")
             message = preview["message"]
@@ -525,7 +959,10 @@ def chat(request: ChatRequest):
             optional = preview.get("optional")
             if optional:
                 message += "\n\n선택 정보: " + ", ".join(optional)
-            return {
+            confirmed = confirmed_information(arguments)
+            if confirmed:
+                message = confirmed + "\n\n" + message
+            return respond({
                 "mode": "llm" if os.getenv("LLM_API_KEY") else "fallback",
                 "kind": "clarification",
                 "message": message,
@@ -544,8 +981,8 @@ def chat(request: ChatRequest):
                     "missing": preview["needs_input"],
                 },
                 "requires_approval": False,
-            }
-        return {
+            })
+        return respond({
             "mode": "llm" if os.getenv("LLM_API_KEY") else "fallback",
             "message": plan.get("explanation", "Approval is required."),
             "skill": skill,
@@ -558,7 +995,7 @@ def chat(request: ChatRequest):
                 else None
             ),
             "requires_approval": True,
-        }
+        })
     except (SkillError, KeyError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
@@ -570,10 +1007,17 @@ def execute(request: ExecuteRequest):
     if request.skill not in READ_ONLY_SKILLS and not request.approved:
         raise HTTPException(status_code=409, detail="Explicit approval is required.")
     try:
-        return {
+        response = {
             "skill": request.skill,
-            "result": execute_skill(request.skill, request.arguments, dry_run=False),
+            "result": execute_cli_skill(
+                request.skill,
+                request.arguments,
+                dry_run=False,
+                approved=request.approved,
+            ),
         }
+        remember_execution(request.session_id, request.skill, request.resume)
+        return response
     except (SkillError, KeyError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
@@ -587,7 +1031,11 @@ def preview(request: PreviewRequest):
     try:
         return {
             "skill": request.skill,
-            "preview": execute_skill(request.skill, request.arguments, dry_run=True),
+            "preview": execute_cli_skill(
+                request.skill,
+                request.arguments,
+                dry_run=True,
+            ),
         }
     except (SkillError, KeyError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

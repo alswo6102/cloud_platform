@@ -68,7 +68,7 @@ print("OK natural_language_project_create")
 deploy_intent = chat("서비스를 새로 배포하고 싶어")
 assert deploy_intent["skill"] == "service.deploy", deploy_intent
 assert deploy_intent["kind"] == "clarification", deploy_intent
-assert "서비스는 기존 프로젝트 안에 배포됩니다" in deploy_intent["message"]
+assert any(item["field"] == "project" for item in deploy_intent["missing"])
 
 deploy_response = requests.post(
     f"{base}/chat",

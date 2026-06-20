@@ -9,6 +9,7 @@ import docker
 import shutil
 import psutil
 import requests
+import uuid
 from deployment_presets import (
     DEFAULT_CONTAINER_PORT,
     FRAMEWORK_PRESETS,
@@ -439,6 +440,8 @@ with st.sidebar:
                     st.error(f"프로젝트 생성 계획 실패: {exc}")
 
 if st.session_state.get("assistant_visible"):
+    if "assistant_session_id" not in st.session_state:
+        st.session_state.assistant_session_id = str(uuid.uuid4())
     if "assistant_messages" not in st.session_state:
         st.session_state.assistant_messages = [
             {
@@ -485,6 +488,8 @@ if st.session_state.get("assistant_visible"):
                                 "skill": pending["skill"],
                                 "arguments": pending["arguments"],
                                 "approved": True,
+                                "session_id": st.session_state.assistant_session_id,
+                                "resume": pending.get("resume"),
                             },
                         )
                     st.session_state.assistant_messages.append(
@@ -525,7 +530,10 @@ if st.session_state.get("assistant_visible"):
             st.session_state.assistant_messages.append({"role": "user", "text": prompt})
             try:
                 with st.spinner("Selecting and running a skill..."):
-                    payload = {"message": prompt}
+                    payload = {
+                        "message": prompt,
+                        "session_id": st.session_state.assistant_session_id,
+                    }
                     clarification = st.session_state.get("assistant_clarification")
                     if clarification:
                         payload["context"] = clarification
@@ -546,16 +554,7 @@ if st.session_state.get("assistant_visible"):
                 elif answer.get("kind") == "clarification":
                     st.session_state.assistant_clarification = answer["context"]
                     assistant_text = answer["message"]
-                    assistant_data = {
-                        "필요한 정보": [
-                            item["label"] for item in answer.get("missing", [])
-                        ],
-                        "현재까지 파악한 값": answer.get("arguments", {}),
-                    }
-                    if answer.get("choices"):
-                        assistant_data["선택 가능한 작업"] = [
-                            item["label"] for item in answer["choices"]
-                        ]
+                    assistant_data = None
                 else:
                     st.session_state.pop("assistant_clarification", None)
                     if answer.get("kind") in {"help", "guide"}:
