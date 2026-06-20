@@ -26,6 +26,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY agent/ /app/
 COPY deployment_presets.py /app/
 COPY README_DEV.md /app/docs/development-workflow.md
+RUN printf '#!/bin/sh\nexec python /app/cli.py "$@"\n' > /usr/local/bin/cloud-platform \
+    && chmod +x /usr/local/bin/cloud-platform
 
 EXPOSE 8080
 

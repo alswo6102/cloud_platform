@@ -94,6 +94,19 @@ assert r.json()["result"]["passed"], r.text
 '
 }
 
+check_cli() {
+    docker exec cloud-platform-skill-agent cloud-platform skills | python3 -c '
+import json, sys
+data=json.load(sys.stdin)
+assert len(data["skills"]) == 12
+'
+    docker exec cloud-platform-skill-agent cloud-platform projects >/dev/null
+    if docker exec cloud-platform-skill-agent cloud-platform execute project.create \
+        --arguments '{"project":"must-not-run"}' >/dev/null 2>&1; then
+        return 1
+    fi
+}
+
 check_cleanup() {
     test ! -e /srv/projects/skill-qa
 }
@@ -108,6 +121,7 @@ run_check fallback "LLM rate-limit fallback" check_llm_fallback
 run_check dashboard "Dashboard health" check_dashboard
 run_check agent "Agent, skill catalog, and presets" check_agent
 run_check runtime "Runtime deterministic QA" check_runtime_qa
+run_check cli "Strict CLI adapter and approval guard" check_cli
 
 if [[ "$FAST" == false ]]; then
     run_check framework_build "Generated framework Dockerfile build and runtime" \

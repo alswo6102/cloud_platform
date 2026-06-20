@@ -73,6 +73,35 @@ into both application images. This is the single source of truth for the
 dashboard selector, manuals, Agent schemas, generated Dockerfiles, default port
 3000, and suggested environment-variable names.
 
+## Strict Conversation and CLI Boundaries
+
+For project creation, service deployment, and service redeployment, LLM
+arguments are treated as suggestions. The Agent keeps only values explicitly
+present in the user's current message or previously verified conversation
+state. Invented project names, service names, repository URLs, and framework
+values are discarded.
+
+Projects have three states:
+
+- `valid`: directory and `docker-compose.yml` both exist.
+- `incomplete`: directory exists but Compose is missing.
+- `missing`: no managed directory exists.
+
+Incomplete projects are diagnosed and can be repaired through the
+`project.create` preview and approval flow.
+
+The Agent image also exposes a strict CLI over the same runtime:
+
+```sh
+docker exec cloud-platform-skill-agent cloud-platform skills
+docker exec cloud-platform-skill-agent cloud-platform projects
+docker exec cloud-platform-skill-agent cloud-platform preview project.create \
+  --arguments '{"project":"sample"}'
+```
+
+Mutation execution requires `--approve`. The CLI accepts JSON arguments and
+does not accept shell commands, Docker flags, or arbitrary paths.
+
 ## Secrets
 
 Runtime LLM settings are stored in `.agent.env`. Do not commit or print API

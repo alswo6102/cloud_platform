@@ -171,6 +171,17 @@ calling, and the Agent accepts only one allowlisted tool call with schema-bound
 arguments. It cannot provide shell commands, arbitrary paths, Docker flags, or
 executable code.
 
+For project and deployment mutations, planner arguments are not trusted
+directly. The Agent retains only values explicitly present in the current user
+message or already verified conversation state. Project existence is checked
+before preview generation. Missing and incomplete projects return structured
+clarification responses instead of late Compose errors.
+
+The dashboard and Agent now share the same project definition: a managed
+project must contain `/srv/projects/<name>/docker-compose.yml`. Legacy
+directories without Compose are displayed as incomplete and can be repaired
+through the normal preview and approval flow.
+
 `service.deploy` accepts only public GitHub HTTPS repository URLs. It clones
 into an existing managed project, requires a root-level Dockerfile, writes one
 fixed Compose service definition, builds and starts that service, verifies its
@@ -327,6 +338,18 @@ cd /opt/cloud_platform
 
 Use `--fast` to omit mutation builds. Detailed command output is hidden for
 passing checks and displayed only for failures.
+
+Strict CLI examples:
+
+```bash
+docker exec cloud-platform-skill-agent cloud-platform skills
+docker exec cloud-platform-skill-agent cloud-platform projects
+docker exec cloud-platform-skill-agent cloud-platform preview service.deploy \
+  --arguments '{"project":"demoa","service":"web","repo_url":"https://github.com/example/web","framework":"vite"}'
+```
+
+Mutation calls require `cloud-platform execute <skill> --approve`. The CLI,
+REST API, and future MCP adapter all call the same allowlisted Python runtime.
 
 Full local workflow:
 

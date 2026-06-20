@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import os
+import re
 from typing import Any
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
@@ -18,6 +20,29 @@ from runtime import (
 )
 
 app = FastAPI(title="Cloud Platform Skill Agent", version="0.1.0")
+PROJECTS_ROOT = Path(os.getenv("PROJECTS_ROOT", "/srv/projects"))
+GITHUB_URL_RE = re.compile(
+    r"https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:\.git)?"
+)
+FRAMEWORK_ALIASES = {
+    "기존 dockerfile": "existing",
+    "기존 도커파일": "existing",
+    "existing": "existing",
+    "vite": "vite",
+    "react": "react",
+    "리액트": "react",
+    "next.js": "nextjs",
+    "nextjs": "nextjs",
+    "express": "express",
+    "nest": "express",
+    "fastapi": "fastapi",
+    "flask": "flask",
+    "django": "django",
+    "spring maven": "spring-maven",
+    "spring gradle": "spring-gradle",
+    "go": "go",
+    "golang": "go",
+}
 
 HELP_COMMANDS = {
     "도움말",
@@ -89,11 +114,11 @@ DEPLOYMENT_GUIDE_PHRASES = {
 
 def preferred_skill_for(message: str, context: dict[str, Any] | None) -> str | None:
     text = message.lower()
-    if "프로젝트" in text and any(word in text for word in ("신규", "새 ", "새로", "추가", "생성", "만들")):
+    if "프로젝트" in text and any(word in text for word in ("신규", "새 ", "새로", "추가", "생성", "만들", "복구")):
         return "project.create"
     if "서비스" in text and any(word in text for word in ("재배포", "최신 코드", "다시 배포", "새 이미지")):
         return "service.redeploy"
-    if "서비스" in text and any(word in text for word in ("새로", "신규", "추가", "새 서비스")):
+    if "서비스" in text and any(word in text for word in ("새로", "신규", "추가", "새 서비스", "등록")):
         return "service.deploy"
     if "서비스" in text and "배포" in text:
         return "service.deploy"
@@ -164,6 +189,211 @@ def ambiguity_for(message: str, context: dict[str, Any] | None) -> dict[str, Any
     return None
 
 
+def explicit_name(message: str, label: str) -> str | None:
+    patterns = {
+        "project": [
+            r"(?:기존\s*)?프로젝트\s*(?:이름)?\s*(?:은|는|:|=)?\s*([A-Za-z0-9][A-Za-z0-9_.-]{0,63})",
+            r"([A-Za-z0-9][A-Za-z0-9_.-]{0,63})\s*프로젝트",
+        ],
+        "service": [
+            r"(?:새\s*)?서비스\s*(?:이름)?\s*(?:은|는|:|=)?\s*([A-Za-z0-9][A-Za-z0-9_.-]{0,63})",
+            r"([A-Za-z0-9][A-Za-z0-9_.-]{0,63})\s*서비스",
+        ],
+    }
+    for pattern in patterns[label]:
+        match = re.search(pattern, message, re.IGNORECASE)
+        if match:
+            return match.group(1)
+    return None
+
+
+def explicit_arguments(message: str, skill: str) -> dict[str, Any]:
+    lowered = message.lower()
+    arguments: dict[str, Any] = {}
+    if skill in {"project.create", "service.deploy", "service.redeploy"}:
+        project = explicit_name(message, "project")
+        if project:
+            arguments["project"] = project
+    if skill in {"service.deploy", "service.redeploy"}:
+        service = explicit_name(message, "service")
+        if service:
+            arguments["service"] = service
+    if skill == "service.deploy":
+        url = GITHUB_URL_RE.search(message)
+        if url:
+            arguments["repo_url"] = url.group(0)
+        for alias, framework in FRAMEWORK_ALIASES.items():
+            if alias in lowered:
+                arguments["framework"] = framework
+                break
+        container_port = re.search(
+            r"컨테이너\s*포트(?:는|은|:|=)?\s*(\d{1,5})",
+            message,
+            re.IGNORECASE,
+        )
+        if container_port:
+            arguments["container_port"] = int(container_port.group(1))
+        host_port = re.search(
+            r"호스트\s*포트(?:는|은|:|=)?\s*(9\d{3})",
+            message,
+            re.IGNORECASE,
+        )
+        if host_port:
+            arguments["host_port"] = int(host_port.group(1))
+        if "웹 서비스" in lowered:
+            arguments["is_web"] = True
+        env_match = re.search(
+            r"환경변수\s*(?:이름)?(?:은|는|:|=)?\s*([A-Za-z_][A-Za-z0-9_,\s]*)",
+            message,
+            re.IGNORECASE,
+        )
+        if env_match:
+            arguments["environment_names"] = [
+                item.strip()
+                for item in env_match.group(1).split(",")
+                if item.strip()
+            ]
+    return arguments
+
+
+def strict_arguments(
+    message: str,
+    skill: str,
+    context: dict[str, Any] | None,
+    planner_arguments: dict[str, Any],
+) -> dict[str, Any]:
+    if skill not in {"project.create", "service.deploy", "service.redeploy"}:
+        return planner_arguments
+    verified = {}
+    if context and context.get("skill") == skill:
+        verified.update(context.get("arguments") or {})
+    verified.update(explicit_arguments(message, skill))
+    missing_fields = {
+        item.get("field")
+        for item in (context or {}).get("missing", [])
+    }
+    bare = message.strip()
+    if len(missing_fields) == 1:
+        field = next(iter(missing_fields))
+        if field in {"project", "service"} and re.fullmatch(
+            r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}",
+            bare,
+        ):
+            verified[field] = bare
+        elif field == "repo_url" and GITHUB_URL_RE.fullmatch(bare):
+            verified[field] = bare
+        elif field == "framework":
+            framework = FRAMEWORK_ALIASES.get(bare.lower())
+            if framework:
+                verified[field] = framework
+    return verified
+
+
+def project_state(name: str) -> str:
+    path = PROJECTS_ROOT / name
+    if not path.exists():
+        return "missing"
+    if not (path / "docker-compose.yml").is_file():
+        return "incomplete"
+    return "valid"
+
+
+def project_problem_response(
+    skill: str,
+    arguments: dict[str, Any],
+    request: "ChatRequest",
+) -> dict[str, Any] | None:
+    if skill not in {"service.deploy", "service.redeploy"}:
+        return None
+    project = arguments.get("project")
+    if not project:
+        return None
+    state = project_state(str(project))
+    if state == "valid":
+        return None
+
+    if state == "incomplete":
+        message = (
+            f"`{project}` 디렉터리는 존재하지만 `docker-compose.yml`이 없어 "
+            "완전한 관리 프로젝트가 아닙니다.\n\n"
+            "이 프로젝트를 복구하면 빈 Compose 파일을 만든 뒤 서비스 배포를 계속할 수 있습니다. "
+            f"`{project} 프로젝트를 복구해줘`라고 요청해주세요."
+        )
+    else:
+        message = (
+            f"`{project}` 프로젝트는 서버의 관리 프로젝트 목록에 없습니다.\n\n"
+            f"새 프로젝트라면 `{project} 프로젝트를 만들어줘`라고 요청한 뒤 "
+            "서비스 배포를 다시 진행해주세요."
+        )
+    return {
+        "mode": "local",
+        "kind": "clarification",
+        "message": message,
+        "skill": skill,
+        "arguments": {
+            key: value for key, value in arguments.items() if key != "project"
+        },
+        "missing": [{"field": "project", "label": "유효한 기존 프로젝트"}],
+        "choices": [
+            {
+                "skill": "project.create",
+                "label": (
+                    f"{project} 프로젝트 복구"
+                    if state == "incomplete"
+                    else f"{project} 프로젝트 생성"
+                ),
+                "arguments": {"project": project},
+            }
+        ],
+        "context": {
+            "original_request": (
+                request.context.get("original_request")
+                if request.context
+                else request.message
+            ),
+            "skill": skill,
+            "arguments": {
+                key: value for key, value in arguments.items() if key != "project"
+            },
+            "missing": [{"field": "project", "label": "유효한 기존 프로젝트"}],
+        },
+        "requires_approval": False,
+    }
+
+
+def no_project_transition(
+    message: str,
+    context: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    if not context or context.get("skill") != "service.deploy":
+        return None
+    normalized = re.sub(r"\s+", "", message.lower())
+    if not any(
+        phrase in normalized
+        for phrase in ("프로젝트없어", "기존프로젝트없어", "프로젝트없다", "없다니까")
+    ):
+        return None
+    return {
+        "mode": "local",
+        "kind": "clarification",
+        "message": (
+            "기존 프로젝트가 없다면 먼저 새 프로젝트를 만들어야 합니다.\n\n"
+            "생성할 프로젝트 이름을 알려주세요. 예: `rea 프로젝트를 만들어줘`"
+        ),
+        "skill": "project.create",
+        "arguments": {},
+        "missing": [{"field": "project", "label": "새 프로젝트 이름"}],
+        "context": {
+            "original_request": context.get("original_request"),
+            "skill": "project.create",
+            "arguments": {},
+            "missing": [{"field": "project", "label": "새 프로젝트 이름"}],
+            "resume": context,
+        },
+        "requires_approval": False,
+    }
+
+
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=2000)
     context: dict[str, Any] | None = None
@@ -226,6 +456,9 @@ def chat(request: ChatRequest):
     ambiguous = ambiguity_for(request.message, request.context)
     if ambiguous:
         return ambiguous
+    no_project = no_project_transition(request.message, request.context)
+    if no_project:
+        return no_project
     documents = skill_documents()
     try:
         preferred_skill = preferred_skill_for(request.message, request.context)
@@ -236,7 +469,19 @@ def chat(request: ChatRequest):
             preferred_skill,
         ) or fallback_plan(request.message)
         skill = plan["skill"]
-        arguments = plan.get("arguments", {})
+        arguments = strict_arguments(
+            request.message,
+            skill,
+            request.context,
+            plan.get("arguments", {}),
+        )
+        project_problem = project_problem_response(
+            skill,
+            arguments,
+            request,
+        )
+        if project_problem:
+            return project_problem
         if skill in READ_ONLY_SKILLS:
             result = execute_skill(skill, arguments, dry_run=False)
             return {
@@ -247,7 +492,31 @@ def chat(request: ChatRequest):
                 "result": result,
                 "requires_approval": False,
             }
-        preview = execute_skill(skill, arguments, dry_run=True)
+        try:
+            preview = execute_skill(skill, arguments, dry_run=True)
+        except SkillError as exc:
+            return {
+                "mode": "local",
+                "kind": "clarification",
+                "message": (
+                    f"요청을 실행 계획으로 만들 수 없습니다: {exc}\n\n"
+                    "현재 입력값을 확인하고 잘못된 항목만 다시 알려주세요."
+                ),
+                "skill": skill,
+                "arguments": arguments,
+                "missing": [],
+                "context": {
+                    "original_request": (
+                        request.context.get("original_request")
+                        if request.context
+                        else request.message
+                    ),
+                    "skill": skill,
+                    "arguments": arguments,
+                    "missing": [],
+                },
+                "requires_approval": False,
+            }
         if preview.get("needs_input"):
             details = preview.get("project_guidance")
             message = preview["message"]
@@ -283,6 +552,11 @@ def chat(request: ChatRequest):
             "model": plan.get("model"),
             "arguments": arguments,
             "preview": preview,
+            "resume": (
+                request.context.get("resume")
+                if request.context
+                else None
+            ),
             "requires_approval": True,
         }
     except (SkillError, KeyError, ValueError) as exc:

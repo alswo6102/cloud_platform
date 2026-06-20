@@ -193,7 +193,21 @@ def get_public_ip() -> str:
 
 def get_projects() -> list:
     if not PROJECTS_ROOT.exists(): PROJECTS_ROOT.mkdir(parents=True)
-    return sorted([d.name for d in PROJECTS_ROOT.iterdir() if d.is_dir()])
+    return sorted([
+        d.name
+        for d in PROJECTS_ROOT.iterdir()
+        if d.is_dir() and (d / "docker-compose.yml").is_file()
+    ])
+
+
+def get_incomplete_projects() -> list:
+    if not PROJECTS_ROOT.exists():
+        return []
+    return sorted([
+        d.name
+        for d in PROJECTS_ROOT.iterdir()
+        if d.is_dir() and not (d / "docker-compose.yml").is_file()
+    ])
 
 
 def get_project_services(project_name: str) -> (dict, dict):
@@ -382,6 +396,12 @@ with st.sidebar:
     st.header("Project Management")
     projects = get_projects()
     selected_project = st.selectbox("관리할 프로젝트 선택", options=projects, key="project_selector")
+    incomplete_projects = get_incomplete_projects()
+    if incomplete_projects:
+        st.warning(
+            "Compose 파일이 없어 복구가 필요한 프로젝트: "
+            + ", ".join(incomplete_projects)
+        )
 
       # --- [추가된 부분] 프로젝트 선택이 변경되면 모달 관련 상태를 모두 초기화 ---
       # 이전에 선택된 프로젝트를 session_state에 저장하여 변경 여부를 감지
@@ -400,12 +420,23 @@ with st.sidebar:
         with st.form("new_project_form"):
             new_project_name = st.text_input("새 프로젝트 이름")
             if st.form_submit_button("생성"):
-                if new_project_name and new_project_name.isalnum():
-                    (PROJECTS_ROOT / new_project_name).mkdir(exist_ok=True)
-                    st.session_state.last_action_message = (f"✅ Project '{new_project_name}' created!");
+                try:
+                    result = skill_agent_request(
+                        "/preview",
+                        {
+                            "skill": "project.create",
+                            "arguments": {"project": new_project_name},
+                        },
+                    )
+                    st.session_state.assistant_pending = {
+                        "skill": "project.create",
+                        "arguments": {"project": new_project_name},
+                        "preview": result["preview"],
+                    }
+                    st.session_state.assistant_visible = True
                     st.rerun()
-                else:
-                    st.warning("프로젝트 이름을 영문/숫자로 입력하세요.")
+                except (requests.RequestException, RuntimeError) as exc:
+                    st.error(f"프로젝트 생성 계획 실패: {exc}")
 
 if st.session_state.get("assistant_visible"):
     if "assistant_messages" not in st.session_state:
@@ -471,7 +502,12 @@ if st.session_state.get("assistant_visible"):
                             "data": executed["result"],
                         }
                     )
-                    st.session_state.pop("assistant_clarification", None)
+                    if pending["skill"] == "project.create" and pending.get("resume"):
+                        resume = pending["resume"]
+                        resume.setdefault("arguments", {})["project"] = pending["arguments"]["project"]
+                        st.session_state.assistant_clarification = resume
+                    else:
+                        st.session_state.pop("assistant_clarification", None)
                 except (requests.RequestException, RuntimeError) as exc:
                     st.session_state.assistant_messages.append(
                         {"role": "assistant", "text": f"실행에 실패했습니다: {exc}"}
@@ -500,6 +536,7 @@ if st.session_state.get("assistant_visible"):
                         "skill": answer["skill"],
                         "arguments": answer["arguments"],
                         "preview": answer["preview"],
+                        "resume": answer.get("resume"),
                     }
                     assistant_text = (
                         f"{answer['message']} `{answer['skill']}` 실행 전 검증이 통과했습니다. "

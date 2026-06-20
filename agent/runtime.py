@@ -352,11 +352,19 @@ def server_health() -> dict[str, Any]:
 
 def project_list() -> dict[str, Any]:
     projects = []
+    incomplete = []
     for path in sorted(PROJECTS_ROOT.iterdir() if PROJECTS_ROOT.exists() else []):
         if path.is_dir() and (path / "docker-compose.yml").exists():
             data = yaml.safe_load((path / "docker-compose.yml").read_text()) or {}
             projects.append({"name": path.name, "services": sorted(data.get("services", {}).keys())})
-    return {"projects": projects}
+        elif path.is_dir():
+            incomplete.append(
+                {
+                    "name": path.name,
+                    "reason": "docker-compose.yml is missing",
+                }
+            )
+    return {"projects": projects, "incomplete_projects": incomplete}
 
 
 def missing_input(
@@ -401,13 +409,20 @@ def project_create(project: str | None, dry_run: bool) -> dict[str, Any]:
 
     project = validate_name(str(project), "project")
     destination = PROJECTS_ROOT / project
-    if destination.exists():
+    compose = destination / "docker-compose.yml"
+    repairing = destination.is_dir() and not compose.exists()
+    if destination.exists() and not repairing:
         raise SkillError(f"Project already exists: {project}")
     plan = {
         "project": project,
         "path": str(destination),
+        "operation": "repair" if repairing else "create",
         "steps": [
-            "create the managed project directory",
+            (
+                "reuse the existing incomplete project directory"
+                if repairing
+                else "create the managed project directory"
+            ),
             "create an empty docker-compose.yml",
             "verify the project appears in the managed project list",
         ],
@@ -416,16 +431,17 @@ def project_create(project: str | None, dry_run: bool) -> dict[str, Any]:
         return {"dry_run": True, **plan}
 
     try:
-        destination.mkdir(parents=False)
-        (destination / "docker-compose.yml").write_text(
-            "version: '3.8'\nservices: {}\n"
-        )
+        if not repairing:
+            destination.mkdir(parents=False)
+        compose.write_text("version: '3.8'\nservices: {}\n")
         projects = {item["name"] for item in project_list()["projects"]}
         if project not in projects:
             raise SkillError("Created project was not found during verification")
         return {"dry_run": False, **plan, "verified": True}
     except Exception:
-        if destination.exists():
+        if compose.exists():
+            compose.unlink()
+        if destination.exists() and not repairing:
             shutil.rmtree(destination)
         raise
 

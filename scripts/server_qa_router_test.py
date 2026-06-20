@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import os
+import shutil
 import sys
 from pathlib import Path
 
@@ -9,11 +10,19 @@ sys.path.insert(0, str(ROOT / "agent"))
 
 from deployment_presets import FRAMEWORK_PRESETS, render_dockerfile
 
-os.environ.setdefault("PROJECTS_ROOT", "/tmp/cloud-platform-router-projects")
-Path(os.environ["PROJECTS_ROOT"]).mkdir(parents=True, exist_ok=True)
+PROJECTS = Path("/tmp/cloud-platform-router-projects")
+shutil.rmtree(PROJECTS, ignore_errors=True)
+PROJECTS.mkdir(parents=True)
+os.environ["PROJECTS_ROOT"] = str(PROJECTS)
 
 import app
 import runtime
+
+(PROJECTS / "demoa").mkdir()
+(PROJECTS / "demoa" / "docker-compose.yml").write_text(
+    "version: '3.8'\nservices: {}\n"
+)
+(PROJECTS / "rea").mkdir()
 
 
 assert app.preferred_skill_for("신규 프로젝트를 만들고 싶어", None) == "project.create"
@@ -33,7 +42,7 @@ missing = runtime.service_deploy(
     None, None, None, None, None, True, None, None, True
 )
 assert missing["needs_input"], missing
-assert "먼저 `신규 프로젝트를 만들어줘`" in missing["project_guidance"], missing
+assert "현재 프로젝트: demoa" in missing["project_guidance"], missing
 print("OK deployment_prerequisite")
 
 for framework in FRAMEWORK_PRESETS:
@@ -43,3 +52,50 @@ for framework in FRAMEWORK_PRESETS:
     assert "EXPOSE 3000" in dockerfile, framework
     assert dockerfile.strip(), framework
 print("OK framework_templates")
+
+deploy_context = {
+    "original_request": "서비스를 새로 배포하고 싶어",
+    "skill": "service.deploy",
+    "arguments": {},
+    "missing": [
+        {"field": "project"},
+        {"field": "service"},
+        {"field": "repo_url"},
+        {"field": "framework"},
+    ],
+}
+transition = app.no_project_transition("기존 프로젝트 없어", deploy_context)
+assert transition and transition["skill"] == "project.create", transition
+print("OK no_project_transition")
+
+project_args = app.strict_arguments(
+    "rea",
+    "project.create",
+    transition["context"],
+    {"project": "invented-project"},
+)
+assert project_args == {"project": "rea"}, project_args
+print("OK explicit_slot_only")
+
+inferred = app.strict_arguments(
+    "rea",
+    "service.deploy",
+    deploy_context,
+    {"project": "rea", "framework": "react"},
+)
+assert inferred == {}, inferred
+print("OK reject_inferred_arguments")
+
+problem = app.project_problem_response(
+    "service.deploy",
+    {"project": "rea", "service": "reafront"},
+    app.ChatRequest(message="기존 프로젝트 이름은 rea"),
+)
+assert problem and "docker-compose.yml" in problem["message"], problem
+print("OK incomplete_project_diagnosis")
+
+repair_preview = runtime.project_create("rea", dry_run=True)
+assert repair_preview["operation"] == "repair", repair_preview
+runtime.project_create("rea", dry_run=False)
+assert (PROJECTS / "rea" / "docker-compose.yml").is_file()
+print("OK incomplete_project_repair")
