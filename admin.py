@@ -9,7 +9,11 @@ import docker
 import shutil
 import psutil
 import requests
-from dockerfile_parse import DockerfileParser
+from deployment_presets import (
+    DEFAULT_CONTAINER_PORT,
+    FRAMEWORK_PRESETS,
+    framework_manual,
+)
 
 # --- 설정값 ---
 PROJECTS_ROOT = Path("/srv/projects")
@@ -511,6 +515,10 @@ if st.session_state.get("assistant_visible"):
                         ],
                         "현재까지 파악한 값": answer.get("arguments", {}),
                     }
+                    if answer.get("choices"):
+                        assistant_data["선택 가능한 작업"] = [
+                            item["label"] for item in answer["choices"]
+                        ]
                 else:
                     st.session_state.pop("assistant_clarification", None)
                     if answer.get("kind") in {"help", "guide"}:
@@ -647,36 +655,22 @@ if selected_project:
                                          use_container_width=True):
                     st.session_state.show_env_modal = service_name
                     st.session_state.show_env_folder = meta['folder']
-                    # Initialize env_vars in session state when the button is clicked
                     st.session_state.env_vars = []
-                    dockerfile_path = project_path / meta['folder'] / "Dockerfile"
-                    if dockerfile_path.exists():
-                        try:
-                            dfp = DockerfileParser(path=str(dockerfile_path))
-                            # Find all ARG keys first, this is safe
-                            args = {inst['value'].split('=')[0].strip(): None for inst in dfp.structure if
-                                    inst['instruction'].upper() == 'ARG'}
-
-                            for inst in dfp.structure:
-                                if inst['instruction'].upper() == 'ENV':
-                                    env_line = inst['value']
-                                    parts = []
-                                    # Safely parse both "KEY=VALUE" and "KEY VALUE" formats
-                                    if '=' in env_line:
-                                        parts = env_line.split('=', 1)
-                                    else:
-                                        parts = env_line.split(None, 1)
-
-                                    # Only proceed if we successfully unpacked into two parts
-                                    if len(parts) == 2:
-                                        key, val = parts
-                                        key = key.strip()
-                                        # Only show variables in the UI that are paired with an ARG
-                                        if key in args:
-                                            val = val.strip().replace(f'${{{key}}}', '').replace(f'${key}', '')
-                                            st.session_state.env_vars.append({'key': key, 'value': val})
-                        except Exception as e:
-                            st.error(f"Dockerfile 파싱 오류: {e}")
+                    try:
+                        with open(compose_file, "r") as f:
+                            compose_data = yaml.safe_load(f) or {}
+                        current_environment = (
+                            compose_data.get("services", {})
+                            .get(service_name, {})
+                            .get("environment", {})
+                        )
+                        if isinstance(current_environment, dict):
+                            st.session_state.env_vars = [
+                                {"key": key, "value": value or ""}
+                                for key, value in current_environment.items()
+                            ]
+                    except Exception as e:
+                        st.error(f"환경변수 로드 오류: {e}")
 
                 # Delete Button
                 if action_cols[2].button("🗑️", key=f"delete_{service_name}", help="Delete", use_container_width=True):
@@ -717,10 +711,10 @@ if selected_project:
         def show_env_modal():
             # 함수 안에서는 session_state에서 직접 값을 가져와 사용합니다.
             current_service_name = st.session_state.show_env_modal
-            current_folder_name = st.session_state.show_env_folder
-            dockerfile_path = project_path / current_folder_name / "Dockerfile"
-
-            st.info("Dockerfile에 `ARG VAR_NAME`과 `ENV VAR_NAME=VAR_NAME` 형식으로 추가/수정됩니다.")
+            st.info(
+                "값은 LLM이나 채팅으로 전송되지 않고 Compose 서비스의 런타임 환경변수로 저장됩니다. "
+                "저장 후 해당 서비스만 재생성합니다."
+            )
 
             if 'env_vars' not in st.session_state:
                 st.session_state.env_vars = []
@@ -737,7 +731,12 @@ if selected_project:
                 cols = st.columns([5, 5, 1], vertical_alignment="bottom")
 
                 new_key = cols[0].text_input("Variable Name", value=var.get('key', ''), key=f"key_{i}")
-                new_value = cols[1].text_input("Variable Value", value=var.get('value', ''), key=f"value_{i}")
+                new_value = cols[1].text_input(
+                    "Variable Value",
+                    value=var.get('value', ''),
+                    key=f"value_{i}",
+                    type="password",
+                )
                 st.session_state.env_vars[i] = {'key': new_key, 'value': new_value}
 
                 if cols[2].button("➖", key=f"del_var_{i}", help="Remove variable"):
@@ -760,50 +759,33 @@ if selected_project:
             if st.button("환경변수 저장", type="primary"):
                 try:
                     with st.spinner(f"'{current_service_name}' 환경변수를 저장 중입니다..."):
-                        if not dockerfile_path.exists():
-                            st.error(f"Dockerfile not found at {dockerfile_path}")
-                            return
-
-                        dfp = DockerfileParser(path=str(dockerfile_path))
-                        manageable_keys = {inst['value'].split('=')[0].strip() for inst in dfp.structure if
-                                           inst['instruction'].upper() == 'ARG'}
-
-                        preserved_instructions = []
-                        for inst in dfp.structure:
-                            if inst['instruction'].upper() in ('ARG', 'ENV'):
-                                key = inst['value'].split('=', 1)[0].split(None, 1)[0].strip()
-                                if key not in manageable_keys:
-                                    preserved_instructions.append(inst['content'])
-                            else:
-                                preserved_instructions.append(inst['content'])
-
-                        new_env_instructions = []
-                        for var in st.session_state.env_vars:
-                            key = var.get('key', '').strip()
-                            if key:
-                                new_env_instructions.append(f"ARG {key}")
-                                new_env_instructions.append(f"ENV {key}={key}")
-
-                        insert_pos = next((i for i, line in enumerate(preserved_instructions) if
-                                           line.strip().upper().startswith('FROM')), 0) + 1
-
-                        final_instructions = preserved_instructions[
-                                                 :insert_pos] + new_env_instructions + preserved_instructions[
-                                                 insert_pos:]
-
                         with open(compose_file, 'r') as f:
-                            compose_data = yaml.safe_load(f)
+                            compose_data = yaml.safe_load(f) or {}
 
                         service_def = compose_data['services'][current_service_name]
-                        service_def.setdefault('build', {})['args'] = {
-                            var.get('key'): var.get('value')
+                        service_def['environment'] = {
+                            var.get('key', '').strip(): var.get('value', '')
                             for var in st.session_state.env_vars if var.get('key')
                         }
                         with open(compose_file, 'w') as f:
                             yaml.dump(compose_data, f, sort_keys=False)
-
-                        with open(dockerfile_path, "w") as f:
-                            f.write("\n".join(final_instructions))
+                        subprocess.run(
+                            [
+                                "docker-compose",
+                                "-p",
+                                selected_project,
+                                "up",
+                                "-d",
+                                "--force-recreate",
+                                "--no-build",
+                                current_service_name,
+                            ],
+                            cwd=project_path,
+                            check=True,
+                            capture_output=True,
+                            text=True,
+                            timeout=300,
+                        )
 
                     st.session_state.last_action_message = f"Variables for '{current_service_name}' saved."
                     del st.session_state['show_env_modal']
@@ -835,73 +817,108 @@ if selected_project:
     st.markdown("---")
     st.subheader(f"✚ Add New Service to [{selected_project}]")
     with st.expander("📘 Show Build Manual & Tips", expanded=False):
-        tip_selection = st.selectbox(
-            "Select a service type for build tips:",
-            ["Core Principles", "React/Frontend (Nginx)", "Python/Backend", "Other Languages"],
-            index=0
-        )
-
+        manual_options = ["Core Principles", *FRAMEWORK_PRESETS.keys()]
+        tip_selection = st.selectbox("Framework manual", manual_options, index=0)
         if tip_selection == "Core Principles":
             st.markdown(get_general_build_tips())
-        elif tip_selection == "React/Frontend (Nginx)":
-            st.markdown(get_react_build_tips())
-        elif tip_selection == "Python/Backend":
-            st.markdown(get_backend_build_tips())
-        elif tip_selection == "Other Languages":
-            st.markdown(get_other_build_tips())
+        else:
+            st.markdown(framework_manual(tip_selection))
 
     with st.form("new_service_form"):
-        st.write("위 **Build Manual을 반드시 참고**하여 당신의 Git Repository에 필요한 파일들을 준비해주세요.")
+        st.write(
+            "GitHub 저장소와 프레임워크만 선택하면 기본 Dockerfile과 컨테이너 포트 "
+            f"`{DEFAULT_CONTAINER_PORT}`을 자동 적용합니다."
+        )
         service_name = st.text_input("새 서비스 이름 (예: frontend)")
-        git_url = st.text_input("Git Repository URL")
-        container_port = st.number_input("컨테이너 내부 포트 (Dockerfile의 EXPOSE 또는 CMD에서 사용하는 포트)", value=3000)
+        git_url = st.text_input("Public GitHub Repository URL")
+        framework = st.selectbox(
+            "Framework preset",
+            options=list(FRAMEWORK_PRESETS),
+            format_func=lambda key: FRAMEWORK_PRESETS[key]["label"],
+            index=1,
+        )
         is_web_service = st.checkbox("사용자 화면(프론트엔드) 서비스인가요? (바로가기 링크 생성)", value=True)
+        suggested_env = FRAMEWORK_PRESETS[framework]["environment"]
+        env_names_text = st.text_input(
+            "환경변수 이름 (선택, 쉼표로 구분)",
+            value=", ".join(suggested_env),
+            help="이름만 등록합니다. 실제 값은 배포 후 서비스의 ⚙️ 버튼에서 안전하게 입력하세요.",
+        )
 
-        if st.form_submit_button("추가 및 배포"):
+        if st.form_submit_button("배포 계획 확인"):
             if not all([service_name, git_url]):
                 st.warning("모든 필드를 입력하세요.")
             elif service_name in service_metadata:
                 st.error("이미 존재하는 서비스 이름입니다.")
             else:
-                with st.spinner(f"Adding service '{service_name}'..."):
-                    service_path = project_path / service_name
-                    try:
-                        new_port = find_next_available_port()
-                        subprocess.run(["git", "clone", git_url, str(service_path)], check=True, capture_output=True)
-                        if not (service_path / "Dockerfile").exists():
-                            st.error(f"배포 실패: '{service_path}' 폴더 안에 Dockerfile이 없습니다. 위 매뉴얼을 확인해주세요.");
-                            shutil.rmtree(service_path)  # Clean up failed clone
-                            st.stop()
+                arguments = {
+                    "project": selected_project,
+                    "service": service_name,
+                    "repo_url": git_url,
+                    "framework": framework,
+                    "is_web": is_web_service,
+                    "environment_names": [
+                        item.strip()
+                        for item in env_names_text.split(",")
+                        if item.strip()
+                    ],
+                }
+                try:
+                    result = skill_agent_request(
+                        "/preview",
+                        {"skill": "service.deploy", "arguments": arguments},
+                    )
+                    st.session_state.service_deploy_preview = {
+                        "arguments": arguments,
+                        "preview": result["preview"],
+                    }
+                    st.rerun()
+                except (requests.RequestException, RuntimeError) as exc:
+                    st.error(f"배포 계획 생성 실패: {exc}")
 
-                        compose_data = {'version': '3.8', 'services': {}}
-                        if compose_file.exists():
-                            with open(compose_file, 'r') as f:
-                                loaded = yaml.safe_load(f)
-                                if loaded: compose_data = loaded
+    deploy_preview = st.session_state.get("service_deploy_preview")
+    if deploy_preview:
+        st.info("아래 설정과 실행 단계를 확인한 뒤 승인해주세요.")
+        preview = deploy_preview["preview"]
+        st.markdown(
+            f"""
+- **프로젝트:** `{preview['project']}`
+- **서비스:** `{preview['service']}`
+- **프레임워크:** `{FRAMEWORK_PRESETS[preview['framework']]['label']}`
+- **Dockerfile:** {preview['dockerfile']}
+- **포트:** `{preview['host_port']} → {preview['container_port']}`
+- **환경변수 이름:** `{', '.join(preview['environment_names']) or '없음'}`
+- **프리셋 권장 환경변수:** `{', '.join(preview['suggested_environment_names']) or '없음'}`
 
-                        service_definition = {
-                            'build': {'context': f'./{service_name}'}, 'restart': 'always',
-                            'ports': [f"{new_port}:{container_port}"], 'mem_limit': '1g', 'memswap_limit': '3g'
-                        }
-                        if is_web_service:
-                            service_definition['labels'] = ["is_web_service=true"]
-
-                        compose_data.setdefault('services', {})[service_name] = service_definition
-
-                        with open(compose_file, 'w') as f:
-                            yaml.dump(compose_data, f, default_flow_style=False, sort_keys=False)
-
-                        # Build and start the newly added service
-                        subprocess.run(["docker-compose", "-p", selected_project, "up", "-d", "--build", service_name],
-                                       cwd=project_path, check=True, capture_output=True)
-
-                        st.session_state.last_action_message = (
-                            f"✅ Service '{service_name}' deployed on port {new_port}!")
-                        st.rerun()
-
-                    except subprocess.CalledProcessError as e:
-                        st.error(f"Failed: {e.stderr.decode()}")
-                    except Exception as e:
-                        st.error(f"An error occurred: {e}")
+실제 환경변수 값은 LLM에 전송되지 않으며 배포 후 ⚙️ 버튼에서 입력합니다.
+"""
+        )
+        with st.expander("실행 단계 및 프레임워크 매뉴얼", expanded=False):
+            for number, step in enumerate(preview["steps"], start=1):
+                st.write(f"{number}. {step}")
+            st.markdown(preview["framework_manual"])
+        approve_col, cancel_col = st.columns(2)
+        if approve_col.button("이 설정으로 배포", type="primary", use_container_width=True):
+            try:
+                with st.spinner(f"Deploying '{preview['service']}'..."):
+                    result = skill_agent_request(
+                        "/execute",
+                        {
+                            "skill": "service.deploy",
+                            "arguments": deploy_preview["arguments"],
+                            "approved": True,
+                        },
+                    )
+                st.session_state.last_action_message = (
+                    f"✅ Service '{preview['service']}' deployed on port "
+                    f"{result['result']['host_port']}!"
+                )
+                del st.session_state["service_deploy_preview"]
+                st.rerun()
+            except (requests.RequestException, RuntimeError) as exc:
+                st.error(f"배포 실패: {exc}")
+        if cancel_col.button("취소", use_container_width=True):
+            del st.session_state["service_deploy_preview"]
+            st.rerun()
 else:
     st.info("사이드바에서 관리할 프로젝트를 선택하거나 새 프로젝트를 추가하세요.")

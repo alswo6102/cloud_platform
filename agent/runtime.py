@@ -16,6 +16,13 @@ import docker
 import psutil
 import requests
 import yaml
+from deployment_presets import (
+    DEFAULT_CONTAINER_PORT,
+    FRAMEWORK_PRESETS,
+    framework_manual,
+    render_dockerfile,
+    validate_framework,
+)
 
 PROJECTS_ROOT = Path(os.getenv("PROJECTS_ROOT", "/srv/projects"))
 SKILLS_ROOT = Path(os.getenv("SKILLS_ROOT", "/app/skills"))
@@ -24,6 +31,7 @@ AUDIT_LOG = Path(os.getenv("AUDIT_LOG", "/var/log/skill-agent/audit.jsonl"))
 PORT_START = int(os.getenv("PORT_START", "9000"))
 PORT_END = int(os.getenv("PORT_END", "9100"))
 NAME_PATTERN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$")
+ENV_NAME_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
 API_SKILL_NAMES = {
     "help-search": "help.search",
     "server-health": "server.health",
@@ -490,13 +498,15 @@ def service_deploy(
     container_port: int | None,
     host_port: int | None,
     is_web: bool,
+    framework: str | None,
+    environment_names: list[str] | None,
     dry_run: bool,
 ) -> dict[str, Any]:
     arguments = {
         "project": project,
         "service": service,
         "repo_url": repo_url,
-        "container_port": container_port,
+        "framework": framework,
     }
     incomplete = missing_input(
         "service.deploy",
@@ -504,7 +514,7 @@ def service_deploy(
             ("project", "기존 프로젝트 이름"),
             ("service", "새 서비스 이름"),
             ("repo_url", "공개 GitHub HTTPS 저장소 URL"),
-            ("container_port", "애플리케이션 컨테이너 포트"),
+            ("framework", "프레임워크 프리셋"),
         ],
         arguments,
     )
@@ -526,13 +536,33 @@ def service_deploy(
         incomplete["optional"] = [
             "호스트 포트(생략 시 9000~9100에서 자동 선택)",
             "웹 서비스 여부(생략 시 웹 서비스)",
+            "환경변수 이름 목록(실제 값은 대시보드 보안 입력에서 설정)",
+        ]
+        incomplete["frameworks"] = [
+            {"id": key, "label": value["label"]}
+            for key, value in FRAMEWORK_PRESETS.items()
         ]
         return incomplete
 
     project = str(project)
     service = str(service)
     repo_url = str(repo_url)
-    container_port = int(container_port)
+    framework = validate_framework(str(framework))
+    container_port = (
+        int(container_port)
+        if container_port is not None
+        else DEFAULT_CONTAINER_PORT
+    )
+    environment_names = []
+    for raw_name in environment_names or []:
+        name = str(raw_name).strip()
+        if not name:
+            continue
+        if not ENV_NAME_PATTERN.fullmatch(name):
+            raise SkillError(f"Invalid environment variable name: {name!r}")
+        if name not in environment_names:
+            environment_names.append(name)
+    environment_names.sort()
     validate_name(service, "service")
     data = load_compose(project)
     if service in data["services"]:
@@ -560,6 +590,19 @@ def service_deploy(
         "host_port": selected_host_port,
         "container_port": container_port,
         "is_web": is_web,
+        "framework": framework,
+        "dockerfile": (
+            "use repository Dockerfile"
+            if framework == "existing"
+            else f"generate {FRAMEWORK_PRESETS[framework]['label']} preset"
+        ),
+        "environment_names": environment_names,
+        "suggested_environment_names": FRAMEWORK_PRESETS[framework]["environment"],
+        "environment_note": (
+            "Only variable names are planned. Configure values in the dashboard; "
+            "secret values are never sent to the LLM."
+        ),
+        "framework_manual": framework_manual(framework),
         "steps": [
             "clone the public GitHub repository",
             "require a Dockerfile at the repository root",
@@ -575,8 +618,10 @@ def service_deploy(
     shutil.copy2(compose_path(project), backup)
     try:
         git_clone(repo_url, destination)
-        if not (destination / "Dockerfile").is_file():
+        if framework == "existing" and not (destination / "Dockerfile").is_file():
             raise SkillError("Repository root does not contain a Dockerfile")
+        if framework != "existing":
+            (destination / "Dockerfile").write_text(render_dockerfile(framework))
 
         service_definition: dict[str, Any] = {
             "build": {"context": f"./{service}"},
@@ -587,6 +632,10 @@ def service_deploy(
         }
         if is_web:
             service_definition["labels"] = ["is_web_service=true"]
+        if environment_names:
+            service_definition["environment"] = {
+                name: "" for name in environment_names
+            }
         data["services"][service] = service_definition
         temp = compose_path(project).with_suffix(".yml.skill-agent.tmp")
         temp.write_text(yaml.safe_dump(data, sort_keys=False))
@@ -826,6 +875,8 @@ def execute_skill(skill: str, arguments: dict[str, Any], dry_run: bool) -> dict[
                 int(arguments["container_port"]) if arguments.get("container_port") is not None else None,
                 int(arguments["host_port"]) if arguments.get("host_port") is not None else None,
                 bool(arguments.get("is_web", True)),
+                arguments.get("framework"),
+                arguments.get("environment_names"),
                 dry_run,
             )
         elif skill == "service.redeploy":
@@ -887,7 +938,10 @@ def call_llm(
                 "type": "function",
                 "function": {
                     "name": api_name,
-                    "description": f"{item['description']} {item['instructions']}",
+                    "description": (
+                        f"{item['description']} "
+                        f"{item['instructions'][:700]}"
+                    ),
                     "parameters": item["schema"],
                 },
             }

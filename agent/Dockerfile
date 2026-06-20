@@ -24,6 +24,7 @@ COPY agent/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY agent/ /app/
+COPY deployment_presets.py /app/
 COPY README_DEV.md /app/docs/development-workflow.md
 
 EXPOSE 8080

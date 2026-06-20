@@ -16,7 +16,9 @@
     "container_port": {
       "type": "integer",
       "minimum": 1,
-      "maximum": 65535
+      "maximum": 65535,
+      "default": 3000,
+      "description": "Optional advanced override. Framework presets default to port 3000."
     },
     "host_port": {
       "type": "integer",
@@ -27,6 +29,19 @@
     "is_web": {
       "type": "boolean",
       "default": true
+    },
+    "framework": {
+      "type": "string",
+      "enum": ["existing", "vite", "react", "nextjs", "express", "fastapi", "flask", "django", "spring-maven", "spring-gradle", "go"],
+      "description": "Framework preset used to generate a Dockerfile, or existing to use the repository Dockerfile."
+    },
+    "environment_names": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+      },
+      "description": "Optional environment variable names only. Never include secret values."
     }
   },
   "additionalProperties": false

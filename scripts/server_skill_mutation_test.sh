@@ -75,7 +75,8 @@ deploy_response = requests.post(
     json={
         "message": (
             "skill-qa 프로젝트에 https://github.com/crccheck/docker-hello-world 저장소를 "
-            "hello 서비스로 배포할게. 컨테이너 포트는 8000이고 웹 서비스야"
+            "hello 서비스로 배포할게. 기존 Dockerfile을 사용하고 컨테이너 포트는 "
+            "8000이고 웹 서비스야"
         ),
         "context": deploy_intent["context"],
     },

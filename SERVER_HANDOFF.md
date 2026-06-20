@@ -176,6 +176,16 @@ into an existing managed project, requires a root-level Dockerfile, writes one
 fixed Compose service definition, builds and starts that service, verifies its
 published port, and rolls back the Compose file and clone on failure.
 
+New service deployment also supports framework presets from
+`deployment_presets.py`. Presets generate the Dockerfile inside the server
+clone and standardize the container port to 3000. The repository Dockerfile is
+used only when the `existing` preset is selected.
+
+Deployment plans may contain environment variable names but never secret
+values. Actual values are entered through the dashboard password fields and
+stored as Compose runtime environment values without passing through the LLM or
+Agent audit log.
+
 Project creation, new service deployment, and service redeployment support
 multi-turn information collection. When required fields are absent, `/chat`
 returns a clarification response instead of inventing values or generating an
@@ -307,6 +317,16 @@ cd /opt/cloud_platform
 This creates only `/srv/projects/skill-qa`, tests natural-language deploy,
 stop, start, and port change operations, runs deterministic QA, and cleans up
 the temporary project on exit.
+
+Unified server-native O/X QA:
+
+```bash
+cd /opt/cloud_platform
+./scripts/server_qa_all.sh
+```
+
+Use `--fast` to omit mutation builds. Detailed command output is hidden for
+passing checks and displayed only for failures.
 
 Full local workflow:
 

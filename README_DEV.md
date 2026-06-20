@@ -42,6 +42,18 @@ Run isolated natural-language mutation QA:
 ./scripts/server_skill_mutation_test.sh
 ```
 
+Run the complete server-native O/X report:
+
+```sh
+./scripts/server_qa_all.sh
+```
+
+Use `./scripts/server_qa_all.sh --fast` to skip image-building mutation tests.
+The full report covers syntax, schemas, secret exclusion, intent
+clarification, framework templates, LLM fallback, container health, project
+creation, deployment, redeployment, service control, port mutation, and
+temporary-resource cleanup.
+
 The mutation script uses only `/srv/projects/skill-qa` and removes it on exit.
 Never run destructive QA against an existing managed project.
 
@@ -55,6 +67,11 @@ Existing services are redeployed without running `git pull` in the active
 working tree. The Agent clones fresh source beside the service, swaps it in,
 builds and force-recreates the target container, and restores the prior source
 if verification fails.
+
+Framework Dockerfiles are defined in `deployment_presets.py`, which is copied
+into both application images. This is the single source of truth for the
+dashboard selector, manuals, Agent schemas, generated Dockerfiles, default port
+3000, and suggested environment-variable names.
 
 ## Secrets
 
