@@ -26,8 +26,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY agent/ /app/
 COPY deployment_presets.py /app/
 COPY README_DEV.md /app/docs/development-workflow.md
+COPY scripts/server_safe_docker_cleanup.sh /app/scripts/server_safe_docker_cleanup.sh
 RUN printf '#!/bin/sh\nexec python /app/cli.py "$@"\n' > /usr/local/bin/cloud-platform \
-    && chmod +x /usr/local/bin/cloud-platform
+    && chmod +x /usr/local/bin/cloud-platform /app/scripts/server_safe_docker_cleanup.sh
 
 EXPOSE 8080
 

@@ -534,9 +534,6 @@ if st.session_state.get("assistant_visible"):
                         "message": prompt,
                         "session_id": st.session_state.assistant_session_id,
                     }
-                    clarification = st.session_state.get("assistant_clarification")
-                    if clarification:
-                        payload["context"] = clarification
                     answer = skill_agent_request("/chat", payload)
                 if answer.get("requires_approval"):
                     st.session_state.pop("assistant_clarification", None)

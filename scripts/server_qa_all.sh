@@ -127,6 +127,8 @@ run_check dashboard "Dashboard health" check_dashboard
 run_check agent "Agent, skill catalog, and presets" check_agent
 run_check runtime "Runtime deterministic QA" check_runtime_qa
 run_check cli "Strict CLI adapter and approval guard" check_cli
+run_check namespace "Namespace agent, control network, and ownership guard" \
+    "$ROOT_DIR/scripts/server_namespace_network_qa.sh"
 
 if [[ "$FAST" == false ]]; then
     run_check framework_build "Generated framework Dockerfile build and runtime" \

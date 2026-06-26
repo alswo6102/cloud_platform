@@ -2,19 +2,22 @@ from __future__ import annotations
 
 import os
 import re
+import json
 import threading
 import time
 from typing import Any
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel, Field
 from deployment_presets import preset_catalog
 
 from runtime import (
     READ_ONLY_SKILLS,
     SkillError,
+    attach_platform_api_to_existing_control_networks,
     call_llm,
+    execute_skill,
     execute_cli_skill,
     fallback_plan,
     llm_status,
@@ -26,7 +29,138 @@ PROJECTS_ROOT = Path(os.getenv("PROJECTS_ROOT", "/srv/projects"))
 SESSION_TTL_SECONDS = 60 * 60 * 12
 SESSION_HISTORY_LIMIT = 24
 SESSION_LOCK = threading.Lock()
-SESSIONS: dict[str, dict[str, Any]] = {}
+SESSION_STORE = Path(
+    os.getenv("SESSION_STORE", "/var/log/skill-agent/sessions.json")
+)
+
+
+def namespace_tokens() -> dict[str, str]:
+    tokens: dict[str, str] = {}
+    store = Path(
+        os.getenv("NAMESPACE_TOKEN_STORE", "/var/log/skill-agent/namespace_tokens.json")
+    )
+    try:
+        data = json.loads(store.read_text())
+        if isinstance(data, dict):
+            tokens.update({str(token): str(namespace) for token, namespace in data.items()})
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        pass
+    raw = os.getenv("PLATFORM_NAMESPACE_TOKENS", "").strip()
+    if not raw:
+        return tokens
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(
+            status_code=500,
+            detail="Invalid PLATFORM_NAMESPACE_TOKENS JSON",
+        ) from exc
+    if not isinstance(data, dict):
+        raise HTTPException(
+            status_code=500,
+            detail="PLATFORM_NAMESPACE_TOKENS must be a JSON object",
+        )
+    tokens.update({str(token): str(namespace) for token, namespace in data.items()})
+    return tokens
+
+
+def authenticated_namespace(http_request: Request) -> str | None:
+    # A process with PLATFORM_API configured is an agent/client plane. It
+    # receives dashboard or project-agent requests and then calls platform-api
+    # with its own token through the CLI. Inbound namespace enforcement belongs
+    # to the platform-api process only.
+    if os.getenv("PLATFORM_API"):
+        return None
+    tokens = namespace_tokens()
+    root_token = os.getenv("PLATFORM_ROOT_TOKEN", "").strip()
+    if not tokens and not root_token:
+        return None
+    header = http_request.headers.get("Authorization", "")
+    if not header.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Bearer token is required")
+    token = header.removeprefix("Bearer ").strip()
+    if root_token and token == root_token:
+        return None
+    namespace = tokens.get(token)
+    if not namespace:
+        raise HTTPException(status_code=403, detail="Invalid namespace token")
+    return namespace
+
+
+def namespace_scoped_arguments(
+    skill: str,
+    arguments: dict[str, Any],
+    namespace: str | None,
+) -> dict[str, Any]:
+    if not namespace:
+        return arguments
+    scoped = dict(arguments)
+    if skill in {
+        "service.deploy",
+        "service.redeploy",
+        "service.status",
+        "service.logs",
+        "service.control",
+        "port.manage",
+    }:
+        requested = scoped.get("project")
+        if requested and str(requested) != namespace:
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    f"Namespace token can only access project {namespace!r}; "
+                    f"requested {requested!r}"
+                ),
+            )
+        scoped["project"] = namespace
+    if skill == "entity.resolve" and scoped.get("entity") == "service":
+        requested = scoped.get("project")
+        if requested and str(requested) != namespace:
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    f"Namespace token can only resolve services in {namespace!r}; "
+                    f"requested {requested!r}"
+                ),
+            )
+        scoped["project"] = namespace
+    if skill in {"project.create", "server.health", "qa.run"}:
+        raise HTTPException(
+            status_code=403,
+            detail=f"{skill} is only available to the root/admin plane",
+        )
+    return scoped
+
+
+def namespace_scoped_result(
+    skill: str,
+    result: dict[str, Any],
+    namespace: str | None,
+) -> dict[str, Any]:
+    if not namespace or skill != "project.list":
+        return result
+    projects = [
+        item
+        for item in result.get("projects", [])
+        if str(item.get("name")) == namespace
+    ]
+    incomplete = [
+        item
+        for item in result.get("incomplete_projects", [])
+        if str(item.get("name")) == namespace
+    ]
+    return {"projects": projects, "incomplete_projects": incomplete}
+
+
+def load_persisted_sessions() -> dict[str, dict[str, Any]]:
+    try:
+        data = json.loads(SESSION_STORE.read_text())
+        return data if isinstance(data, dict) else {}
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return {}
+
+
+SESSIONS: dict[str, dict[str, Any]] = load_persisted_sessions()
 GITHUB_URL_RE = re.compile(
     r"https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:\.git)?"
 )
@@ -53,6 +187,17 @@ FRAMEWORK_ALIASES = {
     "go": "go",
     "golang": "go",
 }
+
+
+@app.on_event("startup")
+def connect_existing_control_networks() -> None:
+    if os.getenv("PLATFORM_API"):
+        return
+    try:
+        attach_platform_api_to_existing_control_networks()
+    except Exception:
+        # Startup should not fail only because Docker is temporarily slow.
+        pass
 
 HELP_COMMANDS = {
     "도움말",
@@ -138,14 +283,14 @@ def preferred_skill_for(message: str, context: dict[str, Any] | None) -> str | N
         )
     ):
         return "project.create"
-    if context and context.get("skill"):
-        return str(context["skill"])
     if "서비스" in text and any(word in text for word in ("재배포", "최신 코드", "다시 배포", "새 이미지")):
         return "service.redeploy"
     if "서비스" in text and any(word in text for word in ("새로", "신규", "추가", "새 서비스", "등록")):
         return "service.deploy"
     if "서비스" in text and "배포" in text:
         return "service.deploy"
+    if context and context.get("skill"):
+        return str(context["skill"])
     return None
 
 
@@ -229,6 +374,20 @@ def explicit_name(message: str, label: str) -> str | None:
     return None
 
 
+def slot_value_from_reply(message: str) -> str | None:
+    text = message.strip()
+    patterns = [
+        r"^\s*([A-Za-z0-9][A-Za-z0-9_.-]{0,63})\s*(?:로|으로)\s*(?:할래|해줘|만들어줘|생성해줘|진행해줘)?\s*$",
+        r"^\s*([A-Za-z0-9][A-Za-z0-9_.-]{0,63})\s*(?:라고|이라|이라고)?\s*(?:할래|해줘|만들어줘|생성해줘|진행해줘)\s*$",
+        r"^\s*([A-Za-z0-9][A-Za-z0-9_.-]{0,63})\s*$",
+    ]
+    for pattern in patterns:
+        match = re.fullmatch(pattern, text, re.IGNORECASE)
+        if match:
+            return match.group(1)
+    return None
+
+
 def explicit_arguments(message: str, skill: str) -> dict[str, Any]:
     lowered = message.lower()
     arguments: dict[str, Any] = {}
@@ -262,7 +421,23 @@ def explicit_arguments(message: str, skill: str) -> dict[str, Any]:
         )
         if host_port:
             arguments["host_port"] = int(host_port.group(1))
-        if "웹 서비스" in lowered:
+        if any(
+            phrase in lowered
+            for phrase in (
+                "백엔드",
+                "backend",
+                "api 서버",
+                "api서비스",
+                "api 서비스",
+                "내부통신",
+                "내부 통신",
+                "외부 공개하지",
+                "url 없",
+                "포트 열지",
+            )
+        ):
+            arguments["is_web"] = False
+        if any(phrase in lowered for phrase in ("웹 서비스", "프론트", "frontend", "외부 공개")):
             arguments["is_web"] = True
         env_match = re.search(
             r"환경변수\s*(?:이름)?(?:은|는|:|=)?\s*([A-Za-z_][A-Za-z0-9_,\s]*)",
@@ -407,13 +582,10 @@ def strict_arguments(
         item.get("field")
         for item in (context or {}).get("missing", [])
     }
-    bare = message.strip()
+    bare = slot_value_from_reply(message)
     if len(missing_fields) == 1:
         field = next(iter(missing_fields))
-        if field in {"project", "service"} and re.fullmatch(
-            r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}",
-            bare,
-        ):
+        if field in {"project", "service"} and bare:
             if field == "project" and skill in {"service.deploy", "service.redeploy"}:
                 resolution = execute_cli_skill(
                     "entity.resolve",
@@ -436,12 +608,15 @@ def strict_arguments(
                     )
                     if resolution["status"] == "exact":
                         verified[field] = resolution["match"]
+            elif field == "project" and skill == "project.create":
+                verified[field] = bare
             else:
                 verified[field] = bare
-        elif field == "repo_url" and GITHUB_URL_RE.fullmatch(bare):
-            verified[field] = bare
+        elif field == "repo_url" and GITHUB_URL_RE.fullmatch(message.strip()):
+            verified[field] = message.strip()
         elif field == "framework":
-            framework = FRAMEWORK_ALIASES.get(bare.lower())
+            framework_name = bare or message.strip()
+            framework = FRAMEWORK_ALIASES.get(framework_name.lower())
             if framework:
                 resolution = execute_cli_skill(
                     "entity.resolve",
@@ -590,6 +765,11 @@ def handle_proposed_input(
         arguments[proposal["field"]] = selected
         updated["arguments"] = arguments
         updated["confirmed"] = dict(arguments)
+        updated["missing"] = [
+            item
+            for item in updated.get("missing", [])
+            if item.get("field") not in arguments
+        ]
         updated.pop("proposed", None)
         return updated, None
 
@@ -875,6 +1055,15 @@ def load_session(
     return context, history
 
 
+def persist_sessions_locked() -> None:
+    SESSION_STORE.parent.mkdir(parents=True, exist_ok=True)
+    temporary = SESSION_STORE.with_suffix(".tmp")
+    temporary.write_text(
+        json.dumps(SESSIONS, ensure_ascii=False, default=str)
+    )
+    temporary.replace(SESSION_STORE)
+
+
 def remember_response(
     session_id: str | None,
     user_message: str,
@@ -903,6 +1092,7 @@ def remember_response(
                 "missing": [],
             }
         session["updated_at"] = time.time()
+        persist_sessions_locked()
     response["session_id"] = session_id
     return response
 
@@ -929,6 +1119,143 @@ def remember_execution(
         )
         session["history"] = history[-SESSION_HISTORY_LIMIT:]
         session["updated_at"] = time.time()
+        persist_sessions_locked()
+
+
+def render_server_health(result: dict[str, Any]) -> str:
+    docker_state = "정상" if result.get("docker") else "오류"
+    lines = [
+        "### 서버 상태",
+        "",
+        f"- Docker 연결: **{docker_state}**",
+        f"- 컨테이너: **{result.get('running', 0)}/{result.get('containers', 0)} 실행 중**",
+        f"- 메모리 사용률: **{result.get('memory_percent', 0)}%**",
+        f"- 디스크 사용률: **{result.get('disk_percent', 0)}%**",
+    ]
+    restarting = result.get("restarting") or []
+    unhealthy = result.get("unhealthy") or []
+    lines.append(
+        f"- 재시작 중: **{', '.join(restarting) if restarting else '없음'}**"
+    )
+    lines.append(
+        f"- 비정상 헬스체크: **{', '.join(unhealthy) if unhealthy else '없음'}**"
+    )
+    details = result.get("container_details") or []
+    if details:
+        lines.extend(["", "### Docker 컨테이너"])
+        for item in details:
+            health = f", health={item['health']}" if item.get("health") else ""
+            ports = ", ".join(
+                f"{port.get('host')}→{port.get('container')}"
+                for port in item.get("ports", [])
+                if port.get("host")
+            )
+            port_text = f", ports={ports}" if ports else ""
+            lines.append(
+                f"- `{item['name']}`: **{item['status']}**{health}{port_text}"
+            )
+    projects = (result.get("projects") or {}).get("projects") or []
+    if projects:
+        lines.extend(["", "### 프로젝트와 서비스"])
+        for project in projects:
+            services = ", ".join(project.get("services") or []) or "서비스 없음"
+            lines.append(f"- `{project['name']}`: {services}")
+    return "\n".join(lines)
+
+
+def render_read_only_result(skill: str, result: dict[str, Any]) -> str:
+    if skill == "server.health":
+        return render_server_health(result)
+    if skill == "service.status":
+        lines = [f"### `{result['project']}` 서비스 상태", ""]
+        for item in result.get("services", []):
+            container = item.get("container")
+            if not container:
+                lines.append(
+                    f"- `{item['service']}`: **컨테이너 없음** "
+                    f"(설정 포트: {', '.join(item.get('configured_ports') or []) or '없음'})"
+                )
+                continue
+            health = (
+                f", health={container['health']}"
+                if container.get("health")
+                else ""
+            )
+            ports = ", ".join(
+                f"{port['host']}→{port['container']}"
+                for port in container.get("ports", [])
+            ) or "공개 포트 없음"
+            lines.append(
+                f"- `{item['service']}`: **{container['status']}**{health}, "
+                f"재시작 {container.get('restart_count', 0)}회, 포트 {ports}"
+            )
+        return "\n".join(lines)
+    if skill == "service.logs":
+        logs = str(result.get("logs", "")).rstrip() or "(로그 없음)"
+        return (
+            f"### `{result['project']}/{result['service']}` 최근 로그 "
+            f"({result['lines']}줄)\n\n```text\n{logs}\n```"
+        )
+    return f"`{skill}` CLI 조회를 완료했습니다."
+
+
+def exact_entity_from_text(
+    text: str,
+    choices: list[str],
+) -> str | None:
+    matched = [
+        choice
+        for choice in choices
+        if re.search(
+            rf"(?<![A-Za-z0-9_.-]){re.escape(choice)}(?![A-Za-z0-9_.-])",
+            text,
+            re.IGNORECASE,
+        )
+    ]
+    return matched[0] if len(matched) == 1 else None
+
+
+def deterministic_read_request(
+    message: str,
+) -> tuple[str, dict[str, Any]] | None:
+    lowered = message.lower()
+    if "서버" in lowered and any(
+        word in lowered for word in ("상태", "확인", "헬스", "health")
+    ):
+        return "server.health", {}
+    wants_logs = any(word in lowered for word in ("로그", "log"))
+    wants_status = any(
+        word in lowered
+        for word in ("상태", "실행중", "실행 중", "살아있", "컨테이너 확인")
+    )
+    if not wants_logs and not wants_status:
+        return None
+    catalog = execute_cli_skill("project.list", {}, dry_run=False)
+    projects = catalog.get("projects") or []
+    project = exact_entity_from_text(
+        message,
+        [item["name"] for item in projects],
+    )
+    if not project:
+        return None
+    project_item = next(item for item in projects if item["name"] == project)
+    service = exact_entity_from_text(
+        message,
+        project_item.get("services") or [],
+    )
+    if wants_logs:
+        if not service:
+            return "service.logs", {"project": project}
+        lines_match = re.search(r"(\d{1,3})\s*줄", message)
+        return "service.logs", {
+            "project": project,
+            "service": service,
+            "lines": int(lines_match.group(1)) if lines_match else 40,
+        }
+    return "service.status", {
+        "project": project,
+        **({"service": service} if service else {}),
+    }
 
 
 def framework_choices_text(candidates: list[str] | None = None) -> str:
@@ -1151,6 +1478,47 @@ def chat(request: ChatRequest):
         return respond(framework_help)
     documents = skill_documents()
     try:
+        deterministic_read = deterministic_read_request(request.message)
+        if deterministic_read:
+            skill, arguments = deterministic_read
+            if skill == "service.logs" and not arguments.get("service"):
+                services = execute_cli_skill(
+                    "project.list",
+                    {},
+                    dry_run=False,
+                )
+                project = next(
+                    item
+                    for item in services["projects"]
+                    if item["name"] == arguments["project"]
+                )
+                return respond({
+                    "mode": "local",
+                    "kind": "clarification",
+                    "message": (
+                        f"`{arguments['project']}`의 어느 서비스 로그를 볼까요?\n\n"
+                        + "\n".join(
+                            f"- `{name}`" for name in project.get("services", [])
+                        )
+                    ),
+                    "skill": skill,
+                    "arguments": arguments,
+                    "missing": [{"field": "service", "label": "로그를 볼 서비스"}],
+                    "context": {
+                        "skill": skill,
+                        "arguments": arguments,
+                        "missing": [{"field": "service", "label": "로그를 볼 서비스"}],
+                    },
+                    "requires_approval": False,
+                })
+            result = execute_cli_skill(skill, arguments, dry_run=False)
+            return respond({
+                "mode": "cli",
+                "message": render_read_only_result(skill, result),
+                "skill": skill,
+                "result": result,
+                "requires_approval": False,
+            })
         preferred_skill = preferred_skill_for(request.message, request.context)
         cli_proposal = cli_proposal_for_input(
             request.message,
@@ -1180,7 +1548,19 @@ def chat(request: ChatRequest):
                 )
                 current_missing = current_preview.get("needs_input", [])
             except SkillError:
-                pass
+                current_preview = {}
+            if current_preview and not current_missing:
+                return respond({
+                    "mode": "cli",
+                    "message": (
+                        "CLI에서 모든 입력값과 현재 서버 상태를 검증했습니다. "
+                        "아래 실행 계획을 확인하고 승인해주세요."
+                    ),
+                    "skill": preferred_skill,
+                    "arguments": current_arguments,
+                    "preview": current_preview,
+                    "requires_approval": True,
+                })
             llm_context.update(
                 {
                     "skill": preferred_skill,
@@ -1338,7 +1718,7 @@ def chat(request: ChatRequest):
             )
             return respond({
                 "mode": "llm" if os.getenv("LLM_API_KEY") else "fallback",
-                "message": plan.get("explanation", "Completed."),
+                "message": render_read_only_result(skill, result),
                 "skill": skill,
                 "model": plan.get("model"),
                 "result": result,
@@ -1428,21 +1808,34 @@ def chat(request: ChatRequest):
 
 
 @app.post("/execute")
-def execute(request: ExecuteRequest):
+def execute(request: ExecuteRequest, http_request: Request):
     if request.skill not in READ_ONLY_SKILLS and not request.approved:
         raise HTTPException(status_code=409, detail="Explicit approval is required.")
     try:
-        response = {
-            "skill": request.skill,
-            "result": execute_cli_skill(
+        namespace = authenticated_namespace(http_request)
+        arguments = namespace_scoped_arguments(
+            request.skill,
+            request.arguments,
+            namespace,
+        )
+        if os.getenv("PLATFORM_API"):
+            result = execute_cli_skill(
                 request.skill,
-                request.arguments,
+                arguments,
                 dry_run=False,
                 approved=request.approved,
-            ),
+            )
+        else:
+            result = execute_skill(request.skill, arguments, dry_run=False)
+        response = {
+            "skill": request.skill,
+            "namespace": namespace,
+            "result": namespace_scoped_result(request.skill, result, namespace),
         }
         remember_execution(request.session_id, request.skill, request.resume)
         return response
+    except HTTPException:
+        raise
     except (SkillError, KeyError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
@@ -1450,17 +1843,30 @@ def execute(request: ExecuteRequest):
 
 
 @app.post("/preview")
-def preview(request: PreviewRequest):
+def preview(request: PreviewRequest, http_request: Request):
     if request.skill in READ_ONLY_SKILLS:
         raise HTTPException(status_code=400, detail="Preview is only for mutation skills.")
     try:
+        namespace = authenticated_namespace(http_request)
+        arguments = namespace_scoped_arguments(
+            request.skill,
+            request.arguments,
+            namespace,
+        )
         return {
             "skill": request.skill,
-            "preview": execute_cli_skill(
-                request.skill,
-                request.arguments,
-                dry_run=True,
+            "namespace": namespace,
+            "preview": (
+                execute_cli_skill(
+                    request.skill,
+                    arguments,
+                    dry_run=True,
+                )
+                if os.getenv("PLATFORM_API")
+                else execute_skill(request.skill, arguments, dry_run=True)
             ),
         }
+    except HTTPException:
+        raise
     except (SkillError, KeyError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

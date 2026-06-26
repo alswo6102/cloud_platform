@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import secrets
 from difflib import SequenceMatcher
 import shutil
 import subprocess
@@ -31,6 +32,12 @@ PROJECTS_ROOT = Path(os.getenv("PROJECTS_ROOT", "/srv/projects"))
 SKILLS_ROOT = Path(os.getenv("SKILLS_ROOT", "/app/skills"))
 DOCS_ROOT = Path(os.getenv("DOCS_ROOT", "/app/docs"))
 AUDIT_LOG = Path(os.getenv("AUDIT_LOG", "/var/log/skill-agent/audit.jsonl"))
+NAMESPACE_TOKEN_STORE = Path(
+    os.getenv("NAMESPACE_TOKEN_STORE", "/var/log/skill-agent/namespace_tokens.json")
+)
+SAFE_CLEANUP_SCRIPT = Path(
+    os.getenv("SAFE_DOCKER_CLEANUP_SCRIPT", "/app/scripts/server_safe_docker_cleanup.sh")
+)
 PORT_START = int(os.getenv("PORT_START", "9000"))
 PORT_END = int(os.getenv("PORT_END", "9100"))
 NAME_PATTERN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$")
@@ -63,6 +70,28 @@ MODEL_COOLDOWN_LOCK = threading.Lock()
 
 class SkillError(RuntimeError):
     pass
+
+
+def trigger_safe_docker_cleanup(reason: str) -> None:
+    if os.getenv("AUTO_DOCKER_CLEANUP", "1").lower() in {"0", "false", "no"}:
+        return
+    if not SAFE_CLEANUP_SCRIPT.is_file():
+        return
+
+    def run() -> None:
+        try:
+            subprocess.run(
+                [str(SAFE_CLEANUP_SCRIPT), "--quiet"],
+                check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=180,
+                env={**os.environ, "CLEANUP_TRIGGER": reason},
+            )
+        except Exception:
+            pass
+
+    threading.Thread(target=run, name=f"safe-cleanup-{reason}", daemon=True).start()
 
 
 def validate_name(value: str, label: str) -> str:
@@ -103,6 +132,90 @@ def service_config(project: str, service: str) -> dict[str, Any]:
 
 def docker_client():
     return docker.from_env()
+
+
+def project_network_name(project: str, kind: str) -> str:
+    validate_name(project, "project")
+    if kind not in {"app", "control"}:
+        raise SkillError(f"Unsupported network kind: {kind}")
+    return f"cp_{project}_{kind}_net"
+
+
+def ensure_docker_network(name: str, project: str, kind: str):
+    client = docker_client()
+    matches = client.networks.list(names=[name])
+    for network in matches:
+        if network.name == name:
+            return network
+    return client.networks.create(
+        name,
+        driver="bridge",
+        labels={
+            "cloud.platform.project": project,
+            "cloud.platform.network": kind,
+        },
+    )
+
+
+def attach_platform_api_to_control_network(network) -> None:
+    container_id = os.getenv("HOSTNAME", "")
+    if not container_id:
+        return
+    try:
+        container = docker_client().containers.get(container_id)
+        network.reload()
+        if container.id in (network.attrs.get("Containers") or {}):
+            return
+        network.connect(container, aliases=["platform-api"])
+    except Exception:
+        # Network attachment is a convenience for future project agents. The
+        # project namespace itself should still be created even if the current
+        # runtime is not a long-lived platform-api container.
+        return
+
+
+def attach_platform_api_to_existing_control_networks() -> list[str]:
+    if os.getenv("PLATFORM_API"):
+        return []
+    client = docker_client()
+    attached: list[str] = []
+    for network in client.networks.list(
+        filters={"label": "cloud.platform.network=control"}
+    ):
+        before = set((network.attrs.get("Containers") or {}).keys())
+        attach_platform_api_to_control_network(network)
+        network.reload()
+        after = set((network.attrs.get("Containers") or {}).keys())
+        if after != before:
+            attached.append(network.name)
+    return attached
+
+
+def ensure_project_networks(project: str, *, attach_platform_api: bool) -> dict[str, str]:
+    app_name = project_network_name(project, "app")
+    control_name = project_network_name(project, "control")
+    ensure_docker_network(app_name, project, "app")
+    control = ensure_docker_network(control_name, project, "control")
+    if attach_platform_api:
+        attach_platform_api_to_control_network(control)
+    return {"app_network": app_name, "control_network": control_name}
+
+
+def register_namespace_token(project: str) -> bool:
+    validate_name(project, "project")
+    NAMESPACE_TOKEN_STORE.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        data = json.loads(NAMESPACE_TOKEN_STORE.read_text())
+        tokens = data if isinstance(data, dict) else {}
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        tokens = {}
+    if project in {str(namespace) for namespace in tokens.values()}:
+        return False
+    tokens[secrets.token_urlsafe(32)] = project
+    temporary = NAMESPACE_TOKEN_STORE.with_suffix(".tmp")
+    temporary.write_text(json.dumps(tokens, ensure_ascii=False, indent=2))
+    temporary.replace(NAMESPACE_TOKEN_STORE)
+    return True
 
 
 def find_container(project: str, service: str):
@@ -501,6 +614,8 @@ def command_catalog() -> dict[str, Any]:
             "frameworks": "List framework presets",
             "resolve <entity> <query>": "Resolve a project, service, or framework against live CLI data",
             "inspect-repo <url>": "Inspect a public GitHub repository read-only",
+            "status <project> [service]": "Show live Compose and Docker service status",
+            "logs <project> <service>": "Show a bounded tail of service logs",
             "preview <skill>": "Validate and preview a mutation",
             "execute <skill>": "Execute a skill; mutations require approval",
         },
@@ -509,6 +624,8 @@ def command_catalog() -> dict[str, Any]:
             "cloud-platform frameworks",
             "cloud-platform resolve project horserace",
             "cloud-platform inspect-repo https://github.com/owner/repository",
+            "cloud-platform status demoa demo-a",
+            "cloud-platform logs demoa demo-a --lines 40",
             "cloud-platform preview service.deploy --arguments '{...}'",
         ],
     }
@@ -524,12 +641,37 @@ def server_health() -> dict[str, Any]:
         if health == "unhealthy":
             unhealthy.append(container.name)
     disk = shutil.disk_usage(PROJECTS_ROOT)
+    container_details = []
+    for container in sorted(containers, key=lambda item: item.name):
+        state = container.attrs.get("State", {})
+        health = (state.get("Health") or {}).get("Status")
+        ports = []
+        for container_port, bindings in (
+            container.attrs.get("NetworkSettings", {}).get("Ports", {}) or {}
+        ).items():
+            for binding in bindings or []:
+                ports.append(
+                    {
+                        "host": binding.get("HostPort"),
+                        "container": container_port,
+                    }
+                )
+        container_details.append(
+            {
+                "name": container.name,
+                "status": container.status,
+                "health": health,
+                "ports": ports,
+            }
+        )
     return {
         "docker": client.ping(),
         "containers": len(containers),
         "running": sum(container.status == "running" for container in containers),
         "restarting": restarting,
         "unhealthy": unhealthy,
+        "container_details": container_details,
+        "projects": project_list(),
         "disk_percent": round((disk.used / disk.total) * 100, 1),
         "memory_percent": psutil.virtual_memory().percent,
     }
@@ -602,13 +744,21 @@ def project_create(project: str | None, dry_run: bool) -> dict[str, Any]:
         "project": project,
         "path": str(destination),
         "operation": "repair" if repairing else "create",
+        "namespace": {
+            "app_network": project_network_name(project, "app"),
+            "control_network": project_network_name(project, "control"),
+            "model": (
+                "services join app-net; a future project-agent joins app-net and "
+                "control-net; platform-api joins control-net only"
+            ),
+        },
         "steps": [
             (
                 "reuse the existing incomplete project directory"
                 if repairing
                 else "create the managed project directory"
             ),
-            "create an empty docker-compose.yml",
+            "create a docker-compose.yml with project-scoped app/control networks",
             "verify the project appears in the managed project list",
         ],
     }
@@ -618,11 +768,37 @@ def project_create(project: str | None, dry_run: bool) -> dict[str, Any]:
     try:
         if not repairing:
             destination.mkdir(parents=False)
-        compose.write_text("version: '3.8'\nservices: {}\n")
+        networks = ensure_project_networks(project, attach_platform_api=True)
+        token_created = register_namespace_token(project)
+        compose.write_text(
+            yaml.safe_dump(
+                {
+                    "version": "3.8",
+                    "services": {},
+                    "networks": {
+                        "app-net": {
+                            "name": networks["app_network"],
+                            "external": True,
+                        },
+                        "control-net": {
+                            "name": networks["control_network"],
+                            "external": True,
+                        },
+                    },
+                },
+                sort_keys=False,
+            )
+        )
         projects = {item["name"] for item in project_list()["projects"]}
         if project not in projects:
             raise SkillError("Created project was not found during verification")
-        return {"dry_run": False, **plan, "verified": True}
+        trigger_safe_docker_cleanup("project.create")
+        return {
+            "dry_run": False,
+            **plan,
+            "namespace_token_created": token_created,
+            "verified": True,
+        }
     except Exception:
         if compose.exists():
             compose.unlink()
@@ -766,6 +942,16 @@ def service_deploy(
     environment_names.sort()
     validate_name(service, "service")
     data = load_compose(project)
+    networks = ensure_project_networks(project, attach_platform_api=True)
+    data.setdefault("networks", {})
+    data["networks"]["app-net"] = {
+        "name": networks["app_network"],
+        "external": True,
+    }
+    data["networks"]["control-net"] = {
+        "name": networks["control_network"],
+        "external": True,
+    }
     if service in data["services"]:
         raise SkillError(f"Service already exists: {project}/{service}")
     if not GITHUB_HTTPS_PATTERN.fullmatch(repo_url):
@@ -773,12 +959,17 @@ def service_deploy(
     if not 1 <= container_port <= 65535:
         raise SkillError("container_port must be between 1 and 65535")
 
-    selected_host_port = host_port if host_port is not None else next_port()
-    if not PORT_START <= selected_host_port <= PORT_END:
-        raise SkillError(f"host_port must be between {PORT_START} and {PORT_END}")
-    owners = reserved_ports().get(selected_host_port, [])
-    if owners:
-        raise SkillError(f"Port {selected_host_port} is already used by {', '.join(owners)}")
+    if is_web:
+        selected_host_port = host_port if host_port is not None else next_port()
+        if not PORT_START <= selected_host_port <= PORT_END:
+            raise SkillError(f"host_port must be between {PORT_START} and {PORT_END}")
+        owners = reserved_ports().get(selected_host_port, [])
+        if owners:
+            raise SkillError(f"Port {selected_host_port} is already used by {', '.join(owners)}")
+    else:
+        if host_port is not None:
+            raise SkillError("host_port can only be set for externally exposed web services")
+        selected_host_port = None
 
     destination = project_path(project) / service
     if destination.exists():
@@ -807,9 +998,13 @@ def service_deploy(
         "steps": [
             "clone the public GitHub repository",
             "require a Dockerfile at the repository root",
-            "add the service to docker-compose.yml",
+            "add the service to the project app-net namespace",
             "build and start only the new service",
-            "verify the container stays running and publishes the requested port",
+            (
+                "verify the container stays running and publishes the requested port"
+                if is_web
+                else "verify the internal-only container stays running on the app network"
+            ),
         ],
     }
     if dry_run:
@@ -824,15 +1019,31 @@ def service_deploy(
         if framework != "existing":
             (destination / "Dockerfile").write_text(render_dockerfile(framework))
 
+        labels = [
+            f"cloud.platform.project={project}",
+            f"cloud.platform.service={service}",
+        ]
+        if is_web:
+            labels.append("is_web_service=true")
+        network_aliases = [service]
+        normalized_service = re.sub(r"[^A-Za-z0-9]", "", service)
+        if normalized_service and normalized_service != service:
+            network_aliases.append(normalized_service)
+        if service.lower() in {"demo-b", "demob", "api", "server"} or "back" in service.lower():
+            network_aliases.append("backend")
+        network_aliases = list(dict.fromkeys(network_aliases))
         service_definition: dict[str, Any] = {
             "build": {"context": f"./{service}"},
             "restart": "always",
-            "ports": [f"{selected_host_port}:{container_port}"],
             "mem_limit": "1g",
             "memswap_limit": "3g",
+            "networks": {"app-net": {"aliases": network_aliases}},
+            "labels": labels,
         }
         if is_web:
-            service_definition["labels"] = ["is_web_service=true"]
+            service_definition["ports"] = [f"{selected_host_port}:{container_port}"]
+        else:
+            service_definition["expose"] = [str(container_port)]
         if environment_names:
             service_definition["environment"] = {
                 name: "" for name in environment_names
@@ -844,10 +1055,14 @@ def service_deploy(
 
         compose_command(project, "up", "-d", "--build", service, timeout=900)
         verified = wait_stable(project, service)
-        expected = {"host": selected_host_port, "container": container_port}
-        if expected not in verified["ports"]:
-            raise SkillError(f"Port verification failed: expected {expected}, got {verified['ports']}")
+        if is_web:
+            expected = {"host": selected_host_port, "container": container_port}
+            if expected not in verified["ports"]:
+                raise SkillError(f"Port verification failed: expected {expected}, got {verified['ports']}")
+        elif verified["ports"]:
+            raise SkillError(f"Internal-only service unexpectedly published ports: {verified['ports']}")
         backup.unlink(missing_ok=True)
+        trigger_safe_docker_cleanup("service.deploy")
         return {"dry_run": False, **plan, "verified": verified}
     except Exception:
         try:
@@ -953,6 +1168,7 @@ def service_redeploy(
         )
         verified = wait_stable(project, service)
         shutil.rmtree(backup)
+        trigger_safe_docker_cleanup("service.redeploy")
         return {"dry_run": False, **plan, "verified": verified}
     except Exception:
         if fresh.exists():

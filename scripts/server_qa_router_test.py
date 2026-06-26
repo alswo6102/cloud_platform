@@ -82,6 +82,39 @@ project_args = app.strict_arguments(
     {"project": "invented-project"},
 )
 assert project_args == {"project": "rea"}, project_args
+project_args_with_josa = app.strict_arguments(
+    "horse_race로 할래",
+    "project.create",
+    transition["context"],
+    {"project": "invented-project"},
+)
+assert project_args_with_josa == {"project": "horse_race"}, project_args_with_josa
+project_args_with_command = app.strict_arguments(
+    "horse_race로 만들어줘",
+    "project.create",
+    transition["context"],
+    {},
+)
+assert project_args_with_command == {"project": "horse_race"}, project_args_with_command
+project_chat = app.chat(
+    app.ChatRequest(
+        message="horse_race로 할래",
+        context=transition["context"],
+    )
+)
+assert project_chat["skill"] == "project.create", project_chat
+assert project_chat["arguments"] == {"project": "horse_race"}, project_chat
+assert project_chat["requires_approval"] is True, project_chat
+assert project_chat["preview"]["project"] == "horse_race", project_chat
+project_chat_with_session = app.chat(
+    app.ChatRequest(
+        session_id="router-session-001",
+        message="horse_race로 만들어줘",
+        context=transition["context"],
+    )
+)
+assert project_chat_with_session["arguments"] == {"project": "horse_race"}, project_chat_with_session
+assert project_chat_with_session["requires_approval"] is True, project_chat_with_session
 print("OK explicit_slot_only")
 
 inferred = app.strict_arguments(
@@ -148,7 +181,9 @@ assert response is None, response
 assert preserved_context["arguments"] == {
     "project": "demoa",
     "service": "frontend",
+    "is_web": True,
 }, preserved_context
+assert preserved_context.get("missing") == [], preserved_context
 print("OK proposal_preserves_other_slots")
 
 port_arguments = app.strict_arguments(
@@ -165,6 +200,46 @@ assert port_arguments == {
 }, port_arguments
 print("OK cli_verified_port_arguments")
 
+assert app.deterministic_read_request("서버 상태 확인해줘") == (
+    "server.health",
+    {},
+)
+assert app.deterministic_read_request("demoa의 demo-a 상태 확인해줘") == (
+    "service.status",
+    {"project": "demoa", "service": "demo-a"},
+)
+assert app.deterministic_read_request("demoa의 demo-a 로그 20줄 보여줘") == (
+    "service.logs",
+    {"project": "demoa", "service": "demo-a", "lines": 20},
+)
+print("OK deterministic_cli_read_routing")
+
+health_message = app.render_server_health(
+    {
+        "docker": True,
+        "containers": 2,
+        "running": 2,
+        "restarting": [],
+        "unhealthy": [],
+        "container_details": [
+            {
+                "name": "demo",
+                "status": "running",
+                "health": "healthy",
+                "ports": [{"host": "9000", "container": "3000/tcp"}],
+            }
+        ],
+        "projects": {
+            "projects": [{"name": "demoa", "services": ["demo-a"]}]
+        },
+        "disk_percent": 50.0,
+        "memory_percent": 40.0,
+    }
+)
+assert "Docker 컨테이너" in health_message
+assert "demo-a" in health_message
+print("OK cli_result_rendering")
+
 problem = app.project_problem_response(
     "service.deploy",
     {"project": "rea", "service": "reafront"},
@@ -175,6 +250,11 @@ print("OK incomplete_project_diagnosis")
 
 repair_preview = runtime.project_create("rea", dry_run=True)
 assert repair_preview["operation"] == "repair", repair_preview
+runtime.ensure_project_networks = lambda project, attach_platform_api: {
+    "app_network": f"cp_{project}_app_net",
+    "control_network": f"cp_{project}_control_net",
+}
+runtime.register_namespace_token = lambda project: True
 runtime.project_create("rea", dry_run=False)
 assert (PROJECTS / "rea" / "docker-compose.yml").is_file()
 print("OK incomplete_project_repair")
