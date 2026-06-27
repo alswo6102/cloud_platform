@@ -12,6 +12,8 @@ import requests
 from deployment_presets import preset_catalog
 from runtime import (
     READ_ONLY_SKILLS,
+    command_contract,
+    command_contracts,
     command_catalog,
     execute_skill,
     entity_resolve,
@@ -107,6 +109,37 @@ def emit(value: Any) -> None:
     print(json.dumps(value, ensure_ascii=False, indent=2, default=str))
 
 
+def preview_envelope(skill: str, arguments: dict[str, Any], preview: dict[str, Any]) -> dict[str, Any]:
+    missing = preview.get("needs_input") or preview.get("missing") or []
+    if missing:
+        status = "needs_input"
+        requires_approval = False
+        next_question = preview.get("next_question")
+    else:
+        status = "ready"
+        requires_approval = skill not in READ_ONLY_SKILLS
+        next_question = None
+    return {
+        "skill": skill,
+        "status": status,
+        "arguments": arguments,
+        "missing": missing,
+        "next_question": next_question,
+        "requires_approval": requires_approval,
+        "preview": preview,
+    }
+
+
+def execute_envelope(skill: str, arguments: dict[str, Any], result: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "skill": skill,
+        "status": "executed",
+        "arguments": arguments,
+        "requires_approval": False,
+        "result": result,
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         prog="cloud-platform",
@@ -114,9 +147,15 @@ def main() -> int:
     )
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("help", help="Show the machine-readable command catalog")
+    commands.add_parser("commands", help="Show all machine-readable command contracts")
     commands.add_parser("skills", help="List allowlisted skills and schemas")
     commands.add_parser("projects", help="List managed projects and services")
     commands.add_parser("frameworks", help="List framework deployment presets")
+    schema_parser = commands.add_parser(
+        "schema",
+        help="Show one machine-readable command contract",
+    )
+    schema_parser.add_argument("skill")
     resolve_parser = commands.add_parser(
         "resolve",
         help="Resolve an entity name against live platform data",
@@ -164,7 +203,13 @@ def main() -> int:
     try:
         remote = bool(platform_api_url())
         if args.command == "help":
-            emit(call_platform_api("/help", method="GET") if remote else command_catalog())
+            emit(call_platform_api("/catalog", method="GET") if remote else command_catalog())
+            return 0
+        if args.command == "commands":
+            emit(call_platform_api("/commands", method="GET") if remote else command_contracts())
+            return 0
+        if args.command == "schema":
+            emit(call_platform_api(f"/schema/{args.skill}", method="GET") if remote else command_contract(args.skill))
             return 0
         if args.command == "skills":
             emit(call_platform_api("/skills", method="GET") if remote else {"skills": skill_documents()})
@@ -252,38 +297,34 @@ def main() -> int:
         if args.command == "preview":
             if args.skill in READ_ONLY_SKILLS:
                 raise ValueError("Read-only skills do not require preview")
+            preview = (
+                execute_via_platform_api(
+                    args.skill,
+                    arguments,
+                    dry_run=True,
+                )
+                if remote
+                else execute_skill(args.skill, arguments, dry_run=True)
+            )
             emit(
-                {
-                    "skill": args.skill,
-                    "preview": (
-                        execute_via_platform_api(
-                            args.skill,
-                            arguments,
-                            dry_run=True,
-                        )
-                        if remote
-                        else execute_skill(args.skill, arguments, dry_run=True)
-                    ),
-                }
+                preview_envelope(args.skill, arguments, preview)
             )
             return 0
 
         if args.skill not in READ_ONLY_SKILLS and not args.approve:
             raise ValueError("Mutation skills require --approve")
+        result = (
+            execute_via_platform_api(
+                args.skill,
+                arguments,
+                dry_run=False,
+                approved=args.approve,
+            )
+            if remote
+            else execute_skill(args.skill, arguments, dry_run=False)
+        )
         emit(
-            {
-                "skill": args.skill,
-                "result": (
-                    execute_via_platform_api(
-                        args.skill,
-                        arguments,
-                        dry_run=False,
-                        approved=args.approve,
-                    )
-                    if remote
-                    else execute_skill(args.skill, arguments, dry_run=False)
-                ),
-            }
+            execute_envelope(args.skill, arguments, result)
         )
         return 0
     except Exception as exc:

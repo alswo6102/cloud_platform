@@ -17,6 +17,9 @@ from runtime import (
     SkillError,
     attach_platform_api_to_existing_control_networks,
     call_llm,
+    command_catalog,
+    command_contract,
+    command_contracts,
     execute_skill,
     execute_cli_skill,
     fallback_plan,
@@ -1429,6 +1432,24 @@ def frameworks():
 @app.get("/help")
 def help_guide():
     return {"message": HELP_MESSAGE}
+
+
+@app.get("/commands")
+def commands():
+    return command_contracts()
+
+
+@app.get("/schema/{skill}")
+def schema(skill: str):
+    try:
+        return command_contract(skill)
+    except Exception as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/catalog")
+def catalog():
+    return command_catalog()
 
 
 @app.post("/chat")

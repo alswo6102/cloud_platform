@@ -106,6 +106,29 @@ import json, sys
 data=json.load(sys.stdin)
 assert len(data["frameworks"]) >= 10
 '
+    docker exec cloud-platform-skill-agent cloud-platform schema service.deploy | python3 -c '
+import json, sys
+data=json.load(sys.stdin)
+assert data["skill"] == "service.deploy"
+assert data["requires_approval"] is True
+fields={item["name"]: item for item in data["fields"]}
+assert fields["project"]["question"]
+assert fields["repo_url"]["rules"]
+'
+    docker exec cloud-platform-skill-agent cloud-platform commands | python3 -c '
+import json, sys
+data=json.load(sys.stdin)
+assert data["planner_rule"]
+assert any(item["skill"] == "project.create" for item in data["commands"])
+'
+    docker exec cloud-platform-skill-agent cloud-platform preview project.create \
+        --arguments '{}' | python3 -c '
+import json, sys
+data=json.load(sys.stdin)
+assert data["status"] == "needs_input", data
+assert data["missing"][0]["name"] == "project", data
+assert data["next_question"], data
+'
     if docker exec cloud-platform-skill-agent cloud-platform execute project.create \
         --arguments '{"project":"must-not-run"}' >/dev/null 2>&1; then
         return 1
