@@ -368,6 +368,7 @@ def explicit_name(message: str, label: str) -> str | None:
         "service": [
             r"(?:새\s*)?서비스\s*(?:이름)?\s*(?:은|는|:|=)?\s*([A-Za-z0-9][A-Za-z0-9_.-]{0,63})",
             r"([A-Za-z0-9][A-Za-z0-9_.-]{0,63})\s*서비스",
+            r"([A-Za-z0-9][A-Za-z0-9_.-]{0,63})\s*(?:를|을)?\s*(?:재배포|다시\s*배포|상태|로그|시작|중지|정지|재시작|restart|stop|start)",
         ],
     }
     for pattern in patterns[label]:

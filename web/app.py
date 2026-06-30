@@ -211,8 +211,11 @@ def project_chat(
     context.setdefault("arguments", {})
     context["arguments"]["project"] = project
     context["project_scope"] = project
+    scoped_message = payload.message
+    if project not in scoped_message:
+        scoped_message = f"{project} 프로젝트에서: {scoped_message}"
     return agent_request("POST", "/chat", json_body={
-        "message": payload.message,
+        "message": scoped_message,
         "session_id": payload.session_id,
         "context": context,
     })

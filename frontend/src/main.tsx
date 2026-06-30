@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "./styles.css";
 
@@ -13,6 +13,27 @@ type ChatMessage = {
   from: "user" | "agent";
   text: string;
   raw?: unknown;
+  approval?: ApprovalRequest;
+};
+
+type ApprovalRequest = {
+  skill: string;
+  arguments: Record<string, unknown>;
+  preview?: unknown;
+  resume?: unknown;
+  status: "pending" | "executing" | "done" | "failed";
+};
+
+type AgentResponse = {
+  message?: string;
+  context?: Record<string, unknown>;
+  requires_approval?: boolean;
+  skill?: string;
+  arguments?: Record<string, unknown>;
+  preview?: unknown;
+  resume?: unknown;
+  result?: unknown;
+  missing?: unknown[];
 };
 
 const headers = (role: Role) => ({
@@ -34,6 +55,46 @@ async function api<T>(path: string, role: Role, init?: RequestInit): Promise<T> 
     throw new Error(data.detail || `Request failed: ${response.status}`);
   }
   return data as T;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function labelSkill(skill?: string) {
+  const labels: Record<string, string> = {
+    "project.create": "프로젝트 생성",
+    "service.deploy": "새 서비스 배포",
+    "service.redeploy": "기존 서비스 재배포",
+    "service.control": "서비스 제어",
+    "port.manage": "포트 변경"
+  };
+  return labels[skill || ""] || skill || "실행 작업";
+}
+
+function summarizeApproval(data: AgentResponse) {
+  const args = data.arguments || {};
+  const preview = isRecord(data.preview) ? data.preview : {};
+  const project = String(args.project || preview.project || "현재 프로젝트");
+  const service = args.service ? ` / 서비스: ${String(args.service)}` : "";
+  const lines = [
+    `${labelSkill(data.skill)} 실행 전 확인이 필요합니다.`,
+    `대상: ${project}${service}`,
+    "CLI가 입력값과 현재 서버 상태를 검증했습니다. 아래 내용을 확인한 뒤 승인하면 실제 작업을 실행합니다."
+  ];
+  return lines.join("\n");
+}
+
+function summarizeExecution(data: unknown) {
+  if (!isRecord(data)) return "작업을 실행했습니다.";
+  const result = isRecord(data.result) ? data.result : data;
+  const status = result.status || result.message || result.action;
+  if (status) return `작업을 실행했습니다.\n결과: ${String(status)}`;
+  return "작업을 실행했습니다. 결과 상세는 raw에서 확인할 수 있습니다.";
+}
+
+function compactJson(value: unknown) {
+  return JSON.stringify(value, null, 2);
 }
 
 function App() {
@@ -303,12 +364,64 @@ function AgentPanel({
   const [sessionId] = useState(() => crypto.randomUUID());
   const [context, setContext] = useState<Record<string, unknown>>({});
   const [busy, setBusy] = useState(false);
+  const messagesEndRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (quickPrompt) {
       setInput(quickPrompt);
     }
   }, [quickPrompt]);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, [messages, busy]);
+
+  function updateApproval(index: number, status: ApprovalRequest["status"]) {
+    setMessages((items) =>
+      items.map((item, itemIndex) =>
+        itemIndex === index && item.approval
+          ? { ...item, approval: { ...item.approval, status } }
+          : item
+      )
+    );
+  }
+
+  async function approve(index: number, approval: ApprovalRequest) {
+    updateApproval(index, "executing");
+    setBusy(true);
+    try {
+      const data = await api<Record<string, unknown>>(`/api/projects/${project}/execute`, role, {
+        method: "POST",
+        body: JSON.stringify({
+          skill: approval.skill,
+          arguments: approval.arguments,
+          approved: true,
+          session_id: sessionId,
+          resume: approval.resume
+        })
+      });
+      updateApproval(index, "done");
+      setMessages((items) => [
+        ...items,
+        {
+          from: "agent",
+          text: summarizeExecution(data),
+          raw: data
+        }
+      ]);
+    } catch (err) {
+      updateApproval(index, "failed");
+      setMessages((items) => [
+        ...items,
+        {
+          from: "agent",
+          text: err instanceof Error ? err.message : String(err)
+        }
+      ]);
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function send() {
     if (!input.trim()) return;
@@ -317,12 +430,30 @@ function AgentPanel({
     setMessages((items) => [...items, { from: "user", text }]);
     setBusy(true);
     try {
-      const data = await api<Record<string, unknown>>(`/api/projects/${project}/chat`, role, {
+      const data = await api<AgentResponse>(`/api/projects/${project}/chat`, role, {
         method: "POST",
         body: JSON.stringify({ message: text, session_id: sessionId, context })
       });
       if (data.context && typeof data.context === "object") {
         setContext(data.context as Record<string, unknown>);
+      }
+      if (data.requires_approval && data.skill && data.arguments) {
+        setMessages((items) => [
+          ...items,
+          {
+            from: "agent",
+            text: summarizeApproval(data),
+            raw: data,
+            approval: {
+              skill: data.skill,
+              arguments: data.arguments,
+              preview: data.preview,
+              resume: data.resume,
+              status: "pending"
+            }
+          }
+        ]);
+        return;
       }
       setMessages((items) => [
         ...items,
@@ -360,9 +491,24 @@ function AgentPanel({
         {messages.map((message, index) => (
           <div className={`bubble ${message.from}`} key={index}>
             <p>{message.text}</p>
-            {message.raw ? <details><summary>raw</summary><pre>{JSON.stringify(message.raw, null, 2)}</pre></details> : null}
+            {message.approval ? (
+              <ApprovalCard
+                approval={message.approval}
+                onApprove={() => approve(index, message.approval!)}
+                onCancel={() => updateApproval(index, "failed")}
+                busy={busy}
+              />
+            ) : null}
+            {message.raw ? <details><summary>raw</summary><pre>{compactJson(message.raw)}</pre></details> : null}
           </div>
         ))}
+        {busy && (
+          <div className="bubble agent loadingBubble">
+            <span className="spinner" />
+            <p>CLI와 서버 상태를 확인하는 중입니다...</p>
+          </div>
+        )}
+        <div ref={messagesEndRef} />
       </div>
       <div className="row">
         <input
@@ -375,6 +521,68 @@ function AgentPanel({
         <button onClick={send} disabled={busy || !input.trim()}>보내기</button>
       </div>
     </section>
+  );
+}
+
+function ApprovalCard({
+  approval,
+  onApprove,
+  onCancel,
+  busy
+}: {
+  approval: ApprovalRequest;
+  onApprove: () => void;
+  onCancel: () => void;
+  busy: boolean;
+}) {
+  const args = approval.arguments;
+  const preview = isRecord(approval.preview) ? approval.preview : {};
+  const command = String(preview.command || preview.action || labelSkill(approval.skill));
+  const disabled = busy || approval.status !== "pending";
+
+  return (
+    <div className="approvalCard">
+      <div className="approvalHeader">
+        <strong>{labelSkill(approval.skill)}</strong>
+        <span className={`approvalStatus ${approval.status}`}>{approval.status}</span>
+      </div>
+      <dl>
+        <div>
+          <dt>작업</dt>
+          <dd>{command}</dd>
+        </div>
+        <div>
+          <dt>프로젝트</dt>
+          <dd>{String(args.project || preview.project || "-")}</dd>
+        </div>
+        {args.service ? (
+          <div>
+            <dt>서비스</dt>
+            <dd>{String(args.service)}</dd>
+          </div>
+        ) : null}
+        {args.framework ? (
+          <div>
+            <dt>프레임워크</dt>
+            <dd>{String(args.framework)}</dd>
+          </div>
+        ) : null}
+        {args.repo_url ? (
+          <div>
+            <dt>저장소</dt>
+            <dd>{String(args.repo_url)}</dd>
+          </div>
+        ) : null}
+      </dl>
+      <div className="approvalActions">
+        <button onClick={onApprove} disabled={disabled}>
+          {approval.status === "executing" ? "실행 중..." : "승인하고 실행"}
+        </button>
+        <button className="secondaryButton" onClick={onCancel} disabled={disabled}>
+          취소
+        </button>
+      </div>
+    </div>
   );
 }
 

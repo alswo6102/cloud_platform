@@ -367,6 +367,7 @@ pre {
   max-height: 520px;
   overflow: auto;
   margin-bottom: 1rem;
+  scroll-behavior: smooth;
 }
 
 .emptyChat {
@@ -385,6 +386,21 @@ pre {
   line-height: 1.55;
 }
 
+.bubble p {
+  margin: 0;
+}
+
+.bubble details {
+  margin-top: 0.75rem;
+}
+
+.bubble summary {
+  cursor: pointer;
+  color: #64748b;
+  font-size: 0.86rem;
+  font-weight: 800;
+}
+
 .bubble.user {
   justify-self: end;
   background: #1d4ed8;
@@ -394,6 +410,105 @@ pre {
 .bubble.agent {
   justify-self: start;
   background: #f1f5f9;
+}
+
+.loadingBubble {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  color: #475569;
+}
+
+.spinner {
+  width: 1rem;
+  height: 1rem;
+  border-radius: 999px;
+  border: 2px solid #bfdbfe;
+  border-top-color: #2563eb;
+  animation: spin 0.8s linear infinite;
+  flex: 0 0 auto;
+}
+
+.approvalCard {
+  min-width: min(540px, 72vw);
+  margin-top: 0.85rem;
+  border: 1px solid #bfdbfe;
+  border-radius: 16px;
+  background: white;
+  color: #0f172a;
+  padding: 1rem;
+}
+
+.approvalHeader {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: center;
+  margin-bottom: 0.8rem;
+}
+
+.approvalStatus {
+  border-radius: 999px;
+  padding: 0.25rem 0.55rem;
+  background: #fef3c7;
+  color: #92400e;
+  font-size: 0.76rem;
+  font-weight: 900;
+}
+
+.approvalStatus.executing {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.approvalStatus.done {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.approvalStatus.failed {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.approvalCard dl {
+  display: grid;
+  gap: 0.5rem;
+  margin: 0;
+}
+
+.approvalCard dl div {
+  display: grid;
+  grid-template-columns: 5.5rem minmax(0, 1fr);
+  gap: 0.75rem;
+}
+
+.approvalCard dt {
+  color: #64748b;
+  font-weight: 800;
+}
+
+.approvalCard dd {
+  margin: 0;
+  word-break: break-all;
+}
+
+.approvalActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+
+.secondaryButton {
+  background: #f1f5f9;
+  color: #334155;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .admin {
