@@ -19,6 +19,7 @@ import docker
 import psutil
 import requests
 import yaml
+import cli_contracts
 from deployment_presets import (
     DEFAULT_CONTAINER_PORT,
     FRAMEWORK_PRESETS,
@@ -66,144 +67,6 @@ GITHUB_HTTPS_PATTERN = re.compile(
 )
 MODEL_COOLDOWNS: dict[str, float] = {}
 MODEL_COOLDOWN_LOCK = threading.Lock()
-
-FIELD_CONTRACTS: dict[str, dict[str, Any]] = {
-    "project": {
-        "type": "name",
-        "label": "프로젝트 이름",
-        "rules": "영문, 숫자, 점(.), 밑줄(_), 하이픈(-)만 가능하며 64자 이하입니다.",
-        "question": "프로젝트 이름을 알려주세요.",
-        "examples": ["demoa", "horse_race", "my-app"],
-        "normalization": "사용자가 조사나 짧은 확인 표현을 붙여도 값 후보로 해석할 수 있습니다.",
-    },
-    "service": {
-        "type": "name",
-        "label": "서비스 이름",
-        "rules": "영문, 숫자, 점(.), 밑줄(_), 하이픈(-)만 가능하며 64자 이하입니다.",
-        "question": "서비스 이름을 알려주세요.",
-        "examples": ["frontend", "backend", "api"],
-    },
-    "repo_url": {
-        "type": "github_https_url",
-        "label": "공개 GitHub HTTPS 저장소 URL",
-        "rules": "https://github.com/<owner>/<repo> 형태만 허용합니다.",
-        "question": "배포할 공개 GitHub HTTPS 저장소 URL을 알려주세요.",
-        "examples": ["https://github.com/owner/repository"],
-    },
-    "framework": {
-        "type": "enum",
-        "label": "프레임워크 프리셋",
-        "rules": "framework.list 또는 schema enum에 있는 값만 허용합니다.",
-        "question": "프레임워크 프리셋을 선택해주세요.",
-        "examples": ["static", "vite", "react", "nextjs", "fastapi"],
-    },
-    "container_port": {
-        "type": "integer",
-        "label": "컨테이너 포트",
-        "rules": "1~65535 사이 정수입니다. 생략하면 프레임워크 기본값 3000을 사용합니다.",
-        "question": "앱이 컨테이너 내부에서 리슨하는 포트를 알려주세요.",
-        "examples": [3000, 8000],
-    },
-    "host_port": {
-        "type": "integer",
-        "label": "호스트 포트",
-        "rules": f"{PORT_START}~{PORT_END} 사이 정수입니다. 웹 서비스에서만 사용합니다.",
-        "question": "외부에 공개할 호스트 포트를 알려주세요. 생략하면 자동 추천합니다.",
-        "examples": [9000, 9001],
-    },
-    "is_web": {
-        "type": "boolean",
-        "label": "외부 공개 웹 서비스 여부",
-        "rules": "프론트엔드는 true, 내부 백엔드/API는 false입니다.",
-        "question": "외부에 공개할 웹 서비스인가요, 내부 통신 전용 서비스인가요?",
-        "examples": [True, False],
-    },
-    "environment_names": {
-        "type": "string_array",
-        "label": "환경변수 이름 목록",
-        "rules": "비밀값은 받지 않고 변수 이름만 받습니다.",
-        "question": "필요한 환경변수 이름이 있으면 이름만 알려주세요.",
-        "examples": [["DATABASE_URL", "API_KEY"]],
-    },
-    "action": {
-        "type": "enum",
-        "label": "서비스 제어 동작",
-        "rules": "start, stop, restart 중 하나입니다.",
-        "question": "서비스를 시작, 중지, 재시작 중 무엇으로 제어할까요?",
-        "examples": ["start", "stop", "restart"],
-    },
-    "operation": {
-        "type": "enum",
-        "label": "포트 변경 작업",
-        "rules": "suggest, change_host, change_container 중 하나입니다.",
-        "question": "호스트 포트를 바꿀지, 컨테이너 포트를 바꿀지 알려주세요.",
-        "examples": ["suggest", "change_host", "change_container"],
-    },
-    "lines": {
-        "type": "integer",
-        "label": "로그 줄 수",
-        "rules": "1~100 사이 정수입니다. 기본값은 40입니다.",
-        "question": "몇 줄의 로그를 볼까요?",
-        "examples": [40, 100],
-    },
-    "entity": {
-        "type": "enum",
-        "label": "탐색 대상 종류",
-        "rules": "project, service, framework 중 하나입니다.",
-        "question": "프로젝트, 서비스, 프레임워크 중 무엇을 찾을까요?",
-        "examples": ["project", "service", "framework"],
-    },
-    "query": {
-        "type": "string",
-        "label": "검색어",
-        "rules": "CLI가 실제 목록과 유사도를 비교할 이름입니다.",
-        "question": "찾을 이름이나 검색어를 알려주세요.",
-        "examples": ["demoa", "frontend", "vite"],
-    },
-}
-
-COMMAND_FIELD_ORDER: dict[str, dict[str, list[str]]] = {
-    "project.create": {
-        "required": ["project"],
-        "optional": [],
-    },
-    "service.deploy": {
-        "required": ["project", "service", "repo_url", "framework"],
-        "optional": ["container_port", "host_port", "is_web", "environment_names"],
-    },
-    "service.redeploy": {
-        "required": ["project", "service"],
-        "optional": [],
-    },
-    "service.control": {
-        "required": ["project", "service", "action"],
-        "optional": [],
-    },
-    "service.status": {
-        "required": ["project"],
-        "optional": ["service"],
-    },
-    "service.logs": {
-        "required": ["project", "service"],
-        "optional": ["lines"],
-    },
-    "help.search": {
-        "required": ["query"],
-        "optional": [],
-    },
-    "port.manage": {
-        "required": ["project", "service", "operation"],
-        "optional": ["host_port", "container_port"],
-    },
-    "entity.resolve": {
-        "required": ["entity", "query"],
-        "optional": ["project"],
-    },
-    "repository.inspect": {
-        "required": ["repo_url"],
-        "optional": [],
-    },
-}
 
 
 class SkillError(RuntimeError):
@@ -743,133 +606,39 @@ def entity_resolve(
 
 
 def field_contract(field: str, *, required: bool, label: str | None = None) -> dict[str, Any]:
-    contract = dict(FIELD_CONTRACTS.get(field, {}))
-    contract.setdefault("type", "string")
-    contract.setdefault("label", label or field)
-    contract.setdefault("question", f"{contract['label']} 값을 알려주세요.")
-    contract["name"] = field
-    contract["field"] = field
-    contract["required"] = required
-    if label:
-        contract["label"] = label
-    return contract
+    return cli_contracts.field_contract(
+        field,
+        required=required,
+        port_start=PORT_START,
+        port_end=PORT_END,
+        label=label,
+    )
 
 
 def command_contract(skill: str) -> dict[str, Any]:
     document = next((item for item in skill_documents() if item["name"] == skill), None)
     schema = document.get("schema", {}) if document else {}
-    field_order = COMMAND_FIELD_ORDER.get(skill, {"required": [], "optional": []})
-    required = list(field_order.get("required", []))
-    optional = list(field_order.get("optional", []))
-    properties = schema.get("properties", {}) if isinstance(schema, dict) else {}
-    if not required and not optional and properties:
-        required = list(schema.get("required") or [])
-        optional = [
-            field for field in properties
-            if field not in required
-        ]
-    fields = [
-        field_contract(field, required=True)
-        for field in required
-    ] + [
-        field_contract(field, required=False)
-        for field in optional
-        if field not in required
-    ]
-    for item in fields:
-        prop = properties.get(item["name"], {})
-        if "enum" in prop:
-            item["enum"] = prop["enum"]
-        if "default" in prop:
-            item["default"] = prop["default"]
-        if "description" in prop:
-            item["schema_description"] = prop["description"]
-        if "minimum" in prop:
-            item["minimum"] = prop["minimum"]
-        if "maximum" in prop:
-            item["maximum"] = prop["maximum"]
     read_only = skill in READ_ONLY_SKILLS
-    return {
-        "skill": skill,
-        "description": document.get("description", "") if document else "",
-        "mode": "read" if read_only else "mutation",
-        "read_only": read_only,
-        "dry_run": not read_only,
-        "requires_approval": not read_only,
-        "fields": fields,
-        "required_fields": required,
-        "optional_fields": optional,
-        "schema": schema,
-        "response_contract": {
-            "needs_input": {
-                "status": "needs_input",
-                "missing": "array of missing field contracts",
-                "next_question": "single next user-facing question",
-            },
-            "ready": {
-                "status": "ready",
-                "preview": "execution plan returned by dry-run",
-                "requires_approval": not read_only,
-            },
-            "executed": {
-                "status": "executed",
-                "result": "verified execution result",
-            },
-            "invalid": {
-                "status": "invalid",
-                "message": "validation error",
-            },
-        },
-    }
+    return cli_contracts.build_command_contract(
+        skill,
+        document=document,
+        schema=schema,
+        read_only=read_only,
+        port_start=PORT_START,
+        port_end=PORT_END,
+    )
 
 
 def command_contracts() -> dict[str, Any]:
     skills = [item["name"] for item in skill_documents()]
-    return {
-        "commands": [command_contract(skill) for skill in sorted(skills)],
-        "planner_rule": (
-            "LLM agents must choose one command, fill only fields supported by its schema, "
-            "call preview for mutation commands, ask for missing fields from the CLI response, "
-            "and never call platform APIs directly."
-        ),
-    }
+    contracts = [command_contract(skill) for skill in sorted(skills)]
+    return cli_contracts.build_command_contracts(contracts)
 
 
 def command_catalog() -> dict[str, Any]:
-    return {
-        "contract_version": "2026-06-27",
-        "machine_readable": True,
-        "planner_rule": (
-            "Use this CLI as the only execution surface. Read schema <skill>, call preview "
-            "for mutations, ask for missing fields, and execute only after approval."
-        ),
-        "commands": {
-            "help": "Show the command catalog",
-            "commands": "Show all machine-readable command contracts",
-            "schema <skill>": "Show one machine-readable command contract",
-            "skills": "List allowlisted skills and schemas",
-            "describe <skill>": "Describe one skill",
-            "projects": "List valid and incomplete projects",
-            "frameworks": "List framework presets",
-            "resolve <entity> <query>": "Resolve a project, service, or framework against live CLI data",
-            "inspect-repo <url>": "Inspect a public GitHub repository read-only",
-            "status <project> [service]": "Show live Compose and Docker service status",
-            "logs <project> <service>": "Show a bounded tail of service logs",
-            "preview <skill>": "Validate and preview a mutation",
-            "execute <skill>": "Execute a skill; mutations require approval",
-        },
-        "examples": [
-            "cloud-platform projects",
-            "cloud-platform frameworks",
-            "cloud-platform resolve project horserace",
-            "cloud-platform inspect-repo https://github.com/owner/repository",
-            "cloud-platform status demoa demo-a",
-            "cloud-platform logs demoa demo-a --lines 40",
-            "cloud-platform schema service.deploy",
-            "cloud-platform preview service.deploy --arguments '{...}'",
-        ],
-        "skills": sorted(item["name"] for item in skill_documents()),
-    }
+    skills = sorted(item["name"] for item in skill_documents())
+    contracts = [command_contract(skill) for skill in skills]
+    return cli_contracts.build_command_catalog(skills, contracts)
 
 
 def server_health() -> dict[str, Any]:

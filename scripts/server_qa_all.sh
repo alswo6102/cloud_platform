@@ -111,9 +111,22 @@ import json, sys
 data=json.load(sys.stdin)
 assert data["skill"] == "service.deploy"
 assert data["requires_approval"] is True
+assert data["role"]
+assert "service.redeploy" in data["ambiguous_with"]
+assert data["clarification_question"]
 fields={item["name"]: item for item in data["fields"]}
 assert fields["project"]["question"]
 assert fields["repo_url"]["rules"]
+'
+    docker exec cloud-platform-skill-agent cloud-platform help | python3 -c '
+import json, sys
+data=json.load(sys.stdin)
+assert data["task_guide"]
+redeploy=next(item for item in data["task_guide"] if item["skill"] == "service.redeploy")
+assert redeploy["role"]
+assert redeploy["use_when"]
+assert redeploy["not_for"]
+assert redeploy["clarification_question"]
 '
     docker exec cloud-platform-skill-agent cloud-platform commands | python3 -c '
 import json, sys
