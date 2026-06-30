@@ -126,7 +126,7 @@ function LandingCard({
   onCreated: () => Promise<void>;
 }) {
   const [name, setName] = useState("");
-  const [preview, setPreview] = useState<unknown>(null);
+  const [preview, setPreview] = useState<unknown | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
 
@@ -171,13 +171,13 @@ function LandingCard({
         <button disabled={!name || busy || role === "visitor"} onClick={() => createProject(false)}>
           미리보기
         </button>
-        <button disabled={!preview || busy || role === "visitor"} onClick={() => createProject(true)}>
+        <button disabled={preview === null || busy || role === "visitor"} onClick={() => createProject(true)}>
           승인 생성
         </button>
       </div>
       {role === "visitor" && <p className="hint">비유저는 AI와 프로젝트 생성 기능을 사용할 수 없습니다.</p>}
       {message && <p className="hint">{message}</p>}
-      {preview && <pre>{JSON.stringify(preview, null, 2)}</pre>}
+      {preview !== null && <pre>{JSON.stringify(preview, null, 2)}</pre>}
     </section>
   );
 }
