@@ -12,7 +12,6 @@ type Project = {
 type ChatMessage = {
   from: "user" | "agent";
   text: string;
-  raw?: unknown;
   approval?: ApprovalRequest;
 };
 
@@ -80,7 +79,7 @@ function summarizeApproval(data: AgentResponse) {
   const lines = [
     `${labelSkill(data.skill)} 실행 전 확인이 필요합니다.`,
     `대상: ${project}${service}`,
-    "CLI가 입력값과 현재 서버 상태를 검증했습니다. 아래 내용을 확인한 뒤 승인하면 실제 작업을 실행합니다."
+    "필요한 정보가 확인됐습니다. 아래 내용을 검토한 뒤 승인하면 작업을 시작합니다."
   ];
   return lines.join("\n");
 }
@@ -90,11 +89,22 @@ function summarizeExecution(data: unknown) {
   const result = isRecord(data.result) ? data.result : data;
   const status = result.status || result.message || result.action;
   if (status) return `작업을 실행했습니다.\n결과: ${String(status)}`;
-  return "작업을 실행했습니다. 결과 상세는 raw에서 확인할 수 있습니다.";
+  return "작업을 실행했습니다. 화면을 새로고침해 최신 상태를 확인해주세요.";
 }
 
-function compactJson(value: unknown) {
-  return JSON.stringify(value, null, 2);
+function previewSteps(preview: unknown): string[] {
+  if (!isRecord(preview) || !Array.isArray(preview.steps)) return [];
+  const labels: Record<string, string> = {
+    "clone the latest default branch into a temporary directory": "최신 코드를 임시 공간에 내려받습니다.",
+    "validate the new root-level Dockerfile": "배포에 필요한 Dockerfile을 확인합니다.",
+    "atomically swap the service source directory": "기존 서비스 소스와 새 소스를 안전하게 교체합니다.",
+    "build a new image and force-recreate only the target service": "대상 서비스만 새 이미지로 다시 빌드합니다.",
+    "verify the new container stays running": "새 컨테이너가 정상 실행되는지 확인합니다.",
+    "restore the previous source and container if verification fails": "검증 실패 시 이전 상태로 복구합니다."
+  };
+  return preview.steps
+    .filter((item): item is string => typeof item === "string")
+    .map((item) => labels[item] || item);
 }
 
 function App() {
@@ -140,11 +150,11 @@ function App() {
           <h1>프로젝트별로 분리되는 배포 콘솔</h1>
           <p>
             프로젝트를 만들고, 각 프로젝트 workspace 안에서 서비스 배포·상태·로그를
-            AI 에이전트와 CLI 기반으로 안전하게 처리합니다.
+            AI 에이전트와 검증된 실행 도구를 통해 안전하게 처리합니다.
           </p>
           <div className="heroBadges" aria-label="console architecture summary">
             <span>Project namespace</span>
-            <span>CLI guarded actions</span>
+            <span>Guarded actions</span>
             <span>Approval before changes</span>
           </div>
         </div>
@@ -245,7 +255,12 @@ function LandingCard({
       </div>
       {role === "visitor" && <p className="hint">비유저는 AI와 프로젝트 생성 기능을 사용할 수 없습니다.</p>}
       {message && <p className="hint">{message}</p>}
-      {preview !== null && <pre>{JSON.stringify(preview, null, 2)}</pre>}
+      {preview !== null && (
+        <div className="previewCard">
+          <strong>생성 전 확인</strong>
+          <p><code>{name}</code> 프로젝트를 생성할 준비가 됐습니다. 승인하면 프로젝트 namespace와 기본 구성이 만들어집니다.</p>
+        </div>
+      )}
     </section>
   );
 }
@@ -322,8 +337,8 @@ function ProjectWorkspace({
           <span>agent context</span>
         </div>
         <div>
-          <strong>CLI</strong>
-          <span>execution guard</span>
+          <strong>검증</strong>
+          <span>safe execution</span>
         </div>
       </div>
       <div className="serviceGrid">
@@ -333,7 +348,7 @@ function ProjectWorkspace({
               <strong>{service}</strong>
               <span className="pill">managed</span>
             </div>
-            <span>상태/로그/재배포는 프로젝트 에이전트가 CLI로 검증해 처리합니다.</span>
+            <span>상태/로그/재배포는 프로젝트 에이전트가 안전하게 확인해 처리합니다.</span>
             <div className="serviceActions">
               <button onClick={() => setQuickPrompt(`${service} 상태 확인해줘`)}>상태</button>
               <button onClick={() => setQuickPrompt(`${service} 로그 40줄 보여줘`)}>로그</button>
@@ -406,8 +421,7 @@ function AgentPanel({
         {
           from: "agent",
           text: summarizeExecution(data),
-          raw: data
-        }
+          }
       ]);
     } catch (err) {
       updateApproval(index, "failed");
@@ -443,7 +457,6 @@ function AgentPanel({
           {
             from: "agent",
             text: summarizeApproval(data),
-            raw: data,
             approval: {
               skill: data.skill,
               arguments: data.arguments,
@@ -460,7 +473,6 @@ function AgentPanel({
         {
           from: "agent",
           text: String(data.message || "응답을 받았습니다."),
-          raw: data
         }
       ]);
     } catch (err) {
@@ -499,13 +511,12 @@ function AgentPanel({
                 busy={busy}
               />
             ) : null}
-            {message.raw ? <details><summary>raw</summary><pre>{compactJson(message.raw)}</pre></details> : null}
           </div>
         ))}
         {busy && (
           <div className="bubble agent loadingBubble">
             <span className="spinner" />
-            <p>CLI와 서버 상태를 확인하는 중입니다...</p>
+            <p>AI가 응답 중입니다...</p>
           </div>
         )}
         <div ref={messagesEndRef} />
@@ -538,6 +549,7 @@ function ApprovalCard({
   const args = approval.arguments;
   const preview = isRecord(approval.preview) ? approval.preview : {};
   const command = String(preview.command || preview.action || labelSkill(approval.skill));
+  const steps = previewSteps(approval.preview);
   const disabled = busy || approval.status !== "pending";
 
   return (
@@ -574,6 +586,14 @@ function ApprovalCard({
           </div>
         ) : null}
       </dl>
+      {steps.length > 0 ? (
+        <div className="approvalSteps">
+          <strong>진행 예정</strong>
+          <ol>
+            {steps.map((step) => <li key={step}>{step}</li>)}
+          </ol>
+        </div>
+      ) : null}
       <div className="approvalActions">
         <button onClick={onApprove} disabled={disabled}>
           {approval.status === "executing" ? "실행 중..." : "승인하고 실행"}
@@ -603,7 +623,7 @@ function AdminConsole({ role }: { role: Role }) {
       });
       setMessages((items) => [
         ...items,
-        { from: "agent", text: String(data.message || "응답을 받았습니다."), raw: data }
+        { from: "agent", text: String(data.message || "응답을 받았습니다.") }
       ]);
     } catch (err) {
       setMessages((items) => [
@@ -627,7 +647,6 @@ function AdminConsole({ role }: { role: Role }) {
           {messages.map((message, index) => (
             <div className={`bubble ${message.from}`} key={index}>
               <p>{message.text}</p>
-              {message.raw ? <details><summary>raw</summary><pre>{JSON.stringify(message.raw, null, 2)}</pre></details> : null}
             </div>
           ))}
         </div>

@@ -214,6 +214,25 @@ pre {
   line-height: 1.55;
 }
 
+.previewCard {
+  margin-top: 1rem;
+  border: 1px solid #bfdbfe;
+  border-radius: 16px;
+  background: #f8fbff;
+  padding: 1rem;
+}
+
+.previewCard strong {
+  display: block;
+  margin-bottom: 0.35rem;
+}
+
+.previewCard p {
+  margin: 0;
+  color: #64748b;
+  line-height: 1.55;
+}
+
 .error {
   margin: 1rem 0;
   padding: 1rem;
@@ -491,6 +510,27 @@ pre {
 .approvalCard dd {
   margin: 0;
   word-break: break-all;
+}
+
+.approvalSteps {
+  margin-top: 1rem;
+  border-top: 1px solid #e2e8f0;
+  padding-top: 0.85rem;
+}
+
+.approvalSteps strong {
+  display: block;
+  margin-bottom: 0.5rem;
+}
+
+.approvalSteps ol {
+  margin: 0;
+  padding-left: 1.25rem;
+  color: #475569;
+}
+
+.approvalSteps li + li {
+  margin-top: 0.3rem;
 }
 
 .approvalActions {
