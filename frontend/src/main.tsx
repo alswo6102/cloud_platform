@@ -74,16 +74,21 @@ function App() {
   return (
     <main className="shell">
       <header className="hero">
-        <div>
+        <div className="heroCopy">
           <p className="eyebrow">Cloud Platform Console</p>
-          <h1>프로젝트 단위로 격리되는 배포 콘솔</h1>
+          <h1>프로젝트별로 분리되는 배포 콘솔</h1>
           <p>
-            메인에서는 프로젝트를 만들고, 프로젝트 상세 안에서는 해당 namespace의
-            서비스만 AI 에이전트가 다룹니다.
+            프로젝트를 만들고, 각 프로젝트 workspace 안에서 서비스 배포·상태·로그를
+            AI 에이전트와 CLI 기반으로 안전하게 처리합니다.
           </p>
+          <div className="heroBadges" aria-label="console architecture summary">
+            <span>Project namespace</span>
+            <span>CLI guarded actions</span>
+            <span>Approval before changes</span>
+          </div>
         </div>
         <label className="rolePicker">
-          개발용 권한
+          <span>개발용 권한</span>
           <select value={role} onChange={(event) => setRole(event.target.value as Role)}>
             <option value="visitor">비유저</option>
             <option value="user">일반 유저</option>
@@ -156,11 +161,13 @@ function LandingCard({
 
   return (
     <section className="card">
-      <h2>새 프로젝트</h2>
-      <p>
-        프로젝트 생성은 AI가 아니라 명시적인 API로 처리합니다. 생성 후 프로젝트
-        상세에서 AI 에이전트를 사용합니다.
-      </p>
+      <div className="cardTitle">
+        <span className="iconBox">＋</span>
+        <div>
+          <h2>새 프로젝트</h2>
+          <p>프로젝트 생성은 명시적인 API로 처리하고, 생성 후 상세 화면에서 AI를 사용합니다.</p>
+        </div>
+      </div>
       <div className="row">
         <input
           value={name}
@@ -197,8 +204,13 @@ function ProjectList({
 }) {
   return (
     <section className="card">
-      <h2>내 프로젝트</h2>
-      <p>현재는 로그인 전 단계라 개발용 헤더 권한으로 표시합니다.</p>
+      <div className="cardTitle">
+        <span className="iconBox">⌘</span>
+        <div>
+          <h2>내 프로젝트</h2>
+          <p>현재는 로그인 전 단계라 개발용 헤더 권한으로 표시합니다.</p>
+        </div>
+      </div>
       {loading && <p className="hint">불러오는 중...</p>}
       {role === "visitor" && <p className="hint">로그인 후 프로젝트 목록이 표시됩니다.</p>}
       <div className="projectList">
@@ -226,38 +238,77 @@ function ProjectWorkspace({
   project: Project;
   onRefresh: () => Promise<void>;
 }) {
+  const [quickPrompt, setQuickPrompt] = useState("");
+  const services = project.services || [];
+
   return (
     <section className="workspace">
       <div className="workspaceHeader">
         <div>
           <p className="eyebrow">Project namespace</p>
           <h2>{project.name}</h2>
-          <p>이 화면의 AI 에이전트는 기본적으로 이 프로젝트를 context로 받습니다.</p>
+          <p>이 workspace의 에이전트는 기본적으로 <code>{project.name}</code> 프로젝트만 context로 받습니다.</p>
         </div>
         <button onClick={onRefresh}>새로고침</button>
       </div>
+      <div className="namespaceStats">
+        <div>
+          <strong>{services.length}</strong>
+          <span>services</span>
+        </div>
+        <div>
+          <strong>scoped</strong>
+          <span>agent context</span>
+        </div>
+        <div>
+          <strong>CLI</strong>
+          <span>execution guard</span>
+        </div>
+      </div>
       <div className="serviceGrid">
-        {(project.services || []).map((service) => (
+        {services.map((service) => (
           <div className="service" key={service}>
-            <strong>{service}</strong>
-            <span>상태/로그/재배포는 에이전트 또는 CLI API를 통해 조회</span>
+            <div className="serviceTop">
+              <strong>{service}</strong>
+              <span className="pill">managed</span>
+            </div>
+            <span>상태/로그/재배포는 프로젝트 에이전트가 CLI로 검증해 처리합니다.</span>
+            <div className="serviceActions">
+              <button onClick={() => setQuickPrompt(`${service} 상태 확인해줘`)}>상태</button>
+              <button onClick={() => setQuickPrompt(`${service} 로그 40줄 보여줘`)}>로그</button>
+              <button onClick={() => setQuickPrompt(`${service} 재배포하고 싶어`)}>재배포</button>
+            </div>
           </div>
         ))}
-        {(!project.services || project.services.length === 0) && (
+        {services.length === 0 && (
           <p className="hint">아직 등록된 서비스가 없습니다.</p>
         )}
       </div>
-      <AgentPanel role={role} project={project.name} />
+      <AgentPanel role={role} project={project.name} quickPrompt={quickPrompt} />
     </section>
   );
 }
 
-function AgentPanel({ role, project }: { role: Role; project: string }) {
+function AgentPanel({
+  role,
+  project,
+  quickPrompt
+}: {
+  role: Role;
+  project: string;
+  quickPrompt?: string;
+}) {
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [sessionId] = useState(() => crypto.randomUUID());
   const [context, setContext] = useState<Record<string, unknown>>({});
   const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (quickPrompt) {
+      setInput(quickPrompt);
+    }
+  }, [quickPrompt]);
 
   async function send() {
     if (!input.trim()) return;
@@ -293,8 +344,19 @@ function AgentPanel({ role, project }: { role: Role; project: string }) {
 
   return (
     <section className="agent">
-      <h3>프로젝트 AI 에이전트</h3>
+      <div className="agentTitle">
+        <div>
+          <h3>프로젝트 AI 에이전트</h3>
+          <p>애매한 요청은 바로 실행하지 않고 필요한 정보를 다시 묻습니다.</p>
+        </div>
+        <span className="pill">session scoped</span>
+      </div>
       <div className="messages">
+        {messages.length === 0 && (
+          <div className="emptyChat">
+            예: “서비스 목록 보여줘”, “demo-a 상태 확인해줘”, “새 프론트 서비스를 배포하고 싶어”
+          </div>
+        )}
         {messages.map((message, index) => (
           <div className={`bubble ${message.from}`} key={index}>
             <p>{message.text}</p>
