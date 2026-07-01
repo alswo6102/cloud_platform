@@ -271,6 +271,10 @@ def field_contracts(port_start: int, port_end: int) -> dict[str, dict[str, Any]]
             "question": "프로젝트 이름을 알려주세요.",
             "examples": ["demoa", "horse_race", "my-app"],
             "normalization": "사용자가 조사나 짧은 확인 표현을 붙여도 값 후보로 해석할 수 있습니다.",
+            "semantic_hint": (
+                "관리 namespace 이름입니다. project-scoped CLI에서는 이미 고정되어 있으므로 "
+                "사용자에게 다시 묻지 않습니다. root/admin CLI에서만 필요합니다."
+            ),
         },
         "service": {
             "type": "name",
@@ -278,6 +282,10 @@ def field_contracts(port_start: int, port_end: int) -> dict[str, dict[str, Any]]
             "rules": "영문, 숫자, 점(.), 밑줄(_), 하이픈(-)만 가능하며 64자 이하입니다.",
             "question": "서비스 이름을 알려주세요.",
             "examples": ["frontend", "backend", "api"],
+            "semantic_hint": (
+                "Compose service/container 이름입니다. 보통 frontend, front, backend, api처럼 "
+                "짧은 식별자입니다. GitHub URL이나 framework 값과 같은 문장에 함께 올 수 있습니다."
+            ),
         },
         "repo_url": {
             "type": "github_https_url",
@@ -285,6 +293,10 @@ def field_contracts(port_start: int, port_end: int) -> dict[str, dict[str, Any]]
             "rules": "https://github.com/<owner>/<repo> 형태만 허용합니다.",
             "question": "배포할 공개 GitHub HTTPS 저장소 URL을 알려주세요.",
             "examples": ["https://github.com/owner/repository"],
+            "semantic_hint": (
+                "소스 코드 위치입니다. 반드시 GitHub HTTPS URL이어야 하며, 비공개 저장소나 "
+                "토큰/비밀번호는 이 필드에 넣지 않습니다."
+            ),
         },
         "framework": {
             "type": "enum",
@@ -292,6 +304,10 @@ def field_contracts(port_start: int, port_end: int) -> dict[str, dict[str, Any]]
             "rules": "framework.list 또는 schema enum에 있는 값만 허용합니다.",
             "question": "프레임워크 프리셋을 선택해주세요.",
             "examples": ["static", "vite", "react", "nextjs", "fastapi"],
+            "semantic_hint": (
+                "Dockerfile 템플릿 선택값입니다. 사용자가 'javascript'처럼 넓게 말하면 "
+                "확정하지 말고 static/vite/react/nextjs/express 후보 차이를 설명합니다."
+            ),
         },
         "container_port": {
             "type": "integer",
@@ -313,6 +329,10 @@ def field_contracts(port_start: int, port_end: int) -> dict[str, dict[str, Any]]
             "rules": "프론트엔드는 true, 내부 백엔드/API는 false입니다.",
             "question": "외부에 공개할 웹 서비스인가요, 내부 통신 전용 서비스인가요?",
             "examples": [True, False],
+            "semantic_hint": (
+                "true면 host_port를 열어 외부 URL 대상이 됩니다. false면 프로젝트 app network 내부 "
+                "통신 전용으로 보고 외부 URL/host_port를 만들지 않습니다."
+            ),
         },
         "environment_names": {
             "type": "string_array",
@@ -320,6 +340,9 @@ def field_contracts(port_start: int, port_end: int) -> dict[str, dict[str, Any]]
             "rules": "비밀값은 받지 않고 변수 이름만 받습니다.",
             "question": "필요한 환경변수 이름이 있으면 이름만 알려주세요.",
             "examples": [["DATABASE_URL", "API_KEY"]],
+            "semantic_hint": (
+                "변수 이름만 받습니다. 실제 secret 값은 LLM/채팅에 넣지 않고 대시보드 보안 입력에서 설정합니다."
+            ),
         },
         "action": {
             "type": "enum",

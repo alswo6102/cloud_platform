@@ -5,6 +5,7 @@ import re
 import json
 import threading
 import time
+from copy import deepcopy
 from typing import Any
 from pathlib import Path
 
@@ -153,6 +154,155 @@ def namespace_scoped_result(
         if str(item.get("name")) == namespace
     ]
     return {"projects": projects, "incomplete_projects": incomplete}
+
+
+PROJECT_SCOPED_HIDDEN_SKILLS = {
+    "project.create",
+    "project.ensure_agent",
+    "server.health",
+    "qa.run",
+}
+
+
+def project_scoped_contract(contract: dict[str, Any], namespace: str) -> dict[str, Any]:
+    scoped = deepcopy(contract)
+    skill = scoped.get("skill")
+    for key in ("required_fields", "optional_fields"):
+        scoped[key] = [field for field in scoped.get(key, []) if field != "project"]
+    scoped["fields"] = [
+        field for field in scoped.get("fields", []) if field.get("field") != "project"
+    ]
+    schema = scoped.get("schema")
+    if isinstance(schema, dict):
+        schema = deepcopy(schema)
+        if isinstance(schema.get("properties"), dict):
+            schema["properties"].pop("project", None)
+        if isinstance(schema.get("required"), list):
+            schema["required"] = [field for field in schema["required"] if field != "project"]
+        scoped["schema"] = schema
+    if skill in {
+        "service.deploy",
+        "service.redeploy",
+        "service.status",
+        "service.logs",
+        "service.control",
+        "port.manage",
+        "entity.resolve",
+    }:
+        scoped["project_scope"] = namespace
+        scoped["scope_rule"] = (
+            f"This CLI is running inside project namespace {namespace!r}. "
+            "Do not ask for a project name. Treat the project as already fixed. "
+            "If the user mentions another project, do not switch scope; explain that this "
+            "workspace can only operate on the current project."
+        )
+    if skill == "project.list":
+        scoped["role"] = (
+            f"현재 project-agent namespace({namespace})에서 접근 가능한 프로젝트와 서비스만 조회합니다."
+        )
+        scoped["examples"] = ["서비스 목록 보여줘", "이 프로젝트에 어떤 서비스가 있어?"]
+        scoped["scope_rule"] = "Returns only the current project in project-agent mode."
+    if skill == "service.deploy":
+        scoped["role"] = (
+            f"{namespace} 프로젝트 안에 공개 GitHub 저장소를 새 서비스로 처음 등록하고 배포합니다."
+        )
+        scoped["use_when"] = [
+            "이 프로젝트에 새 GitHub 저장소를 서비스로 올릴 때",
+            "프로젝트는 이미 화면/agent namespace로 확정되어 있고 서비스만 추가할 때",
+            "처음 배포, 신규 서비스 등록, add new service 요청일 때",
+        ]
+        scoped["not_for"] = [
+            "새 프로젝트를 만드는 작업",
+            "다른 프로젝트에 서비스를 추가하는 작업",
+            "이미 존재하는 서비스를 최신 Git 코드로 다시 빌드하는 작업",
+        ]
+        scoped["examples"] = [
+            "새 프론트 서비스를 배포하고 싶어",
+            "frontend, https://github.com/owner/app, vite",
+            "백엔드 API 서비스를 내부 통신 전용으로 추가하고 싶어",
+        ]
+        scoped["flow"] = [
+            "project는 현재 namespace로 이미 확정되어 있으므로 사용자에게 묻지 않습니다.",
+            "필수 입력은 service, repo_url, framework입니다.",
+            "service는 보통 frontend, backend, api 같은 짧은 컨테이너/Compose 서비스 이름입니다.",
+            "repo_url은 https://github.com/<owner>/<repo> 형태입니다.",
+            "framework는 framework.list/schema enum 중 하나입니다. 애매하면 후보를 설명하고 선택을 요청합니다.",
+            "host_port, is_web, environment_names는 선택값이며 생략 가능하다고 안내합니다.",
+        ]
+        scoped["clarification_question"] = (
+            "이 프로젝트에 추가할 서비스 이름, GitHub URL, 프레임워크 프리셋을 알려주세요."
+        )
+    if skill == "service.redeploy":
+        scoped["examples"] = ["frontend 최신 코드로 재배포해줘", "git push 했으니 api 다시 빌드해줘"]
+    return scoped
+
+
+def scoped_command_contract(skill: str, namespace: str | None) -> dict[str, Any]:
+    contract = command_contract(skill)
+    if namespace:
+        if skill in PROJECT_SCOPED_HIDDEN_SKILLS:
+            raise KeyError(f"{skill} is not available in project-scoped CLI")
+        return project_scoped_contract(contract, namespace)
+    return contract
+
+
+def scoped_command_contracts(namespace: str | None) -> dict[str, Any]:
+    contracts = []
+    for item in skill_documents():
+        skill = item["name"]
+        if namespace and skill in PROJECT_SCOPED_HIDDEN_SKILLS:
+            continue
+        contracts.append(scoped_command_contract(skill, namespace))
+    return {
+        **command_contracts(),
+        "scope": {"type": "project", "project": namespace} if namespace else {"type": "root"},
+        "commands": sorted(contracts, key=lambda item: item["skill"]),
+    }
+
+
+def scoped_command_catalog(namespace: str | None) -> dict[str, Any]:
+    base = command_catalog()
+    contracts = scoped_command_contracts(namespace)["commands"]
+    skills = [item["skill"] for item in contracts]
+    catalog = {
+        **base,
+        "scope": {"type": "project", "project": namespace} if namespace else {"type": "root"},
+        "task_guide": [
+            {
+                "skill": item["skill"],
+                "title": item["title"],
+                "role": item["role"],
+                "use_when": item["use_when"],
+                "not_for": item["not_for"],
+                "ambiguous_with": [
+                    skill for skill in item.get("ambiguous_with", []) if skill in skills
+                ],
+                "clarification_question": item["clarification_question"],
+                "required_fields": item["required_fields"],
+                "optional_fields": item["optional_fields"],
+                "examples": item["examples"],
+                "requires_approval": item["requires_approval"],
+                **({"project_scope": item["project_scope"]} if "project_scope" in item else {}),
+                **({"scope_rule": item["scope_rule"]} if "scope_rule" in item else {}),
+            }
+            for item in contracts
+        ],
+        "skills": sorted(skills),
+    }
+    if namespace:
+        catalog["planner_rule"] = (
+            base["planner_rule"]
+            + f" This is a project-scoped CLI for {namespace!r}; never ask for project, "
+            "never choose project.create, and only operate on the current project."
+        )
+        catalog["commands"] = {
+            **base["commands"],
+            "status [service]": "Project-scoped status; project is implicit",
+            "logs <service>": "Project-scoped logs; project is implicit",
+        }
+        catalog["commands"].pop("status <project> [service]", None)
+        catalog["commands"].pop("logs <project> <service>", None)
+    return catalog
 
 
 def load_persisted_sessions() -> dict[str, dict[str, Any]]:
@@ -1473,21 +1623,24 @@ def help_guide():
 
 
 @app.get("/commands")
-def commands():
-    return command_contracts()
+def commands(http_request: Request):
+    namespace = authenticated_namespace(http_request)
+    return scoped_command_contracts(namespace)
 
 
 @app.get("/schema/{skill}")
-def schema(skill: str):
+def schema(skill: str, http_request: Request):
     try:
-        return command_contract(skill)
+        namespace = authenticated_namespace(http_request)
+        return scoped_command_contract(skill, namespace)
     except Exception as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @app.get("/catalog")
-def catalog():
-    return command_catalog()
+def catalog(http_request: Request):
+    namespace = authenticated_namespace(http_request)
+    return scoped_command_catalog(namespace)
 
 
 @app.post("/chat")

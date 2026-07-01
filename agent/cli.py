@@ -37,6 +37,11 @@ def platform_api_headers() -> dict[str, str]:
     return headers
 
 
+def current_namespace() -> str | None:
+    value = os.getenv("PLATFORM_NAMESPACE", "").strip()
+    return value or None
+
+
 def call_platform_api(
     path: str,
     payload: dict[str, Any] | None = None,
@@ -177,14 +182,14 @@ def main() -> int:
         "status",
         help="Show live Compose and Docker status for a project or service",
     )
-    status_parser.add_argument("project")
+    status_parser.add_argument("target", nargs="?")
     status_parser.add_argument("service", nargs="?")
     logs_parser = commands.add_parser(
         "logs",
         help="Show a bounded tail of logs for a Compose service",
     )
-    logs_parser.add_argument("project")
-    logs_parser.add_argument("service")
+    logs_parser.add_argument("target")
+    logs_parser.add_argument("service", nargs="?")
     logs_parser.add_argument("--lines", type=int, default=40)
 
     for command in ("preview", "execute"):
@@ -268,29 +273,39 @@ def main() -> int:
             )
             return 0
         if args.command == "status":
+            namespace = current_namespace()
+            project = namespace or args.target
+            service = args.target if namespace else args.service
+            if not project:
+                raise ValueError("Project is required outside project-scoped CLI")
             emit(
                 execute_via_platform_api(
                     "service.status",
-                    {"project": args.project, "service": args.service},
+                    {"project": project, "service": service},
                     dry_run=False,
                 )
                 if remote
-                else service_status(args.project, args.service)
+                else service_status(project, service)
             )
             return 0
         if args.command == "logs":
+            namespace = current_namespace()
+            project = namespace or args.target
+            service = args.target if namespace else args.service
+            if not service:
+                raise ValueError("Service is required")
             emit(
                 execute_via_platform_api(
                     "service.logs",
                     {
-                        "project": args.project,
-                        "service": args.service,
+                        "project": project,
+                        "service": service,
                         "lines": args.lines,
                     },
                     dry_run=False,
                 )
                 if remote
-                else service_logs(args.project, args.service, args.lines)
+                else service_logs(project, service, args.lines)
             )
             return 0
         arguments = load_arguments(args.arguments, args.arguments_file)
