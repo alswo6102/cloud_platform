@@ -272,6 +272,10 @@ DEPLOYMENT_GUIDE_PHRASES = {
 
 def preferred_skill_for(message: str, context: dict[str, Any] | None) -> str | None:
     text = message.lower()
+    if GITHUB_URL_RE.search(message) and any(
+        word in text for word in ("배포", "등록", "추가", "서비스", "저장소", "github")
+    ):
+        return "service.deploy"
     if any(
         phrase in text
         for phrase in (
@@ -379,10 +383,11 @@ def explicit_name(message: str, label: str) -> str | None:
 
 
 def slot_value_from_reply(message: str) -> str | None:
-    text = message.strip()
+    text = GITHUB_URL_RE.sub("", message).strip()
+    text = re.split(r"[,，\n]", text, maxsplit=1)[0].strip()
     patterns = [
         r"^\s*([A-Za-z0-9][A-Za-z0-9_.-]{0,63})\s*(?:로|으로)\s*(?:할래|해줘|만들어줘|생성해줘|진행해줘)?\s*$",
-        r"^\s*([A-Za-z0-9][A-Za-z0-9_.-]{0,63})\s*(?:라고|이라|이라고)?\s*(?:할래|해줘|만들어줘|생성해줘|진행해줘)\s*$",
+        r"^\s*([A-Za-z0-9][A-Za-z0-9_.-]{0,63})\s*(?:라고|이라|이라고|라니까)?\s*(?:할래|해줘|만들어줘|생성해줘|진행해줘)?\s*$",
         r"^\s*([A-Za-z0-9][A-Za-z0-9_.-]{0,63})\s*$",
     ]
     for pattern in patterns:
@@ -1032,6 +1037,17 @@ def confirmed_information(arguments: dict[str, Any]) -> str:
     return "### 지금까지 확인된 정보\n\n" + "\n".join(lines)
 
 
+def optional_settings_message(optional: list[str] | None) -> str:
+    if not optional:
+        return ""
+    return (
+        "선택 설정은 지금 생략해도 됩니다. "
+        "생략하면 기본값으로 진행하고, 나중에 변경할 수 있습니다.\n"
+        + "\n".join(f"- {item}" for item in optional)
+        + "\n\n정하고 싶은 항목만 알려주세요. 모두 생략하려면 필수 정보만 알려주면 됩니다."
+    )
+
+
 def load_session(
     session_id: str | None,
     client_context: dict[str, Any] | None,
@@ -1676,6 +1692,13 @@ def chat(request: ChatRequest):
                 confirmed = confirmed_information(verified_arguments)
                 if confirmed and "지금까지 확인된 정보" not in message:
                     message += "\n\n" + confirmed
+                optional_message = optional_settings_message(
+                    current_preview.get("optional")
+                    if isinstance(current_preview, dict)
+                    else None
+                )
+                if optional_message and "선택 설정" not in message:
+                    message += "\n\n" + optional_message
                 if current_preview and not missing:
                     return respond({
                         "mode": "llm",
@@ -1782,7 +1805,7 @@ def chat(request: ChatRequest):
                 message += f"\n\n{details}"
             optional = preview.get("optional")
             if optional:
-                message += "\n\n선택 정보: " + ", ".join(optional)
+                message += "\n\n" + optional_settings_message(optional)
             confirmed = confirmed_information(arguments)
             if confirmed:
                 message = confirmed + "\n\n" + message

@@ -107,6 +107,32 @@ function previewSteps(preview: unknown): string[] {
     .map((item) => labels[item] || item);
 }
 
+function cleanInlineMarkdown(text: string) {
+  return text
+    .replace(/\*\*/g, "")
+    .replace(/`([^`]+)`/g, "$1")
+    .trim();
+}
+
+function MessageText({ text }: { text: string }) {
+  const lines = text.split("\n");
+  return (
+    <div className="messageText">
+      {lines.map((line, index) => {
+        const trimmed = line.trim();
+        if (!trimmed) return <div className="messageGap" key={index} />;
+        if (trimmed.startsWith("###")) {
+          return <strong className="messageHeading" key={index}>{cleanInlineMarkdown(trimmed.replace(/^#+\s*/, ""))}</strong>;
+        }
+        if (trimmed.startsWith("- ")) {
+          return <div className="messageListItem" key={index}>• {cleanInlineMarkdown(trimmed.slice(2))}</div>;
+        }
+        return <p key={index}>{cleanInlineMarkdown(trimmed)}</p>;
+      })}
+    </div>
+  );
+}
+
 function App() {
   const [role, setRole] = useState<Role>("user");
   const [projects, setProjects] = useState<Project[]>([]);
@@ -502,7 +528,7 @@ function AgentPanel({
         )}
         {messages.map((message, index) => (
           <div className={`bubble ${message.from}`} key={index}>
-            <p>{message.text}</p>
+            <MessageText text={message.text} />
             {message.approval ? (
               <ApprovalCard
                 approval={message.approval}
@@ -646,7 +672,7 @@ function AdminConsole({ role }: { role: Role }) {
         <div className="messages">
           {messages.map((message, index) => (
             <div className={`bubble ${message.from}`} key={index}>
-              <p>{message.text}</p>
+              <MessageText text={message.text} />
             </div>
           ))}
         </div>

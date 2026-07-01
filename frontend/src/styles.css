@@ -409,6 +409,29 @@ pre {
   margin: 0;
 }
 
+.messageText {
+  display: grid;
+  gap: 0.3rem;
+}
+
+.messageText p {
+  margin: 0;
+}
+
+.messageHeading {
+  display: block;
+  margin-bottom: 0.25rem;
+  font-size: 1.03rem;
+}
+
+.messageListItem {
+  color: inherit;
+}
+
+.messageGap {
+  height: 0.35rem;
+}
+
 .bubble details {
   margin-top: 0.75rem;
 }
