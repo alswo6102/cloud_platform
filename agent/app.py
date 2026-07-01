@@ -1759,8 +1759,30 @@ def chat(request: ChatRequest):
                     dry_run=True,
                 )
                 current_missing = current_preview.get("needs_input", [])
-            except SkillError:
-                current_preview = {}
+            except SkillError as exc:
+                return respond({
+                    "mode": "cli",
+                    "kind": "clarification",
+                    "message": (
+                        f"CLI 검증에서 입력값 문제가 확인됐습니다: {exc}\n\n"
+                        "잘못된 항목만 다시 알려주세요. GitHub 저장소는 실제 접근 가능한 "
+                        "`https://github.com/<owner>/<repo>` 공개 저장소여야 합니다."
+                    ),
+                    "skill": preferred_skill,
+                    "arguments": current_arguments,
+                    "missing": [],
+                    "context": {
+                        "original_request": (
+                            request.context.get("original_request")
+                            if request.context
+                            else request.message
+                        ),
+                        "skill": preferred_skill,
+                        "arguments": current_arguments,
+                        "missing": [],
+                    },
+                    "requires_approval": False,
+                })
             if current_preview and not current_missing:
                 return respond({
                     "mode": "cli",

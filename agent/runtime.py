@@ -396,6 +396,24 @@ def git_clone(repo_url: str, destination: Path) -> None:
     )
 
 
+def validate_github_repository_access(repo_url: str) -> None:
+    if not GITHUB_HTTPS_PATTERN.fullmatch(repo_url):
+        raise SkillError("repo_url must be a public GitHub HTTPS repository URL")
+    result = subprocess.run(
+        ["git", "ls-remote", "--heads", repo_url],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+    )
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip()
+        raise SkillError(
+            "repo_url must point to an existing public GitHub repository"
+            + (f": {detail}" if detail else "")
+        )
+
+
 def inspect_repository(repo_url: str) -> dict[str, Any]:
     if not GITHUB_HTTPS_PATTERN.fullmatch(repo_url):
         raise SkillError("repo_url must be a public GitHub HTTPS repository URL")
@@ -1085,6 +1103,7 @@ def service_deploy(
         raise SkillError(f"Service already exists: {project}/{service}")
     if not GITHUB_HTTPS_PATTERN.fullmatch(repo_url):
         raise SkillError("repo_url must be a public GitHub HTTPS repository URL")
+    validate_github_repository_access(repo_url)
     if not 1 <= container_port <= 65535:
         raise SkillError("container_port must be between 1 and 65535")
 
