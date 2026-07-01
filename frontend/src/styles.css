@@ -143,16 +143,42 @@ pre {
   opacity: 0.75;
 }
 
-.rolePicker {
+.rolePicker, .loginPanel {
   min-width: 230px;
   display: grid;
   gap: 0.5rem;
   font-weight: 800;
 }
 
-.rolePicker select {
+.rolePicker select, .loginPanel input {
   border-color: rgba(255, 255, 255, 0.24);
   background: rgba(255, 255, 255, 0.96);
+}
+
+.loginPanel {
+  min-width: min(320px, 100%);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 20px;
+  padding: 1rem;
+  background: rgba(255, 255, 255, 0.1);
+  color: white;
+}
+
+.loginPanel button {
+  background: white;
+  color: #1d4ed8;
+}
+
+.loginPanel strong {
+  font-size: 1.1rem;
+}
+
+.loginPanel small {
+  color: rgba(255, 255, 255, 0.78);
+}
+
+.loginError {
+  color: #fecaca !important;
 }
 
 .grid {

@@ -127,7 +127,7 @@ def namespace_scoped_arguments(
                 ),
             )
         scoped["project"] = namespace
-    if skill in {"project.create", "server.health", "qa.run"}:
+    if skill in {"project.create", "project.ensure_agent", "server.health", "qa.run"}:
         raise HTTPException(
             status_code=403,
             detail=f"{skill} is only available to the root/admin plane",

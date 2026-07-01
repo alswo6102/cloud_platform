@@ -36,6 +36,7 @@ AUDIT_LOG = Path(os.getenv("AUDIT_LOG", "/var/log/skill-agent/audit.jsonl"))
 NAMESPACE_TOKEN_STORE = Path(
     os.getenv("NAMESPACE_TOKEN_STORE", "/var/log/skill-agent/namespace_tokens.json")
 )
+CONTROL_PLANE_NETWORK = os.getenv("CONTROL_PLANE_NETWORK", "cloud-platform-internal")
 SAFE_CLEANUP_SCRIPT = Path(
     os.getenv("SAFE_DOCKER_CLEANUP_SCRIPT", "/app/scripts/server_safe_docker_cleanup.sh")
 )
@@ -203,6 +204,11 @@ def ensure_project_networks(project: str, *, attach_platform_api: bool) -> dict[
 
 
 def register_namespace_token(project: str) -> bool:
+    _, created = ensure_namespace_token(project)
+    return created
+
+
+def ensure_namespace_token(project: str) -> tuple[str, bool]:
     validate_name(project, "project")
     NAMESPACE_TOKEN_STORE.parent.mkdir(parents=True, exist_ok=True)
     try:
@@ -210,13 +216,97 @@ def register_namespace_token(project: str) -> bool:
         tokens = data if isinstance(data, dict) else {}
     except (FileNotFoundError, json.JSONDecodeError, OSError):
         tokens = {}
-    if project in {str(namespace) for namespace in tokens.values()}:
-        return False
-    tokens[secrets.token_urlsafe(32)] = project
+    for token, namespace in tokens.items():
+        if str(namespace) == project:
+            return str(token), False
+    token = secrets.token_urlsafe(32)
+    tokens[token] = project
     temporary = NAMESPACE_TOKEN_STORE.with_suffix(".tmp")
     temporary.write_text(json.dumps(tokens, ensure_ascii=False, indent=2))
     temporary.replace(NAMESPACE_TOKEN_STORE)
-    return True
+    return token, True
+
+
+def project_agent_service_definition(project: str, token: str) -> dict[str, Any]:
+    validate_name(project, "project")
+    return {
+        "image": os.getenv("PROJECT_AGENT_IMAGE", "cloud-platform-skill-agent:latest"),
+        "command": "uvicorn app:app --host 0.0.0.0 --port 8080",
+        "restart": "unless-stopped",
+        "environment": {
+            "PROJECTS_ROOT": str(PROJECTS_ROOT),
+            "PLATFORM_NAMESPACE": project,
+            "PLATFORM_TOKEN": token,
+            "PLATFORM_API": "http://platform-api:5000",
+            "SESSION_STORE": f"/var/log/skill-agent/{project}-sessions.json",
+        },
+        "networks": {
+            "app-net": {
+                "aliases": ["project-agent", f"{project}-agent"],
+            },
+            "control-net": {
+                "aliases": ["project-agent", f"{project}-agent"],
+            },
+            "control-plane": {
+                "aliases": [f"project-agent-{project}"],
+            },
+        },
+        "labels": [
+            f"cloud.platform.project={project}",
+            "cloud.platform.role=agent",
+        ],
+        "mem_limit": "512m",
+        "memswap_limit": "1g",
+    }
+
+
+def ensure_project_agent(project: str, dry_run: bool = False) -> dict[str, Any]:
+    validate_name(project, "project")
+    data = load_compose(project)
+    networks = ensure_project_networks(project, attach_platform_api=True)
+    token, token_created = ensure_namespace_token(project)
+    data.setdefault("services", {})
+    data.setdefault("networks", {})
+    data["networks"]["app-net"] = {
+        "name": networks["app_network"],
+        "external": True,
+    }
+    data["networks"]["control-net"] = {
+        "name": networks["control_network"],
+        "external": True,
+    }
+    data["networks"]["control-plane"] = {
+        "name": CONTROL_PLANE_NETWORK,
+        "external": True,
+    }
+    desired = project_agent_service_definition(project, token)
+    changed = data["services"].get("agent") != desired
+    plan = {
+        "project": project,
+        "agent_service": "agent",
+        "dns": f"project-agent-{project}",
+        "networks": ["app-net", "control-net", "control-plane"],
+        "token_created": token_created,
+        "changed": changed,
+    }
+    if dry_run:
+        return {"dry_run": True, **plan}
+    if changed:
+        backup = write_compose_atomic(project, {**data, "services": {**data["services"], "agent": desired}})
+        try:
+            compose_command(project, "up", "-d", "agent", timeout=300)
+            backup.unlink(missing_ok=True)
+        except Exception:
+            rollback_compose(project, backup)
+            raise
+    else:
+        compose_command(project, "up", "-d", "agent", timeout=300)
+    container = find_container(project, "agent")
+    return {
+        "dry_run": False,
+        **plan,
+        "verified": container_summary(container) if container else None,
+    }
 
 
 def find_container(project: str, service: str):
@@ -693,7 +783,13 @@ def project_list() -> dict[str, Any]:
     for path in sorted(PROJECTS_ROOT.iterdir() if PROJECTS_ROOT.exists() else []):
         if path.is_dir() and (path / "docker-compose.yml").exists():
             data = yaml.safe_load((path / "docker-compose.yml").read_text()) or {}
-            projects.append({"name": path.name, "services": sorted(data.get("services", {}).keys())})
+            services = [
+                name
+                for name, config in (data.get("services", {}) or {}).items()
+                if name != "agent"
+                and "cloud.platform.role=agent" not in (config.get("labels") or [])
+            ]
+            projects.append({"name": path.name, "services": sorted(services)})
         elif path.is_dir():
             incomplete.append(
                 {
@@ -785,12 +881,14 @@ def project_create(project: str | None, dry_run: bool) -> dict[str, Any]:
         if not repairing:
             destination.mkdir(parents=False)
         networks = ensure_project_networks(project, attach_platform_api=True)
-        token_created = register_namespace_token(project)
+        token, token_created = ensure_namespace_token(project)
         compose.write_text(
             yaml.safe_dump(
                 {
                     "version": "3.8",
-                    "services": {},
+                    "services": {
+                        "agent": project_agent_service_definition(project, token),
+                    },
                     "networks": {
                         "app-net": {
                             "name": networks["app_network"],
@@ -800,11 +898,16 @@ def project_create(project: str | None, dry_run: bool) -> dict[str, Any]:
                             "name": networks["control_network"],
                             "external": True,
                         },
+                        "control-plane": {
+                            "name": CONTROL_PLANE_NETWORK,
+                            "external": True,
+                        },
                     },
                 },
                 sort_keys=False,
             )
         )
+        compose_command(project, "up", "-d", "agent", timeout=300)
         projects = {item["name"] for item in project_list()["projects"]}
         if project not in projects:
             raise SkillError("Created project was not found during verification")
@@ -825,7 +928,15 @@ def project_create(project: str | None, dry_run: bool) -> dict[str, Any]:
 
 def service_status(project: str, service: str | None = None) -> dict[str, Any]:
     data = load_compose(project)
-    names = [service] if service else sorted(data["services"])
+    if service:
+        names = [service]
+    else:
+        names = sorted(
+            name
+            for name, config in (data.get("services", {}) or {}).items()
+            if name != "agent"
+            and "cloud.platform.role=agent" not in (config.get("labels") or [])
+        )
     result = []
     for name in names:
         config = service_config(project, name)
@@ -957,6 +1068,8 @@ def service_deploy(
             environment_names.append(name)
     environment_names.sort()
     validate_name(service, "service")
+    if not dry_run:
+        ensure_project_agent(project, dry_run=False)
     data = load_compose(project)
     networks = ensure_project_networks(project, attach_platform_api=True)
     data.setdefault("networks", {})
@@ -1316,6 +1429,8 @@ def execute_skill(skill: str, arguments: dict[str, Any], dry_run: bool) -> dict[
             result = inspect_repository(arguments["repo_url"])
         elif skill == "project.create":
             result = project_create(arguments.get("project"), dry_run)
+        elif skill == "project.ensure_agent":
+            result = ensure_project_agent(arguments["project"], dry_run)
         elif skill == "service.deploy":
             result = service_deploy(
                 arguments.get("project"),

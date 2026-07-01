@@ -3,6 +3,7 @@ FROM python:3.11-slim
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 ENV SKILL_AGENT_URL=http://cloud-platform-skill-agent:8080
+ENV AUTH_STORE=/var/lib/cloud-platform/auth.json
 
 WORKDIR /app
 

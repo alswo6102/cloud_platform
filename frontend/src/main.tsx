@@ -9,6 +9,17 @@ type Project = {
   services?: string[];
 };
 
+type AuthSession = {
+  id: string;
+  role: Role;
+  name?: string;
+} | null;
+
+type AuthHeaders = {
+  role: Role;
+  userId: string;
+};
+
 type ChatMessage = {
   from: "user" | "agent";
   text: string;
@@ -35,17 +46,22 @@ type AgentResponse = {
   missing?: unknown[];
 };
 
-const headers = (role: Role) => ({
+const visitorAuth: AuthHeaders = {
+  role: "visitor",
+  userId: ""
+};
+
+const authHeaders = (auth: AuthHeaders) => ({
   "Content-Type": "application/json",
-  "X-User-Role": role,
-  "X-User-Id": "local-user"
+  "X-User-Role": auth.role,
+  "X-User-Id": auth.userId
 });
 
-async function api<T>(path: string, role: Role, init?: RequestInit): Promise<T> {
+async function api<T>(path: string, auth: AuthHeaders, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
     ...init,
     headers: {
-      ...headers(role),
+      ...authHeaders(auth),
       ...(init?.headers || {})
     }
   });
@@ -134,11 +150,16 @@ function MessageText({ text }: { text: string }) {
 }
 
 function App() {
-  const [role, setRole] = useState<Role>("user");
+  const [session, setSession] = useState<AuthSession>(null);
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedProject, setSelectedProject] = useState<string>("");
   const [error, setError] = useState<string>("");
   const [loading, setLoading] = useState(false);
+  const auth = useMemo<AuthHeaders>(
+    () => session ? { role: session.role, userId: session.id } : visitorAuth,
+    [session]
+  );
+  const role = auth.role;
 
   const selected = useMemo(
     () => projects.find((project) => project.name === selectedProject),
@@ -154,7 +175,7 @@ function App() {
     setLoading(true);
     setError("");
     try {
-      const data = await api<{ projects: Project[] }>("/api/projects", role);
+      const data = await api<{ projects: Project[] }>("/api/projects", auth);
       setProjects(data.projects || []);
       setSelectedProject((current) => current || data.projects?.[0]?.name || "");
     } catch (err) {
@@ -166,7 +187,7 @@ function App() {
 
   useEffect(() => {
     refreshProjects();
-  }, [role]);
+  }, [role, auth.userId]);
 
   return (
     <main className="shell">
@@ -184,22 +205,16 @@ function App() {
             <span>Approval before changes</span>
           </div>
         </div>
-        <label className="rolePicker">
-          <span>개발용 권한</span>
-          <select value={role} onChange={(event) => setRole(event.target.value as Role)}>
-            <option value="visitor">비유저</option>
-            <option value="user">일반 유저</option>
-            <option value="admin">어드민</option>
-          </select>
-        </label>
+        <LoginPanel session={session} onLogin={setSession} onLogout={() => setSession(null)} />
       </header>
 
       {error && <div className="error">{error}</div>}
 
       <section className="grid">
-        <LandingCard role={role} onCreated={refreshProjects} />
+        <LandingCard auth={auth} onCreated={refreshProjects} />
         <ProjectList
           role={role}
+          session={session}
           projects={projects}
           selectedProject={selectedProject}
           loading={loading}
@@ -209,24 +224,81 @@ function App() {
 
       {selected && (
         <ProjectWorkspace
-          role={role}
+          auth={auth}
           project={selected}
           onRefresh={refreshProjects}
         />
       )}
 
-      {role === "admin" && <AdminConsole role={role} />}
+      {role === "admin" && <AdminConsole auth={auth} />}
     </main>
   );
 }
 
+function LoginPanel({
+  session,
+  onLogin,
+  onLogout
+}: {
+  session: AuthSession;
+  onLogin: (session: NonNullable<AuthSession>) => void;
+  onLogout: () => void;
+}) {
+  const [userId, setUserId] = useState("local-user");
+  const [password, setPassword] = useState("");
+  const [message, setMessage] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  async function login() {
+    setBusy(true);
+    setMessage("");
+    try {
+      const response = await fetch("/api/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ user_id: userId.trim(), password })
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.detail || "로그인에 실패했습니다.");
+      onLogin({ id: String(data.id), role: String(data.role || "user") as Role, name: data.name ? String(data.name) : undefined });
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="loginPanel">
+      <span>JSON 임시 로그인</span>
+      {session ? (
+        <>
+          <strong>{session.name || session.id}</strong>
+          <small>{session.role}</small>
+          <button className="secondaryButton" onClick={onLogout}>로그아웃</button>
+        </>
+      ) : (
+        <>
+          <input value={userId} onChange={(event) => setUserId(event.target.value)} placeholder="user id" />
+          <input value={password} onChange={(event) => setPassword(event.target.value)} placeholder="password" type="password" />
+          <button onClick={login} disabled={busy || !userId.trim()}>
+            {busy ? "확인 중..." : "로그인"}
+          </button>
+          {message && <small className="loginError">{message}</small>}
+        </>
+      )}
+    </section>
+  );
+}
+
 function LandingCard({
-  role,
+  auth,
   onCreated
 }: {
-  role: Role;
+  auth: AuthHeaders;
   onCreated: () => Promise<void>;
 }) {
+  const role = auth.role;
   const [name, setName] = useState("");
   const [preview, setPreview] = useState<unknown | null>(null);
   const [busy, setBusy] = useState(false);
@@ -236,7 +308,7 @@ function LandingCard({
     setBusy(true);
     setMessage("");
     try {
-      const data = await api<unknown>("/api/projects", role, {
+      const data = await api<unknown>("/api/projects", auth, {
         method: "POST",
         body: JSON.stringify({ name, approved })
       });
@@ -293,12 +365,14 @@ function LandingCard({
 
 function ProjectList({
   role,
+  session,
   projects,
   selectedProject,
   loading,
   onSelect
 }: {
   role: Role;
+  session: AuthSession;
   projects: Project[];
   selectedProject: string;
   loading: boolean;
@@ -310,7 +384,7 @@ function ProjectList({
         <span className="iconBox">⌘</span>
         <div>
           <h2>내 프로젝트</h2>
-          <p>현재는 로그인 전 단계라 개발용 헤더 권한으로 표시합니다.</p>
+          <p>{session ? `${session.id} 계정의 JSON 멤버십 기준으로 표시합니다.` : "로그인 후 접근 가능한 프로젝트를 표시합니다."}</p>
         </div>
       </div>
       {loading && <p className="hint">불러오는 중...</p>}
@@ -332,11 +406,11 @@ function ProjectList({
 }
 
 function ProjectWorkspace({
-  role,
+  auth,
   project,
   onRefresh
 }: {
-  role: Role;
+  auth: AuthHeaders;
   project: Project;
   onRefresh: () => Promise<void>;
 }) {
@@ -386,17 +460,17 @@ function ProjectWorkspace({
           <p className="hint">아직 등록된 서비스가 없습니다.</p>
         )}
       </div>
-      <AgentPanel role={role} project={project.name} quickPrompt={quickPrompt} />
+      <AgentPanel auth={auth} project={project.name} quickPrompt={quickPrompt} />
     </section>
   );
 }
 
 function AgentPanel({
-  role,
+  auth,
   project,
   quickPrompt
 }: {
-  role: Role;
+  auth: AuthHeaders;
   project: string;
   quickPrompt?: string;
 }) {
@@ -431,7 +505,7 @@ function AgentPanel({
     updateApproval(index, "executing");
     setBusy(true);
     try {
-      const data = await api<Record<string, unknown>>(`/api/projects/${project}/execute`, role, {
+      const data = await api<Record<string, unknown>>(`/api/projects/${project}/execute`, auth, {
         method: "POST",
         body: JSON.stringify({
           skill: approval.skill,
@@ -470,7 +544,7 @@ function AgentPanel({
     setMessages((items) => [...items, { from: "user", text }]);
     setBusy(true);
     try {
-      const data = await api<AgentResponse>(`/api/projects/${project}/chat`, role, {
+      const data = await api<AgentResponse>(`/api/projects/${project}/chat`, auth, {
         method: "POST",
         body: JSON.stringify({ message: text, session_id: sessionId, context })
       });
@@ -632,7 +706,7 @@ function ApprovalCard({
   );
 }
 
-function AdminConsole({ role }: { role: Role }) {
+function AdminConsole({ auth }: { auth: AuthHeaders }) {
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [sessionId] = useState(() => crypto.randomUUID());
@@ -643,7 +717,7 @@ function AdminConsole({ role }: { role: Role }) {
     setInput("");
     setMessages((items) => [...items, { from: "user", text }]);
     try {
-      const data = await api<Record<string, unknown>>("/api/admin/chat", role, {
+      const data = await api<Record<string, unknown>>("/api/admin/chat", auth, {
         method: "POST",
         body: JSON.stringify({ message: text, session_id: sessionId })
       });

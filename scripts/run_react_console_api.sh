@@ -6,6 +6,7 @@ IMAGE_NAME="${IMAGE_NAME:-cloud-platform-web-api:dev}"
 CONTAINER_NAME="${CONTAINER_NAME:-cloud-platform-web-api}"
 NETWORK_NAME="${NETWORK_NAME:-cloud-platform-internal}"
 HOST_PORT="${HOST_PORT:-8000}"
+DATA_DIR="${DATA_DIR:-${ROOT_DIR}/data}"
 
 if ! docker network inspect "${NETWORK_NAME}" >/dev/null 2>&1; then
   echo "Docker network not found: ${NETWORK_NAME}" >&2
@@ -15,10 +16,13 @@ fi
 docker build -t "${IMAGE_NAME}" -f "${ROOT_DIR}/web/Dockerfile" "${ROOT_DIR}"
 
 docker rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
+mkdir -p "${DATA_DIR}"
 docker run -d \
   --name "${CONTAINER_NAME}" \
   --network "${NETWORK_NAME}" \
   -e SKILL_AGENT_URL="${SKILL_AGENT_URL:-http://cloud-platform-skill-agent:8080}" \
+  -e AUTH_STORE="${AUTH_STORE:-/var/lib/cloud-platform/auth.json}" \
+  -v "${DATA_DIR}:/var/lib/cloud-platform" \
   -p "${HOST_PORT}:8000" \
   "${IMAGE_NAME}"
 

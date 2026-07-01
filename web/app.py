@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import os
+import json
+import threading
+from pathlib import Path
 from typing import Any, Literal
 
 import requests
@@ -10,7 +13,13 @@ from pydantic import BaseModel, Field
 
 
 SKILL_AGENT_URL = os.getenv("SKILL_AGENT_URL", "http://localhost:8080").rstrip("/")
+PROJECT_AGENT_URL_TEMPLATE = os.getenv(
+    "PROJECT_AGENT_URL_TEMPLATE",
+    "http://project-agent-{project}:8080",
+)
+AUTH_STORE = Path(os.getenv("AUTH_STORE", "/var/lib/cloud-platform/auth.json"))
 REQUEST_TIMEOUT = float(os.getenv("WEB_REQUEST_TIMEOUT", "120"))
+AUTH_LOCK = threading.Lock()
 
 Role = Literal["visitor", "user", "admin"]
 
@@ -47,6 +56,50 @@ class ExecuteRequest(BaseModel):
     project: str | None = None
 
 
+class LoginRequest(BaseModel):
+    user_id: str
+    password: str = ""
+
+
+def default_auth_store() -> dict[str, Any]:
+    return {
+        "users": {
+            "local-user": {"password": "", "role": "user", "name": "Local User"},
+            "admin": {"password": "admin", "role": "admin", "name": "Admin"},
+        },
+        "memberships": {},
+    }
+
+
+def load_auth_store() -> dict[str, Any]:
+    with AUTH_LOCK:
+        try:
+            data = json.loads(AUTH_STORE.read_text())
+            if isinstance(data, dict):
+                data.setdefault("users", {})
+                data.setdefault("memberships", {})
+                return data
+        except (FileNotFoundError, json.JSONDecodeError, OSError):
+            pass
+        data = default_auth_store()
+        save_auth_store_unlocked(data)
+        return data
+
+
+def save_auth_store(data: dict[str, Any]) -> None:
+    with AUTH_LOCK:
+        save_auth_store_unlocked(data)
+
+
+def save_auth_store_unlocked(data: dict[str, Any]) -> None:
+    AUTH_STORE.parent.mkdir(parents=True, exist_ok=True)
+    temporary = AUTH_STORE.with_name(
+        f"{AUTH_STORE.name}.{os.getpid()}.{threading.get_ident()}.tmp"
+    )
+    temporary.write_text(json.dumps(data, ensure_ascii=False, indent=2))
+    temporary.replace(AUTH_STORE)
+
+
 def current_role(x_user_role: str | None) -> Role:
     role = (x_user_role or "visitor").strip().lower()
     if role not in {"visitor", "user", "admin"}:
@@ -56,6 +109,40 @@ def current_role(x_user_role: str | None) -> Role:
 
 def current_user(x_user_id: str | None) -> str:
     return (x_user_id or "local-user").strip() or "local-user"
+
+
+def authenticated_user(
+    x_user_role: str | None,
+    x_user_id: str | None,
+) -> tuple[str, Role]:
+    role = current_role(x_user_role)
+    if role == "visitor":
+        return "", role
+    user_id = current_user(x_user_id)
+    if role == "admin":
+        store = load_auth_store()
+        store.setdefault("users", {}).setdefault(user_id, {
+            "password": "",
+            "role": "admin",
+            "name": user_id,
+        })
+        store["users"][user_id]["role"] = "admin"
+        save_auth_store(store)
+        return user_id, "admin"
+    store = load_auth_store()
+    user = store.get("users", {}).get(user_id)
+    if not user:
+        store.setdefault("users", {})[user_id] = {
+            "password": "",
+            "role": role,
+            "name": user_id,
+        }
+        save_auth_store(store)
+        return user_id, role
+    stored_role = str(user.get("role", role)).lower()
+    if stored_role == "admin":
+        return user_id, "admin"
+    return user_id, "user"
 
 
 def agent_request(
@@ -86,6 +173,57 @@ def agent_request(
     return data if isinstance(data, dict) else {"result": data}
 
 
+def project_agent_url(project: str) -> str:
+    return PROJECT_AGENT_URL_TEMPLATE.format(project=project)
+
+
+def project_agent_request(
+    project: str,
+    method: str,
+    path: str,
+    *,
+    json_body: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    url = f"{project_agent_url(project).rstrip('/')}{path}"
+    try:
+        response = requests.request(
+            method,
+            url,
+            json=json_body,
+            timeout=REQUEST_TIMEOUT,
+        )
+    except requests.RequestException as first_exc:
+        ensure_project_agent(project)
+        try:
+            response = requests.request(
+                method,
+                url,
+                json=json_body,
+                timeout=REQUEST_TIMEOUT,
+            )
+        except requests.RequestException as exc:
+            raise HTTPException(
+                status_code=502,
+                detail=f"Project agent is unavailable for {project}: {exc}",
+            ) from first_exc
+    try:
+        data = response.json()
+    except ValueError:
+        data = {"detail": response.text}
+    if response.status_code >= 400:
+        detail = data.get("detail") if isinstance(data, dict) else data
+        raise HTTPException(status_code=response.status_code, detail=detail)
+    return data if isinstance(data, dict) else {"result": data}
+
+
+def ensure_project_agent(project: str) -> None:
+    agent_request("POST", "/execute", json_body={
+        "skill": "project.ensure_agent",
+        "arguments": {"project": project},
+        "approved": True,
+    })
+
+
 def require_login(role: Role) -> None:
     if role == "visitor":
         raise HTTPException(status_code=401, detail="Login is required.")
@@ -107,15 +245,41 @@ def project_names() -> set[str]:
 
 
 def ensure_project_access(role: Role, user_id: str, project: str) -> None:
-    # Placeholder policy until real login/membership is added.
-    # - admin can access every project.
-    # - user can access existing projects in development mode.
-    # Later this becomes: memberships(user_id, project).role in [...]
     if role == "admin":
         return
     require_login(role)
     if project not in project_names():
         raise HTTPException(status_code=404, detail=f"Project not found: {project}")
+    store = load_auth_store()
+    members = store.setdefault("memberships", {}).setdefault(project, {})
+    if not members and user_id == "local-user":
+        members[user_id] = "owner"
+        save_auth_store(store)
+        return
+    if user_id not in members:
+        raise HTTPException(status_code=403, detail=f"No project membership: {project}")
+
+
+def visible_projects(role: Role, user_id: str, projects: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if role == "admin":
+        return projects
+    store = load_auth_store()
+    memberships = store.setdefault("memberships", {})
+    if not memberships and user_id == "local-user":
+        for project in projects:
+            memberships.setdefault(str(project["name"]), {})[user_id] = "owner"
+        save_auth_store(store)
+    return [
+        project
+        for project in projects
+        if user_id in memberships.get(str(project.get("name")), {})
+    ]
+
+
+def add_project_membership(project: str, user_id: str, role: str = "owner") -> None:
+    store = load_auth_store()
+    store.setdefault("memberships", {}).setdefault(project, {})[user_id] = role
+    save_auth_store(store)
 
 
 @app.get("/api/health")
@@ -124,17 +288,30 @@ def health() -> dict[str, Any]:
     return {"status": "ok", "skill_agent": agent}
 
 
+@app.post("/api/login")
+def login(payload: LoginRequest) -> dict[str, Any]:
+    store = load_auth_store()
+    user = store.get("users", {}).get(payload.user_id)
+    if not user or str(user.get("password", "")) != payload.password:
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+    return {
+        "id": payload.user_id,
+        "role": user.get("role", "user"),
+        "name": user.get("name", payload.user_id),
+        "auth_mode": "json-table",
+    }
+
+
 @app.get("/api/me")
 def me(
     x_user_role: str | None = Header(default=None),
     x_user_id: str | None = Header(default=None),
 ) -> dict[str, Any]:
-    role = current_role(x_user_role)
-    user_id = current_user(x_user_id)
+    user_id, role = authenticated_user(x_user_role, x_user_id)
     return {
         "id": user_id if role != "visitor" else None,
         "role": role,
-        "auth_mode": "development-header",
+        "auth_mode": "json-table-development-header",
     }
 
 
@@ -143,20 +320,18 @@ def list_projects(
     x_user_role: str | None = Header(default=None),
     x_user_id: str | None = Header(default=None),
 ) -> dict[str, Any]:
-    role = current_role(x_user_role)
-    user_id = current_user(x_user_id)
+    user_id, role = authenticated_user(x_user_role, x_user_id)
     require_login(role)
     data = agent_request("POST", "/execute", json_body={
         "skill": "project.list",
         "arguments": {},
         "approved": True,
     })
-    projects = data.get("result", {}).get("projects", [])
-    # Development policy: users see every existing project until membership is implemented.
+    projects = visible_projects(role, user_id, data.get("result", {}).get("projects", []))
     return {
         "user": {"id": user_id, "role": role},
         "projects": projects,
-        "membership_mode": "stub-all-projects-visible",
+        "membership_mode": "json-table",
     }
 
 
@@ -174,8 +349,9 @@ def commands() -> dict[str, Any]:
 def create_project(
     payload: dict[str, Any],
     x_user_role: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
 ) -> dict[str, Any]:
-    role = current_role(x_user_role)
+    user_id, role = authenticated_user(x_user_role, x_user_id)
     require_login(role)
     name = str(payload.get("name") or "").strip()
     if not name:
@@ -190,11 +366,13 @@ def create_project(
             "requires_approval": True,
             "preview": preview.get("preview", preview),
         }
-    return agent_request("POST", "/execute", json_body={
+    result = agent_request("POST", "/execute", json_body={
         "skill": "project.create",
         "arguments": {"project": name},
         "approved": True,
     })
+    add_project_membership(name, user_id or "local-user", "owner")
+    return result
 
 
 @app.post("/api/projects/{project}/chat")
@@ -204,8 +382,7 @@ def project_chat(
     x_user_role: str | None = Header(default=None),
     x_user_id: str | None = Header(default=None),
 ) -> dict[str, Any]:
-    role = current_role(x_user_role)
-    user_id = current_user(x_user_id)
+    user_id, role = authenticated_user(x_user_role, x_user_id)
     ensure_project_access(role, user_id, project)
     context = dict(payload.context or {})
     context.setdefault("arguments", {})
@@ -214,7 +391,7 @@ def project_chat(
     scoped_message = payload.message
     if project not in scoped_message:
         scoped_message = f"{project} 프로젝트에서: {scoped_message}"
-    return agent_request("POST", "/chat", json_body={
+    return project_agent_request(project, "POST", "/chat", json_body={
         "message": scoped_message,
         "session_id": payload.session_id,
         "context": context,
@@ -226,7 +403,7 @@ def admin_chat(
     payload: ChatRequest,
     x_user_role: str | None = Header(default=None),
 ) -> dict[str, Any]:
-    role = current_role(x_user_role)
+    _, role = authenticated_user(x_user_role, None)
     require_admin(role)
     return agent_request("POST", "/chat", json_body=payload.model_dump())
 
@@ -238,12 +415,11 @@ def project_execute(
     x_user_role: str | None = Header(default=None),
     x_user_id: str | None = Header(default=None),
 ) -> dict[str, Any]:
-    role = current_role(x_user_role)
-    user_id = current_user(x_user_id)
+    user_id, role = authenticated_user(x_user_role, x_user_id)
     ensure_project_access(role, user_id, project)
     arguments = dict(payload.arguments)
     arguments["project"] = project
-    return agent_request("POST", "/execute", json_body={
+    return project_agent_request(project, "POST", "/execute", json_body={
         "skill": payload.skill,
         "arguments": arguments,
         "approved": payload.approved,
