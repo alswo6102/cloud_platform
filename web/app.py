@@ -335,6 +335,29 @@ def list_projects(
     }
 
 
+@app.get("/api/catalog")
+def service_catalog() -> dict[str, Any]:
+    data = agent_request("POST", "/execute", json_body={
+        "skill": "project.list",
+        "arguments": {},
+        "approved": True,
+    })
+    projects = data.get("result", {}).get("projects", [])
+    services = []
+    for project in projects:
+        project_name = str(project.get("name") or "")
+        for service in project.get("services", []) or []:
+            services.append({
+                "project": project_name,
+                "service": str(service),
+            })
+    return {
+        "projects": projects,
+        "services": services,
+        "visibility": "names-only",
+    }
+
+
 @app.get("/api/frameworks")
 def frameworks() -> dict[str, Any]:
     return agent_request("GET", "/frameworks")

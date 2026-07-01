@@ -3,10 +3,17 @@ import { createRoot } from "react-dom/client";
 import "./styles.css";
 
 type Role = "visitor" | "user" | "admin";
+type HomeTab = "services" | "projects" | "create";
+type Page = { kind: "home" } | { kind: "project"; project: string };
 
 type Project = {
   name: string;
   services?: string[];
+};
+
+type ServiceSummary = {
+  project: string;
+  service: string;
 };
 
 type AuthSession = {
@@ -42,8 +49,6 @@ type AgentResponse = {
   arguments?: Record<string, unknown>;
   preview?: unknown;
   resume?: unknown;
-  result?: unknown;
-  missing?: unknown[];
 };
 
 const visitorAuth: AuthHeaders = {
@@ -92,12 +97,11 @@ function summarizeApproval(data: AgentResponse) {
   const preview = isRecord(data.preview) ? data.preview : {};
   const project = String(args.project || preview.project || "현재 프로젝트");
   const service = args.service ? ` / 서비스: ${String(args.service)}` : "";
-  const lines = [
+  return [
     `${labelSkill(data.skill)} 실행 전 확인이 필요합니다.`,
     `대상: ${project}${service}`,
     "필요한 정보가 확인됐습니다. 아래 내용을 검토한 뒤 승인하면 작업을 시작합니다."
-  ];
-  return lines.join("\n");
+  ].join("\n");
 }
 
 function summarizeExecution(data: unknown) {
@@ -152,24 +156,33 @@ function MessageText({ text }: { text: string }) {
 function App() {
   const [session, setSession] = useState<AuthSession>(null);
   const [projects, setProjects] = useState<Project[]>([]);
-  const [selectedProject, setSelectedProject] = useState<string>("");
-  const [error, setError] = useState<string>("");
+  const [catalog, setCatalog] = useState<ServiceSummary[]>([]);
+  const [page, setPage] = useState<Page>({ kind: "home" });
+  const [activeTab, setActiveTab] = useState<HomeTab>("services");
+  const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const auth = useMemo<AuthHeaders>(
     () => session ? { role: session.role, userId: session.id } : visitorAuth,
     [session]
   );
   const role = auth.role;
+  const selectedProject = page.kind === "project"
+    ? projects.find((project) => project.name === page.project)
+    : undefined;
+  const projectNames = useMemo(() => new Set(projects.map((project) => project.name)), [projects]);
 
-  const selected = useMemo(
-    () => projects.find((project) => project.name === selectedProject),
-    [projects, selectedProject]
-  );
+  async function refreshCatalog() {
+    try {
+      const data = await api<{ services: ServiceSummary[] }>("/api/catalog", visitorAuth);
+      setCatalog(data.services || []);
+    } catch {
+      setCatalog([]);
+    }
+  }
 
   async function refreshProjects() {
     if (role === "visitor") {
       setProjects([]);
-      setSelectedProject("");
       return;
     }
     setLoading(true);
@@ -177,7 +190,6 @@ function App() {
     try {
       const data = await api<{ projects: Project[] }>("/api/projects", auth);
       setProjects(data.projects || []);
-      setSelectedProject((current) => current || data.projects?.[0]?.name || "");
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -185,9 +197,37 @@ function App() {
     }
   }
 
+  async function refreshAll() {
+    await Promise.all([refreshCatalog(), refreshProjects()]);
+  }
+
+  useEffect(() => {
+    refreshCatalog();
+  }, []);
+
   useEffect(() => {
     refreshProjects();
+    if (role === "visitor" && page.kind === "project") {
+      setPage({ kind: "home" });
+    }
   }, [role, auth.userId]);
+
+  function openProject(project: string) {
+    if (role === "visitor") {
+      setError("로그인 후 접근할 수 있습니다.");
+      setActiveTab("projects");
+      setPage({ kind: "home" });
+      return;
+    }
+    if (!projectNames.has(project) && role !== "admin") {
+      setError(`${project} 프로젝트에 대한 권한이 없습니다.`);
+      setActiveTab("projects");
+      setPage({ kind: "home" });
+      return;
+    }
+    setError("");
+    setPage({ kind: "project", project });
+  }
 
   return (
     <main className="shell">
@@ -196,42 +236,124 @@ function App() {
           <p className="eyebrow">Cloud Platform Console</p>
           <h1>프로젝트별로 분리되는 배포 콘솔</h1>
           <p>
-            프로젝트를 만들고, 각 프로젝트 workspace 안에서 서비스 배포·상태·로그를
-            AI 에이전트와 검증된 실행 도구를 통해 안전하게 처리합니다.
+            메인에서는 서비스를 탐색하고, 프로젝트 상세에서는 해당 namespace에 귀속된
+            AI 에이전트가 배포·상태·로그 작업을 처리합니다.
           </p>
           <div className="heroBadges" aria-label="console architecture summary">
-            <span>Project namespace</span>
-            <span>Guarded actions</span>
-            <span>Approval before changes</span>
+            <span>Service catalog</span>
+            <span>Project workspace</span>
+            <span>Scoped AI agent</span>
           </div>
         </div>
-        <LoginPanel session={session} onLogin={setSession} onLogout={() => setSession(null)} />
+        <LoginPanel
+          session={session}
+          onLogin={(next) => {
+            setSession(next);
+            setError("");
+            setActiveTab("projects");
+          }}
+          onLogout={() => {
+            setSession(null);
+            setProjects([]);
+            setPage({ kind: "home" });
+            setActiveTab("services");
+          }}
+        />
       </header>
 
       {error && <div className="error">{error}</div>}
 
-      <section className="grid">
-        <LandingCard auth={auth} onCreated={refreshProjects} />
+      {page.kind === "home" ? (
+        <HomePage
+          auth={auth}
+          role={role}
+          session={session}
+          activeTab={activeTab}
+          setActiveTab={setActiveTab}
+          catalog={catalog}
+          projects={projects}
+          loading={loading}
+          onOpenProject={openProject}
+          onCreated={async (project) => {
+            await refreshAll();
+            setPage({ kind: "project", project });
+          }}
+          onRefresh={refreshAll}
+        />
+      ) : selectedProject ? (
+        <ProjectWorkspace
+          auth={auth}
+          project={selectedProject}
+          onBack={() => setPage({ kind: "home" })}
+          onRefresh={refreshAll}
+        />
+      ) : (
+        <section className="workspace">
+          <button className="secondaryButton" onClick={() => setPage({ kind: "home" })}>메인으로</button>
+          <p className="hint">프로젝트를 찾을 수 없거나 접근 권한이 없습니다.</p>
+        </section>
+      )}
+
+      {role === "admin" && page.kind === "home" && <AdminConsole auth={auth} />}
+    </main>
+  );
+}
+
+function HomePage({
+  auth,
+  role,
+  session,
+  activeTab,
+  setActiveTab,
+  catalog,
+  projects,
+  loading,
+  onOpenProject,
+  onCreated,
+  onRefresh
+}: {
+  auth: AuthHeaders;
+  role: Role;
+  session: AuthSession;
+  activeTab: HomeTab;
+  setActiveTab: (tab: HomeTab) => void;
+  catalog: ServiceSummary[];
+  projects: Project[];
+  loading: boolean;
+  onOpenProject: (project: string) => void;
+  onCreated: (project: string) => Promise<void>;
+  onRefresh: () => Promise<void>;
+}) {
+  return (
+    <>
+      <nav className="tabs" aria-label="main navigation">
+        <button className={activeTab === "services" ? "active" : ""} onClick={() => setActiveTab("services")}>서비스 목록</button>
+        <button className={activeTab === "projects" ? "active" : ""} onClick={() => setActiveTab("projects")}>내 프로젝트</button>
+        <button className={activeTab === "create" ? "active" : ""} onClick={() => setActiveTab("create")}>프로젝트 생성</button>
+      </nav>
+
+      {activeTab === "services" && (
+        <ServiceCatalog
+          catalog={catalog}
+          projects={projects}
+          role={role}
+          onOpenProject={onOpenProject}
+          onRefresh={onRefresh}
+        />
+      )}
+      {activeTab === "projects" && (
         <ProjectList
           role={role}
           session={session}
           projects={projects}
-          selectedProject={selectedProject}
           loading={loading}
-          onSelect={setSelectedProject}
-        />
-      </section>
-
-      {selected && (
-        <ProjectWorkspace
-          auth={auth}
-          project={selected}
-          onRefresh={refreshProjects}
+          onSelect={onOpenProject}
         />
       )}
-
-      {role === "admin" && <AdminConsole auth={auth} />}
-    </main>
+      {activeTab === "create" && (
+        <LandingCard auth={auth} onCreated={onCreated} />
+      )}
+    </>
   );
 }
 
@@ -260,7 +382,11 @@ function LoginPanel({
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.detail || "로그인에 실패했습니다.");
-      onLogin({ id: String(data.id), role: String(data.role || "user") as Role, name: data.name ? String(data.name) : undefined });
+      onLogin({
+        id: String(data.id),
+        role: String(data.role || "user") as Role,
+        name: data.name ? String(data.name) : undefined
+      });
     } catch (err) {
       setMessage(err instanceof Error ? err.message : String(err));
     } finally {
@@ -269,12 +395,12 @@ function LoginPanel({
   }
 
   return (
-    <section className="loginPanel">
-      <span>JSON 임시 로그인</span>
+    <aside className="loginPanel">
+      <span>로그인</span>
       {session ? (
         <>
           <strong>{session.name || session.id}</strong>
-          <small>{session.role}</small>
+          <small>{session.role} · JSON auth</small>
           <button className="secondaryButton" onClick={onLogout}>로그아웃</button>
         </>
       ) : (
@@ -284,9 +410,55 @@ function LoginPanel({
           <button onClick={login} disabled={busy || !userId.trim()}>
             {busy ? "확인 중..." : "로그인"}
           </button>
+          <small>기본: local-user / 빈 비밀번호, admin / admin</small>
           {message && <small className="loginError">{message}</small>}
         </>
       )}
+    </aside>
+  );
+}
+
+function ServiceCatalog({
+  catalog,
+  projects,
+  role,
+  onOpenProject,
+  onRefresh
+}: {
+  catalog: ServiceSummary[];
+  projects: Project[];
+  role: Role;
+  onOpenProject: (project: string) => void;
+  onRefresh: () => Promise<void>;
+}) {
+  const owned = new Set(projects.map((project) => project.name));
+  return (
+    <section className="workspace">
+      <div className="workspaceHeader">
+        <div>
+          <p className="eyebrow">Service catalog</p>
+          <h2>서비스 목록</h2>
+          <p>메인에서는 전체 서비스 이름만 보여주고, 클릭 시 프로젝트 권한을 확인합니다.</p>
+        </div>
+        <button onClick={onRefresh}>새로고침</button>
+      </div>
+      <div className="catalogGrid">
+        {catalog.map((item) => {
+          const allowed = role === "admin" || owned.has(item.project);
+          return (
+            <button
+              key={`${item.project}:${item.service}`}
+              className={`catalogCard ${allowed ? "" : "locked"}`}
+              onClick={() => onOpenProject(item.project)}
+            >
+              <span className="catalogService">{item.service}</span>
+              <span className="catalogProject">{item.project}</span>
+              <span className={`pill ${allowed ? "" : "warning"}`}>{allowed ? "접근 가능" : "권한 필요"}</span>
+            </button>
+          );
+        })}
+        {catalog.length === 0 && <p className="hint">아직 표시할 서비스가 없습니다.</p>}
+      </div>
     </section>
   );
 }
@@ -296,7 +468,7 @@ function LandingCard({
   onCreated
 }: {
   auth: AuthHeaders;
-  onCreated: () => Promise<void>;
+  onCreated: (project: string) => Promise<void>;
 }) {
   const role = auth.role;
   const [name, setName] = useState("");
@@ -316,10 +488,11 @@ function LandingCard({
         setPreview(data);
         setMessage("생성 전 미리보기입니다. 확인 후 승인하세요.");
       } else {
+        const created = name;
         setPreview(null);
         setName("");
         setMessage("프로젝트를 생성했습니다.");
-        await onCreated();
+        await onCreated(created);
       }
     } catch (err) {
       setMessage(err instanceof Error ? err.message : String(err));
@@ -329,18 +502,21 @@ function LandingCard({
   }
 
   return (
-    <section className="card">
-      <div className="cardTitle">
-        <span className="iconBox">＋</span>
+    <section className="workspace">
+      <div className="workspaceHeader">
         <div>
-          <h2>새 프로젝트</h2>
-          <p>프로젝트 생성은 명시적인 API로 처리하고, 생성 후 상세 화면에서 AI를 사용합니다.</p>
+          <p className="eyebrow">Create project</p>
+          <h2>새 프로젝트 생성</h2>
+          <p>프로젝트 생성은 AI가 아니라 명시적 API로 처리합니다. 생성 후 상세 화면에서 프로젝트 AI 에이전트를 사용합니다.</p>
         </div>
       </div>
-      <div className="row">
+      <div className="createPanel">
         <input
           value={name}
-          onChange={(event) => setName(event.target.value)}
+          onChange={(event) => {
+            setName(event.target.value);
+            setPreview(null);
+          }}
           placeholder="예: horse_race"
           disabled={role === "visitor"}
         />
@@ -351,12 +527,12 @@ function LandingCard({
           승인 생성
         </button>
       </div>
-      {role === "visitor" && <p className="hint">비유저는 AI와 프로젝트 생성 기능을 사용할 수 없습니다.</p>}
+      {role === "visitor" && <p className="hint">비유저는 로그인 후 프로젝트를 생성할 수 있습니다.</p>}
       {message && <p className="hint">{message}</p>}
       {preview !== null && (
         <div className="previewCard">
           <strong>생성 전 확인</strong>
-          <p><code>{name}</code> 프로젝트를 생성할 준비가 됐습니다. 승인하면 프로젝트 namespace와 기본 구성이 만들어집니다.</p>
+          <p><code>{name}</code> 프로젝트를 생성합니다. 승인하면 namespace, 기본 agent, 네트워크 구성이 만들어집니다.</p>
         </div>
       )}
     </section>
@@ -367,39 +543,35 @@ function ProjectList({
   role,
   session,
   projects,
-  selectedProject,
   loading,
   onSelect
 }: {
   role: Role;
   session: AuthSession;
   projects: Project[];
-  selectedProject: string;
   loading: boolean;
   onSelect: (name: string) => void;
 }) {
   return (
-    <section className="card">
-      <div className="cardTitle">
-        <span className="iconBox">⌘</span>
+    <section className="workspace">
+      <div className="workspaceHeader">
         <div>
+          <p className="eyebrow">My projects</p>
           <h2>내 프로젝트</h2>
-          <p>{session ? `${session.id} 계정의 JSON 멤버십 기준으로 표시합니다.` : "로그인 후 접근 가능한 프로젝트를 표시합니다."}</p>
+          <p>{session ? `${session.id} 계정의 JSON 멤버십 기준입니다.` : "로그인 후 접근 가능한 프로젝트를 표시합니다."}</p>
         </div>
       </div>
       {loading && <p className="hint">불러오는 중...</p>}
       {role === "visitor" && <p className="hint">로그인 후 프로젝트 목록이 표시됩니다.</p>}
-      <div className="projectList">
+      <div className="projectGrid">
         {projects.map((project) => (
-          <button
-            key={project.name}
-            className={project.name === selectedProject ? "active" : ""}
-            onClick={() => onSelect(project.name)}
-          >
+          <button key={project.name} className="projectCard" onClick={() => onSelect(project.name)}>
             <strong>{project.name}</strong>
             <span>{project.services?.length || 0} services</span>
+            <small>상세 workspace로 이동</small>
           </button>
         ))}
+        {role !== "visitor" && projects.length === 0 && <p className="hint">아직 접근 가능한 프로젝트가 없습니다.</p>}
       </div>
     </section>
   );
@@ -408,24 +580,29 @@ function ProjectList({
 function ProjectWorkspace({
   auth,
   project,
+  onBack,
   onRefresh
 }: {
   auth: AuthHeaders;
   project: Project;
+  onBack: () => void;
   onRefresh: () => Promise<void>;
 }) {
   const [quickPrompt, setQuickPrompt] = useState("");
   const services = project.services || [];
 
   return (
-    <section className="workspace">
+    <section className="workspace detailPage">
       <div className="workspaceHeader">
         <div>
-          <p className="eyebrow">Project namespace</p>
+          <p className="eyebrow">Project workspace</p>
           <h2>{project.name}</h2>
-          <p>이 workspace의 에이전트는 기본적으로 <code>{project.name}</code> 프로젝트만 context로 받습니다.</p>
+          <p>이 화면의 AI 에이전트는 기본적으로 <code>{project.name}</code> 프로젝트만 context로 받습니다.</p>
         </div>
-        <button onClick={onRefresh}>새로고침</button>
+        <div className="headerActions">
+          <button className="secondaryButton" onClick={onBack}>메인으로</button>
+          <button onClick={onRefresh}>새로고침</button>
+        </div>
       </div>
       <div className="namespaceStats">
         <div>
@@ -448,7 +625,7 @@ function ProjectWorkspace({
               <strong>{service}</strong>
               <span className="pill">managed</span>
             </div>
-            <span>상태/로그/재배포는 프로젝트 에이전트가 안전하게 확인해 처리합니다.</span>
+            <span>상태/로그/재배포는 프로젝트 에이전트가 CLI로 검증해 처리합니다.</span>
             <div className="serviceActions">
               <button onClick={() => setQuickPrompt(`${service} 상태 확인해줘`)}>상태</button>
               <button onClick={() => setQuickPrompt(`${service} 로그 40줄 보여줘`)}>로그</button>
@@ -457,7 +634,7 @@ function ProjectWorkspace({
           </div>
         ))}
         {services.length === 0 && (
-          <p className="hint">아직 등록된 서비스가 없습니다.</p>
+          <p className="hint">아직 등록된 서비스가 없습니다. 아래 AI 에이전트에게 “새 서비스 배포하고 싶어”라고 요청하세요.</p>
         )}
       </div>
       <AgentPanel auth={auth} project={project.name} quickPrompt={quickPrompt} />
@@ -482,9 +659,7 @@ function AgentPanel({
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    if (quickPrompt) {
-      setInput(quickPrompt);
-    }
+    if (quickPrompt) setInput(quickPrompt);
   }, [quickPrompt]);
 
   useEffect(() => {
@@ -516,22 +691,10 @@ function AgentPanel({
         })
       });
       updateApproval(index, "done");
-      setMessages((items) => [
-        ...items,
-        {
-          from: "agent",
-          text: summarizeExecution(data),
-          }
-      ]);
+      setMessages((items) => [...items, { from: "agent", text: summarizeExecution(data) }]);
     } catch (err) {
       updateApproval(index, "failed");
-      setMessages((items) => [
-        ...items,
-        {
-          from: "agent",
-          text: err instanceof Error ? err.message : String(err)
-        }
-      ]);
+      setMessages((items) => [...items, { from: "agent", text: err instanceof Error ? err.message : String(err) }]);
     } finally {
       setBusy(false);
     }
@@ -568,18 +731,9 @@ function AgentPanel({
         ]);
         return;
       }
-      setMessages((items) => [
-        ...items,
-        {
-          from: "agent",
-          text: String(data.message || "응답을 받았습니다."),
-        }
-      ]);
+      setMessages((items) => [...items, { from: "agent", text: String(data.message || "응답을 받았습니다.") }]);
     } catch (err) {
-      setMessages((items) => [
-        ...items,
-        { from: "agent", text: err instanceof Error ? err.message : String(err) }
-      ]);
+      setMessages((items) => [...items, { from: "agent", text: err instanceof Error ? err.message : String(err) }]);
     } finally {
       setBusy(false);
     }
@@ -590,7 +744,7 @@ function AgentPanel({
       <div className="agentTitle">
         <div>
           <h3>프로젝트 AI 에이전트</h3>
-          <p>애매한 요청은 바로 실행하지 않고 필요한 정보를 다시 묻습니다.</p>
+          <p>서비스 배포·상태·로그·재배포를 이 프로젝트 범위에서만 처리합니다.</p>
         </div>
         <span className="pill">session scoped</span>
       </div>
@@ -721,15 +875,9 @@ function AdminConsole({ auth }: { auth: AuthHeaders }) {
         method: "POST",
         body: JSON.stringify({ message: text, session_id: sessionId })
       });
-      setMessages((items) => [
-        ...items,
-        { from: "agent", text: String(data.message || "응답을 받았습니다.") }
-      ]);
+      setMessages((items) => [...items, { from: "agent", text: String(data.message || "응답을 받았습니다.") }]);
     } catch (err) {
-      setMessages((items) => [
-        ...items,
-        { from: "agent", text: err instanceof Error ? err.message : String(err) }
-      ]);
+      setMessages((items) => [...items, { from: "agent", text: err instanceof Error ? err.message : String(err) }]);
     }
   }
 

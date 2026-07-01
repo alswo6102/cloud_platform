@@ -188,6 +188,25 @@ pre {
   margin: 1.1rem 0;
 }
 
+.tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  margin: 1.1rem 0;
+}
+
+.tabs button {
+  background: white;
+  color: #1e3a8a;
+  border: 1px solid #dbeafe;
+}
+
+.tabs button.active {
+  background: #1d4ed8;
+  color: white;
+  border-color: #1d4ed8;
+}
+
 .card, .workspace {
   background: white;
   border: 1px solid #e8edf6;
@@ -286,8 +305,68 @@ pre {
   color: white;
 }
 
+.catalogGrid, .projectGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 0.85rem;
+  margin-top: 1.2rem;
+}
+
+.catalogCard, .projectCard {
+  min-height: 132px;
+  display: grid;
+  align-content: space-between;
+  gap: 0.65rem;
+  text-align: left;
+  background: linear-gradient(180deg, #ffffff, #f8fbff);
+  color: #0f172a;
+  border: 1px solid #dbeafe;
+  border-radius: 18px;
+  padding: 1.05rem;
+}
+
+.catalogCard:hover:not(:disabled), .projectCard:hover:not(:disabled) {
+  background: linear-gradient(180deg, #f8fbff, #eef6ff);
+}
+
+.catalogCard.locked {
+  background: #f8fafc;
+  color: #64748b;
+  border-style: dashed;
+}
+
+.catalogService, .projectCard strong {
+  font-size: 1.15rem;
+  font-weight: 900;
+  letter-spacing: -0.03em;
+}
+
+.catalogProject, .projectCard span, .projectCard small {
+  color: #64748b;
+  font-size: 0.9rem;
+}
+
+.createPanel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 0.75rem;
+  align-items: center;
+  margin-top: 1.2rem;
+}
+
 .workspace {
   margin-top: 1rem;
+}
+
+.detailPage {
+  border-color: #dbeafe;
+}
+
+.headerActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  justify-content: flex-end;
 }
 
 .workspaceHeader h2 {
@@ -366,6 +445,11 @@ pre {
   color: #166534;
   font-size: 0.76rem;
   font-weight: 900;
+}
+
+.pill.warning {
+  background: #fef3c7;
+  color: #92400e;
 }
 
 .serviceActions {
@@ -605,12 +689,17 @@ pre {
 }
 
 @media (max-width: 820px) {
-  .hero, .workspaceHeader, .row {
+  .hero, .workspaceHeader, .row, .createPanel {
     flex-direction: column;
   }
 
   .grid {
     grid-template-columns: 1fr;
+  }
+
+  .createPanel {
+    display: flex;
+    align-items: stretch;
   }
 
   .namespaceStats {
