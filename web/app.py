@@ -17,6 +17,11 @@ PROJECT_AGENT_URL_TEMPLATE = os.getenv(
     "PROJECT_AGENT_URL_TEMPLATE",
     "http://project-agent-{project}:8080",
 )
+AUTO_ENSURE_PROJECT_AGENT = os.getenv("AUTO_ENSURE_PROJECT_AGENT", "1").lower() not in {
+    "0",
+    "false",
+    "no",
+}
 AUTH_STORE = Path(os.getenv("AUTH_STORE", "/var/lib/cloud-platform/auth.json"))
 REQUEST_TIMEOUT = float(os.getenv("WEB_REQUEST_TIMEOUT", "120"))
 AUTH_LOCK = threading.Lock()
@@ -185,6 +190,8 @@ def project_agent_request(
     json_body: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     url = f"{project_agent_url(project).rstrip('/')}{path}"
+    if AUTO_ENSURE_PROJECT_AGENT:
+        ensure_project_agent(project)
     try:
         response = requests.request(
             method,

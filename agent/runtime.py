@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import re
 import secrets
@@ -42,6 +43,30 @@ SAFE_CLEANUP_SCRIPT = Path(
 )
 PORT_START = int(os.getenv("PORT_START", "9000"))
 PORT_END = int(os.getenv("PORT_END", "9100"))
+
+
+def project_agent_template_version() -> str:
+    explicit = os.getenv("PROJECT_AGENT_TEMPLATE_VERSION", "").strip()
+    if explicit:
+        return explicit
+    root = Path(__file__).resolve().parent
+    digest = hashlib.sha256()
+    for relative in (
+        "app.py",
+        "cli.py",
+        "cli_contracts.py",
+        "runtime.py",
+        "deployment_presets.py",
+    ):
+        path = root / relative
+        if not path.exists() and relative == "deployment_presets.py":
+            path = root.parent / relative
+        digest.update(relative.encode())
+        try:
+            digest.update(path.read_bytes())
+        except OSError:
+            digest.update(b"missing")
+    return digest.hexdigest()[:16]
 NAME_PATTERN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$")
 ENV_NAME_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
 API_SKILL_NAMES = {
@@ -229,6 +254,7 @@ def ensure_namespace_token(project: str) -> tuple[str, bool]:
 
 def project_agent_service_definition(project: str, token: str) -> dict[str, Any]:
     validate_name(project, "project")
+    template_version = project_agent_template_version()
     return {
         "image": os.getenv("PROJECT_AGENT_IMAGE", "cloud-platform-skill-agent:latest"),
         "command": "uvicorn app:app --host 0.0.0.0 --port 8080",
@@ -239,6 +265,7 @@ def project_agent_service_definition(project: str, token: str) -> dict[str, Any]
             "PLATFORM_TOKEN": token,
             "PLATFORM_API": "http://platform-api:5000",
             "SESSION_STORE": f"/var/log/skill-agent/{project}-sessions.json",
+            "PROJECT_AGENT_TEMPLATE_VERSION": template_version,
         },
         "networks": {
             "app-net": {
@@ -254,6 +281,7 @@ def project_agent_service_definition(project: str, token: str) -> dict[str, Any]
         "labels": [
             f"cloud.platform.project={project}",
             "cloud.platform.role=agent",
+            f"cloud.platform.agent.template_version={template_version}",
         ],
         "mem_limit": "512m",
         "memswap_limit": "1g",
@@ -280,7 +308,12 @@ def ensure_project_agent(project: str, dry_run: bool = False) -> dict[str, Any]:
         "external": True,
     }
     desired = project_agent_service_definition(project, token)
-    changed = data["services"].get("agent") != desired
+    current_agent = data["services"].get("agent")
+    changed = current_agent != desired
+    template_version = desired["environment"]["PROJECT_AGENT_TEMPLATE_VERSION"]
+    current_template_version = (
+        (current_agent or {}).get("environment", {}) or {}
+    ).get("PROJECT_AGENT_TEMPLATE_VERSION") if isinstance(current_agent, dict) else None
     plan = {
         "project": project,
         "agent_service": "agent",
@@ -288,13 +321,15 @@ def ensure_project_agent(project: str, dry_run: bool = False) -> dict[str, Any]:
         "networks": ["app-net", "control-net", "control-plane"],
         "token_created": token_created,
         "changed": changed,
+        "template_version": template_version,
+        "current_template_version": current_template_version,
     }
     if dry_run:
         return {"dry_run": True, **plan}
     if changed:
         backup = write_compose_atomic(project, {**data, "services": {**data["services"], "agent": desired}})
         try:
-            compose_command(project, "up", "-d", "agent", timeout=300)
+            compose_command(project, "up", "-d", "--force-recreate", "agent", timeout=300)
             backup.unlink(missing_ok=True)
         except Exception:
             rollback_compose(project, backup)
@@ -877,6 +912,7 @@ def project_create(project: str | None, dry_run: bool) -> dict[str, Any]:
         "namespace": {
             "app_network": project_network_name(project, "app"),
             "control_network": project_network_name(project, "control"),
+            "agent_template_version": project_agent_template_version(),
             "model": (
                 "services join app-net; a future project-agent joins app-net and "
                 "control-net; platform-api joins control-net only"
