@@ -276,6 +276,10 @@ def preferred_skill_for(message: str, context: dict[str, Any] | None) -> str | N
         word in text for word in ("배포", "등록", "추가", "서비스", "저장소", "github")
     ):
         return "service.deploy"
+    if "서비스" in text and any(word in text for word in ("재배포", "최신 코드", "다시 배포", "새 이미지")):
+        return "service.redeploy"
+    if "서비스" in text and any(word in text for word in ("새로", "신규", "추가", "새 서비스", "등록", "배포")):
+        return "service.deploy"
     if any(
         phrase in text
         for phrase in (
@@ -290,12 +294,6 @@ def preferred_skill_for(message: str, context: dict[str, Any] | None) -> str | N
         )
     ):
         return "project.create"
-    if "서비스" in text and any(word in text for word in ("재배포", "최신 코드", "다시 배포", "새 이미지")):
-        return "service.redeploy"
-    if "서비스" in text and any(word in text for word in ("새로", "신규", "추가", "새 서비스", "등록")):
-        return "service.deploy"
-    if "서비스" in text and "배포" in text:
-        return "service.deploy"
     if context and context.get("skill"):
         return str(context["skill"])
     return None
@@ -384,6 +382,12 @@ def explicit_name(message: str, label: str) -> str | None:
 
 def slot_value_from_reply(message: str) -> str | None:
     text = GITHUB_URL_RE.sub("", message).strip()
+    text = re.sub(
+        r"^\s*[A-Za-z0-9][A-Za-z0-9_.-]{0,63}\s*프로젝트에서\s*:\s*",
+        "",
+        text,
+        flags=re.IGNORECASE,
+    )
     text = re.split(r"[,，\n]", text, maxsplit=1)[0].strip()
     patterns = [
         r"^\s*([A-Za-z0-9][A-Za-z0-9_.-]{0,63})\s*(?:로|으로)\s*(?:할래|해줘|만들어줘|생성해줘|진행해줘)?\s*$",
@@ -532,6 +536,15 @@ def strict_arguments(
     verified = {}
     if context and context.get("skill") == skill:
         verified.update(context.get("arguments") or {})
+    if skill in {"service.deploy", "service.redeploy"}:
+        context_arguments = (context or {}).get("arguments") or {}
+        scoped_project = (
+            context_arguments.get("project")
+            or (context or {}).get("project_scope")
+            or os.getenv("PLATFORM_NAMESPACE")
+        )
+        if scoped_project:
+            verified["project"] = str(scoped_project)
     explicit = explicit_arguments(message, skill)
     if skill in {"service.deploy", "service.redeploy"} and explicit.get("project"):
         resolution = execute_cli_skill(
@@ -592,6 +605,14 @@ def strict_arguments(
         for item in (context or {}).get("missing", [])
     }
     bare = slot_value_from_reply(message)
+    if (
+        skill == "service.deploy"
+        and "service" in missing_fields
+        and "service" not in verified
+        and bare
+        and bare.lower() not in FRAMEWORK_ALIASES
+    ):
+        verified["service"] = bare
     if len(missing_fields) == 1:
         field = next(iter(missing_fields))
         if field in {"project", "service"} and bare:
@@ -1598,6 +1619,36 @@ def chat(request: ChatRequest):
                     "arguments": current_arguments,
                     "preview": current_preview,
                     "requires_approval": True,
+                })
+            if current_preview and current_missing:
+                message = current_preview.get(
+                    "message",
+                    f"`{preferred_skill}` 작업에 필요한 정보를 알려주세요.",
+                )
+                optional = current_preview.get("optional")
+                if optional:
+                    message += "\n\n" + optional_settings_message(optional)
+                confirmed = confirmed_information(current_arguments)
+                if confirmed:
+                    message = confirmed + "\n\n" + message
+                return respond({
+                    "mode": "cli",
+                    "kind": "clarification",
+                    "message": message,
+                    "skill": preferred_skill,
+                    "arguments": current_arguments,
+                    "missing": current_missing,
+                    "context": {
+                        "original_request": (
+                            request.context.get("original_request")
+                            if request.context
+                            else request.message
+                        ),
+                        "skill": preferred_skill,
+                        "arguments": current_arguments,
+                        "missing": current_missing,
+                    },
+                    "requires_approval": False,
                 })
             llm_context.update(
                 {
