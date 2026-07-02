@@ -51,6 +51,12 @@ type AgentResponse = {
   resume?: unknown;
 };
 
+type ApprovalAgentResponse = AgentResponse & {
+  requires_approval: true;
+  skill: string;
+  arguments: Record<string, unknown>;
+};
+
 const visitorAuth: AuthHeaders = {
   role: "visitor",
   userId: ""
@@ -79,6 +85,10 @@ async function api<T>(path: string, auth: AuthHeaders, init?: RequestInit): Prom
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isApprovalAgentResponse(data: AgentResponse): data is ApprovalAgentResponse {
+  return data.requires_approval === true && typeof data.skill === "string" && isRecord(data.arguments);
 }
 
 function labelSkill(skill?: string) {
@@ -714,7 +724,7 @@ function AgentPanel({
       if (data.context && typeof data.context === "object") {
         setContext(data.context as Record<string, unknown>);
       }
-      if (data.requires_approval && data.skill && data.arguments) {
+      if (isApprovalAgentResponse(data)) {
         setMessages((items) => [
           ...items,
           {
