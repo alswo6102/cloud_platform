@@ -77,6 +77,12 @@ def authenticated_namespace(http_request: Request) -> str | None:
         return None
     tokens = namespace_tokens()
     root_token = os.getenv("PLATFORM_ROOT_TOKEN", "").strip()
+    auth_required = (
+        os.getenv("PLATFORM_AUTH_REQUIRED", "").lower() in {"1", "true", "yes"}
+        or bool(root_token)
+    )
+    if not auth_required:
+        return None
     if not tokens and not root_token:
         return None
     header = http_request.headers.get("Authorization", "")
@@ -581,6 +587,21 @@ def explicit_arguments(message: str, skill: str) -> dict[str, Any]:
         url = GITHUB_URL_RE.search(message)
         if url:
             arguments["repo_url"] = url.group(0)
+        if any(
+            phrase in lowered
+            for phrase in (
+                "빌드 없이",
+                "빌드없이",
+                "파일만 그대로",
+                "그대로 띄우",
+                "단순 페이지",
+                "단순한 페이지",
+                "정적 파일",
+                "정적 페이지",
+                "html 파일",
+            )
+        ):
+            arguments["framework"] = "static"
         for alias, framework in FRAMEWORK_ALIASES.items():
             if alias in lowered:
                 arguments["framework"] = framework
@@ -624,6 +645,9 @@ def explicit_arguments(message: str, skill: str) -> dict[str, Any]:
                 "프론트",
                 "frontend",
                 "외부 공개",
+                "브라우저에서",
+                "브라우저로",
+                "웹으로",
             )
         ):
             arguments["is_web"] = True
@@ -639,6 +663,65 @@ def explicit_arguments(message: str, skill: str) -> dict[str, Any]:
                 if item.strip()
             ]
     return arguments
+
+
+def framework_from_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip().lower()
+    if not text:
+        return None
+    return FRAMEWORK_ALIASES.get(text, text)
+
+
+def merge_planner_arguments(
+    verified: dict[str, Any],
+    skill: str,
+    planner_arguments: dict[str, Any],
+) -> None:
+    if not isinstance(planner_arguments, dict):
+        return
+    if skill == "project.create":
+        project = planner_arguments.get("project")
+        if project and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}", str(project)):
+            verified.setdefault("project", str(project))
+        return
+    if skill not in {"service.deploy", "service.redeploy"}:
+        return
+    if skill == "service.deploy":
+        service = planner_arguments.get("service")
+        if service and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}", str(service)):
+            verified.setdefault("service", str(service))
+        repo_url = planner_arguments.get("repo_url")
+        if repo_url and GITHUB_URL_RE.fullmatch(str(repo_url).strip()):
+            verified.setdefault("repo_url", str(repo_url).strip())
+        framework_query = framework_from_text(planner_arguments.get("framework"))
+        if framework_query and "framework" not in verified:
+            try:
+                resolution = execute_cli_skill(
+                    "entity.resolve",
+                    {"entity": "framework", "query": framework_query},
+                    dry_run=False,
+                )
+                if resolution["status"] == "exact":
+                    verified["framework"] = resolution["match"]
+            except (SkillError, KeyError, TypeError):
+                pass
+        if isinstance(planner_arguments.get("is_web"), bool):
+            verified.setdefault("is_web", planner_arguments["is_web"])
+        for field in ("host_port", "container_port"):
+            value = planner_arguments.get(field)
+            if isinstance(value, int) or (isinstance(value, str) and value.isdigit()):
+                verified.setdefault(field, int(value))
+        environment_names = planner_arguments.get("environment_names")
+        if isinstance(environment_names, list):
+            names = [str(item).strip() for item in environment_names if str(item).strip()]
+            if names:
+                verified.setdefault("environment_names", names)
+    if skill == "service.redeploy":
+        service = planner_arguments.get("service")
+        if service and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}", str(service)):
+            verified.setdefault("service", str(service))
 
 
 def strict_arguments(
@@ -720,6 +803,7 @@ def strict_arguments(
         )
         if scoped_project:
             verified["project"] = str(scoped_project)
+    merge_planner_arguments(verified, skill, planner_arguments or {})
     explicit = explicit_arguments(message, skill)
     if skill in {"service.deploy", "service.redeploy"} and explicit.get("project"):
         resolution = execute_cli_skill(
@@ -1908,6 +1992,114 @@ def chat(request: ChatRequest):
                     "requires_approval": True,
                 })
             if current_preview and current_missing:
+                if (
+                    os.getenv("LLM_API_KEY")
+                    and os.getenv("LLM_SLOT_FILL_ON_MISSING", "1").lower()
+                    not in {"0", "false", "no"}
+                ):
+                    slot_context = dict(llm_context)
+                    slot_context.update(
+                        {
+                            "skill": preferred_skill,
+                            "arguments": current_arguments,
+                            "missing": current_missing,
+                            "slot_fill_instruction": (
+                                "Extract only values explicitly implied by the latest user message. "
+                                "For framework, map natural phrases such as vanilla JS, plain JS, "
+                                "static HTML/CSS/JS to the closest CLI enum. Do not invent values. "
+                                "Return the operation tool with merged arguments if a field can be filled; "
+                                "otherwise use conversation-reply to ask naturally."
+                            ),
+                        }
+                    )
+                    try:
+                        slot_plan = call_llm(
+                            request.message,
+                            documents,
+                            slot_context,
+                            preferred_skill,
+                            session_history,
+                        )
+                    except Exception:
+                        slot_plan = None
+                    if slot_plan and slot_plan.get("skill") == preferred_skill:
+                        slot_arguments = strict_arguments(
+                            request.message,
+                            preferred_skill,
+                            request.context,
+                            slot_plan.get("arguments", {}),
+                        )
+                    elif slot_plan and slot_plan.get("kind") == "answer":
+                        slot_arguments = strict_arguments(
+                            slot_plan.get("message", ""),
+                            preferred_skill,
+                            request.context,
+                            {},
+                        )
+                    else:
+                        slot_arguments = None
+                    if slot_arguments:
+                        try:
+                            slot_preview = execute_cli_skill(
+                                preferred_skill,
+                                slot_arguments,
+                                dry_run=True,
+                            )
+                            slot_missing = slot_preview.get("needs_input", [])
+                            if not slot_missing:
+                                return respond({
+                                    "mode": "llm+cli",
+                                    "message": (
+                                        "입력 내용을 이해해 CLI로 다시 검증했습니다. "
+                                        "아래 실행 계획을 확인하고 승인해주세요."
+                                    ),
+                                    "model": slot_plan.get("model"),
+                                    "skill": preferred_skill,
+                                    "arguments": slot_arguments,
+                                    "preview": slot_preview,
+                                    "requires_approval": True,
+                                })
+                            if len(slot_missing) < len(current_missing):
+                                current_arguments = slot_arguments
+                                current_preview = slot_preview
+                                current_missing = slot_missing
+                        except SkillError as exc:
+                            error_text = str(exc)
+                            if (
+                                preferred_skill == "service.deploy"
+                                and "Service already exists" in error_text
+                            ):
+                                project = slot_arguments.get("project")
+                                service = slot_arguments.get("service")
+                                return respond({
+                                    "mode": "llm+cli",
+                                    "kind": "clarification",
+                                    "message": (
+                                        f"`{project}` 프로젝트에는 이미 `{service}` 서비스가 있습니다.\n\n"
+                                        "입력하신 프레임워크 표현은 이해했습니다. 다만 이 이름은 이미 사용 중이에요.\n"
+                                        f"- 기존 서비스를 최신 Git 코드로 다시 배포하려면: `{service} 재배포해줘`\n"
+                                        "- 새 서비스를 추가하려면: 다른 서비스 이름을 알려주세요."
+                                    ),
+                                    "model": slot_plan.get("model"),
+                                    "skill": preferred_skill,
+                                    "arguments": slot_arguments,
+                                    "missing": [
+                                        {"field": "intent", "label": "재배포 또는 다른 서비스 이름"}
+                                    ],
+                                    "context": {
+                                        "original_request": (
+                                            request.context.get("original_request")
+                                            if request.context
+                                            else request.message
+                                        ),
+                                        "skill": preferred_skill,
+                                        "arguments": slot_arguments,
+                                        "missing": [
+                                            {"field": "intent", "label": "재배포 또는 다른 서비스 이름"}
+                                        ],
+                                    },
+                                    "requires_approval": False,
+                                })
                 message = current_preview.get(
                     "message",
                     f"`{preferred_skill}` 작업에 필요한 정보를 알려주세요.",

@@ -47,7 +47,7 @@ PORT_END = int(os.getenv("PORT_END", "9100"))
 
 def project_agent_template_version() -> str:
     explicit = os.getenv("PROJECT_AGENT_TEMPLATE_VERSION", "").strip()
-    if explicit:
+    if explicit and os.getenv("PLATFORM_NAMESPACE", "").strip():
         return explicit
     root = Path(__file__).resolve().parent
     digest = hashlib.sha256()
@@ -258,18 +258,29 @@ def ensure_namespace_token(project: str) -> tuple[str, bool]:
 def project_agent_service_definition(project: str, token: str) -> dict[str, Any]:
     validate_name(project, "project")
     template_version = project_agent_template_version()
+    environment = {
+        "PROJECTS_ROOT": str(PROJECTS_ROOT),
+        "PLATFORM_NAMESPACE": project,
+        "PLATFORM_TOKEN": token,
+        "PLATFORM_API": "http://platform-api:5000",
+        "SESSION_STORE": f"/var/log/skill-agent/{project}-sessions.json",
+        "PROJECT_AGENT_TEMPLATE_VERSION": template_version,
+    }
+    for key in (
+        "LLM_API_KEY",
+        "LLM_API_URL",
+        "LLM_MODEL",
+        "LLM_MODELS",
+        "LLM_REQUEST_TIMEOUT",
+        "LLM_SLOT_FILL_ON_MISSING",
+    ):
+        if os.getenv(key):
+            environment[key] = f"${{{key}}}"
     return {
         "image": os.getenv("PROJECT_AGENT_IMAGE", "cloud-platform-skill-agent:latest"),
         "command": "uvicorn app:app --host 0.0.0.0 --port 8080",
         "restart": "unless-stopped",
-        "environment": {
-            "PROJECTS_ROOT": str(PROJECTS_ROOT),
-            "PLATFORM_NAMESPACE": project,
-            "PLATFORM_TOKEN": token,
-            "PLATFORM_API": "http://platform-api:5000",
-            "SESSION_STORE": f"/var/log/skill-agent/{project}-sessions.json",
-            "PROJECT_AGENT_TEMPLATE_VERSION": template_version,
-        },
+        "environment": environment,
         "networks": {
             "app-net": {
                 "aliases": ["project-agent", f"{project}-agent"],
