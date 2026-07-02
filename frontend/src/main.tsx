@@ -5,6 +5,7 @@ import "./styles.css";
 type Role = "visitor" | "user" | "admin";
 type HomeTab = "services" | "projects" | "create";
 type Page = { kind: "home" } | { kind: "project"; project: string };
+type QuickPrompt = { id: number; text: string };
 
 type Project = {
   name: string;
@@ -62,6 +63,8 @@ const visitorAuth: AuthHeaders = {
   userId: ""
 };
 
+const SESSION_STORAGE_KEY = "cloud-platform-console-session";
+
 const authHeaders = (auth: AuthHeaders) => ({
   "Content-Type": "application/json",
   "X-User-Role": auth.role,
@@ -89,6 +92,39 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isApprovalAgentResponse(data: AgentResponse): data is ApprovalAgentResponse {
   return data.requires_approval === true && typeof data.skill === "string" && isRecord(data.arguments);
+}
+
+function loadStoredSession(): AuthSession {
+  try {
+    const raw = window.localStorage.getItem(SESSION_STORAGE_KEY);
+    if (!raw) return null;
+    const data = JSON.parse(raw);
+    if (!isRecord(data) || typeof data.id !== "string") return null;
+    if (data.role !== "user" && data.role !== "admin") return null;
+    return {
+      id: data.id,
+      role: data.role,
+      name: typeof data.name === "string" ? data.name : undefined
+    };
+  } catch {
+    return null;
+  }
+}
+
+function storeSession(session: NonNullable<AuthSession>) {
+  window.localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(session));
+}
+
+function clearStoredSession() {
+  window.localStorage.removeItem(SESSION_STORAGE_KEY);
+}
+
+function newSessionId() {
+  if (globalThis.crypto && typeof globalThis.crypto.randomUUID === "function") {
+    return globalThis.crypto.randomUUID();
+  }
+  const randomPart = Math.random().toString(36).slice(2);
+  return `session-${Date.now().toString(36)}-${randomPart}`;
 }
 
 function labelSkill(skill?: string) {
@@ -175,14 +211,19 @@ function pathForPage(page: Page) {
   return "/";
 }
 
+function makeQuickPrompt(text: string): QuickPrompt {
+  return { id: Date.now(), text };
+}
+
 function App() {
-  const [session, setSession] = useState<AuthSession>(null);
+  const [session, setSession] = useState<AuthSession>(() => loadStoredSession());
   const [projects, setProjects] = useState<Project[]>([]);
   const [catalog, setCatalog] = useState<ServiceSummary[]>([]);
   const [page, setPage] = useState<Page>(() => pageFromLocation());
   const [activeTab, setActiveTab] = useState<HomeTab>("services");
   const [error, setError] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(() => Boolean(loadStoredSession()));
+  const [projectsLoaded, setProjectsLoaded] = useState(false);
   const auth = useMemo<AuthHeaders>(
     () => session ? { role: session.role, userId: session.id } : visitorAuth,
     [session]
@@ -205,6 +246,7 @@ function App() {
   async function refreshProjects() {
     if (role === "visitor") {
       setProjects([]);
+      setProjectsLoaded(true);
       return;
     }
     setLoading(true);
@@ -215,6 +257,7 @@ function App() {
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
+      setProjectsLoaded(true);
       setLoading(false);
     }
   }
@@ -234,6 +277,7 @@ function App() {
   }, []);
 
   useEffect(() => {
+    setProjectsLoaded(false);
     refreshProjects();
     if (role === "visitor" && page.kind === "project") {
       navigateHome(true);
@@ -292,13 +336,16 @@ function App() {
         <LoginPanel
           session={session}
           onLogin={(next) => {
+            storeSession(next);
             setSession(next);
             setError("");
             setActiveTab("projects");
           }}
           onLogout={() => {
+            clearStoredSession();
             setSession(null);
             setProjects([]);
+            setProjectsLoaded(false);
             navigateHome();
             setActiveTab("services");
           }}
@@ -334,7 +381,11 @@ function App() {
       ) : (
         <section className="workspace">
           <button className="secondaryButton" onClick={() => navigateHome()}>메인으로</button>
-          <p className="hint">프로젝트를 찾을 수 없거나 접근 권한이 없습니다.</p>
+          <p className="hint">
+            {role !== "visitor" && (!projectsLoaded || loading || projects.length === 0)
+              ? "프로젝트 정보를 불러오는 중입니다."
+              : "프로젝트를 찾을 수 없거나 접근 권한이 없습니다."}
+          </p>
         </section>
       )}
 
@@ -448,15 +499,21 @@ function LoginPanel({
           <button className="secondaryButton" onClick={onLogout}>로그아웃</button>
         </>
       ) : (
-        <>
-          <input value={userId} onChange={(event) => setUserId(event.target.value)} placeholder="user id" />
-          <input value={password} onChange={(event) => setPassword(event.target.value)} placeholder="password" type="password" />
-          <button onClick={login} disabled={busy || !userId.trim()}>
+        <form
+          className="loginForm"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (!busy && userId.trim()) login();
+          }}
+        >
+          <input value={userId} onChange={(event) => setUserId(event.target.value)} placeholder="user id" autoComplete="username" />
+          <input value={password} onChange={(event) => setPassword(event.target.value)} placeholder="password" type="password" autoComplete="current-password" />
+          <button type="submit" disabled={busy || !userId.trim()}>
             {busy ? "확인 중..." : "로그인"}
           </button>
           <small>기본: local-user / 빈 비밀번호, admin / admin</small>
           {message && <small className="loginError">{message}</small>}
-        </>
+        </form>
       )}
     </aside>
   );
@@ -632,7 +689,7 @@ function ProjectWorkspace({
   onBack: () => void;
   onRefresh: () => Promise<void>;
 }) {
-  const [quickPrompt, setQuickPrompt] = useState("");
+  const [quickPrompt, setQuickPrompt] = useState<QuickPrompt | null>(null);
   const services = project.services || [];
 
   return (
@@ -644,6 +701,7 @@ function ProjectWorkspace({
           <p>이 화면의 AI 에이전트는 기본적으로 <code>{project.name}</code> 프로젝트만 context로 받습니다.</p>
         </div>
         <div className="headerActions">
+          <button onClick={() => setQuickPrompt(makeQuickPrompt("새 서비스 배포하고 싶어"))}>새 서비스 배포</button>
           <button className="secondaryButton" onClick={onBack}>메인으로</button>
           <button onClick={onRefresh}>새로고침</button>
         </div>
@@ -671,9 +729,9 @@ function ProjectWorkspace({
             </div>
             <span>상태/로그/재배포는 프로젝트 에이전트가 CLI로 검증해 처리합니다.</span>
             <div className="serviceActions">
-              <button onClick={() => setQuickPrompt(`${service} 상태 확인해줘`)}>상태</button>
-              <button onClick={() => setQuickPrompt(`${service} 로그 40줄 보여줘`)}>로그</button>
-              <button onClick={() => setQuickPrompt(`${service} 재배포하고 싶어`)}>재배포</button>
+              <button onClick={() => setQuickPrompt(makeQuickPrompt(`${service} 상태 확인해줘`))}>상태</button>
+              <button onClick={() => setQuickPrompt(makeQuickPrompt(`${service} 로그 40줄 보여줘`))}>로그</button>
+              <button onClick={() => setQuickPrompt(makeQuickPrompt(`${service} 재배포하고 싶어`))}>재배포</button>
             </div>
           </div>
         ))}
@@ -693,18 +751,18 @@ function AgentPanel({
 }: {
   auth: AuthHeaders;
   project: string;
-  quickPrompt?: string;
+  quickPrompt?: QuickPrompt | null;
 }) {
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [sessionId] = useState(() => crypto.randomUUID());
+  const [sessionId] = useState(() => newSessionId());
   const [context, setContext] = useState<Record<string, unknown>>({});
   const [busy, setBusy] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    if (quickPrompt) setInput(quickPrompt);
-  }, [quickPrompt]);
+    if (quickPrompt) setInput(quickPrompt.text);
+  }, [quickPrompt?.id]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
@@ -907,7 +965,7 @@ function ApprovalCard({
 function AdminConsole({ auth }: { auth: AuthHeaders }) {
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [sessionId] = useState(() => crypto.randomUUID());
+  const [sessionId] = useState(() => newSessionId());
 
   async function send() {
     const text = input.trim();

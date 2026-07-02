@@ -164,6 +164,11 @@ pre {
   color: white;
 }
 
+.loginForm {
+  display: grid;
+  gap: 0.5rem;
+}
+
 .loginPanel button {
   background: white;
   color: #1d4ed8;
