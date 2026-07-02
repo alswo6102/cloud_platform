@@ -1695,7 +1695,7 @@ def call_llm(
                     "tools": tools,
                     "tool_choice": "required",
                 },
-                timeout=30,
+                timeout=float(os.getenv("LLM_REQUEST_TIMEOUT", "10")),
             )
             if response.status_code != 429:
                 response.raise_for_status()

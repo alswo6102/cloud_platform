@@ -739,7 +739,7 @@ function ProjectWorkspace({
           <p className="hint">아직 등록된 서비스가 없습니다. 아래 AI 에이전트에게 “새 서비스 배포하고 싶어”라고 요청하세요.</p>
         )}
       </div>
-      <AgentPanel auth={auth} project={project.name} quickPrompt={quickPrompt} />
+      <AgentPanel auth={auth} project={project.name} services={services} quickPrompt={quickPrompt} />
     </section>
   );
 }
@@ -747,10 +747,12 @@ function ProjectWorkspace({
 function AgentPanel({
   auth,
   project,
+  services,
   quickPrompt
 }: {
   auth: AuthHeaders;
   project: string;
+  services: string[];
   quickPrompt?: QuickPrompt | null;
 }) {
   const [input, setInput] = useState("");
@@ -767,6 +769,10 @@ function AgentPanel({
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [messages, busy]);
+
+  const examples = services.length > 0
+    ? `예: “서비스 목록 보여줘”, “${services[0]} 상태 확인해줘”, “새 서비스 배포하고 싶어”`
+    : "예: “새 서비스 배포하고 싶어”, “지원하는 프레임워크 보여줘”, “배포에 필요한 정보 알려줘”";
 
   function updateApproval(index: number, status: ApprovalRequest["status"]) {
     setMessages((items) =>
@@ -853,7 +859,7 @@ function AgentPanel({
       <div className="messages">
         {messages.length === 0 && (
           <div className="emptyChat">
-            예: “서비스 목록 보여줘”, “demo-a 상태 확인해줘”, “새 프론트 서비스를 배포하고 싶어”
+            {examples}
           </div>
         )}
         {messages.map((message, index) => (
@@ -872,7 +878,7 @@ function AgentPanel({
         {busy && (
           <div className="bubble agent loadingBubble">
             <span className="spinner" />
-            <p>AI가 응답 중입니다...</p>
+            <p>요청을 처리하는 중입니다...</p>
           </div>
         )}
         <div ref={messagesEndRef} />

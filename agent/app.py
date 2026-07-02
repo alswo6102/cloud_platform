@@ -1357,6 +1357,36 @@ def render_server_health(result: dict[str, Any]) -> str:
 def render_read_only_result(skill: str, result: dict[str, Any]) -> str:
     if skill == "server.health":
         return render_server_health(result)
+    if skill == "project.list":
+        projects = result.get("projects") or []
+        if not projects:
+            return "### 서비스 목록\n\n현재 이 프로젝트에는 등록된 서비스가 없습니다."
+        lines = ["### 서비스 목록", ""]
+        for project in projects:
+            services = project.get("services") or []
+            if services:
+                lines.append(
+                    f"- `{project['name']}`: "
+                    + ", ".join(f"`{service}`" for service in services)
+                )
+            else:
+                lines.append(f"- `{project['name']}`: 등록된 서비스 없음")
+        return "\n".join(lines)
+    if skill == "framework.list":
+        frameworks = result.get("frameworks") or []
+        if not frameworks:
+            return "지원 가능한 프레임워크 목록을 찾지 못했습니다."
+        lines = [
+            "### 지원 프레임워크",
+            "",
+            "새 서비스를 배포할 때 아래 프리셋 중 하나를 선택할 수 있습니다.",
+        ]
+        for item in frameworks:
+            lines.append(
+                f"- `{item.get('id')}`: {item.get('label')} "
+                f"({item.get('category')})"
+            )
+        return "\n".join(lines)
     if skill == "service.status":
         lines = [f"### `{result['project']}` 서비스 상태", ""]
         for item in result.get("services", []):
@@ -1410,6 +1440,33 @@ def deterministic_read_request(
     message: str,
 ) -> tuple[str, dict[str, Any]] | None:
     lowered = message.lower()
+    namespace = os.getenv("PLATFORM_NAMESPACE", "").strip()
+    wants_project_list = any(
+        phrase in lowered
+        for phrase in (
+            "서비스 목록",
+            "서비스 리스트",
+            "서비스 보여",
+            "서비스들 보여",
+            "어떤 서비스",
+            "무슨 서비스",
+            "프로젝트 목록",
+            "목록 보여",
+        )
+    )
+    if wants_project_list:
+        return "project.list", {}
+    if any(
+        phrase in lowered
+        for phrase in (
+            "프레임워크",
+            "프리셋",
+            "framework",
+            "preset",
+            "지원하는 스택",
+        )
+    ) and any(word in lowered for word in ("목록", "뭐", "무엇", "보여", "알려", "있어")):
+        return "framework.list", {}
     if "서버" in lowered and any(
         word in lowered for word in ("상태", "확인", "헬스", "health")
     ):
@@ -1427,6 +1484,8 @@ def deterministic_read_request(
         message,
         [item["name"] for item in projects],
     )
+    if not project and namespace:
+        project = namespace
     if not project:
         return None
     project_item = next(item for item in projects if item["name"] == project)

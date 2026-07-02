@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import json
 import threading
+import time
 from pathlib import Path
 from typing import Any, Literal
 
@@ -26,7 +27,10 @@ AUTO_ENSURE_PROJECT_AGENT = os.getenv("AUTO_ENSURE_PROJECT_AGENT", "1").lower() 
 AUTH_STORE = Path(os.getenv("AUTH_STORE", "/var/lib/cloud-platform/auth.json"))
 FRONTEND_DIST = Path(os.getenv("FRONTEND_DIST", "/var/www/cloud-platform-console"))
 REQUEST_TIMEOUT = float(os.getenv("WEB_REQUEST_TIMEOUT", "120"))
+PROJECT_AGENT_ENSURE_TTL = float(os.getenv("PROJECT_AGENT_ENSURE_TTL", "300"))
 AUTH_LOCK = threading.Lock()
+PROJECT_AGENT_ENSURE_LOCK = threading.Lock()
+PROJECT_AGENT_ENSURED_AT: dict[str, float] = {}
 
 Role = Literal["visitor", "user", "admin"]
 
@@ -202,7 +206,7 @@ def project_agent_request(
             timeout=REQUEST_TIMEOUT,
         )
     except requests.RequestException as first_exc:
-        ensure_project_agent(project)
+        ensure_project_agent(project, force=True)
         try:
             response = requests.request(
                 method,
@@ -225,12 +229,20 @@ def project_agent_request(
     return data if isinstance(data, dict) else {"result": data}
 
 
-def ensure_project_agent(project: str) -> None:
+def ensure_project_agent(project: str, *, force: bool = False) -> None:
+    now = time.monotonic()
+    if AUTO_ENSURE_PROJECT_AGENT and not force:
+        with PROJECT_AGENT_ENSURE_LOCK:
+            last = PROJECT_AGENT_ENSURED_AT.get(project, 0)
+            if now - last < PROJECT_AGENT_ENSURE_TTL:
+                return
     agent_request("POST", "/execute", json_body={
         "skill": "project.ensure_agent",
         "arguments": {"project": project},
         "approved": True,
     })
+    with PROJECT_AGENT_ENSURE_LOCK:
+        PROJECT_AGENT_ENSURED_AT[project] = time.monotonic()
 
 
 def require_login(role: Role) -> None:
