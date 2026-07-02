@@ -9,6 +9,7 @@ from typing import Any, Literal
 import requests
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 
@@ -23,6 +24,7 @@ AUTO_ENSURE_PROJECT_AGENT = os.getenv("AUTO_ENSURE_PROJECT_AGENT", "1").lower() 
     "no",
 }
 AUTH_STORE = Path(os.getenv("AUTH_STORE", "/var/lib/cloud-platform/auth.json"))
+FRONTEND_DIST = Path(os.getenv("FRONTEND_DIST", "/var/www/cloud-platform-console"))
 REQUEST_TIMEOUT = float(os.getenv("WEB_REQUEST_TIMEOUT", "120"))
 AUTH_LOCK = threading.Lock()
 
@@ -456,3 +458,25 @@ def project_execute(
         "session_id": payload.session_id,
         "resume": payload.resume,
     })
+
+
+@app.get("/{full_path:path}", include_in_schema=False)
+def serve_frontend(full_path: str) -> FileResponse:
+    if full_path.startswith("api/"):
+        raise HTTPException(status_code=404, detail="API endpoint not found.")
+    if not FRONTEND_DIST.exists():
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                "Frontend dist is not deployed yet. Build locally with "
+                "`npm run build`, then rsync frontend/dist/ to the server dist directory."
+            ),
+        )
+    requested = (FRONTEND_DIST / full_path).resolve()
+    dist_root = FRONTEND_DIST.resolve()
+    if requested.is_file() and dist_root in requested.parents:
+        return FileResponse(requested)
+    index = FRONTEND_DIST / "index.html"
+    if index.is_file():
+        return FileResponse(index)
+    raise HTTPException(status_code=404, detail="Frontend index.html not found.")
