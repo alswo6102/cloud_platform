@@ -163,11 +163,23 @@ function MessageText({ text }: { text: string }) {
   );
 }
 
+function pageFromLocation(): Page {
+  const path = window.location.pathname.replace(/\/+$/, "") || "/";
+  const match = path.match(/^\/projects\/([^/]+)$/);
+  if (match) return { kind: "project", project: decodeURIComponent(match[1]) };
+  return { kind: "home" };
+}
+
+function pathForPage(page: Page) {
+  if (page.kind === "project") return `/projects/${encodeURIComponent(page.project)}`;
+  return "/";
+}
+
 function App() {
   const [session, setSession] = useState<AuthSession>(null);
   const [projects, setProjects] = useState<Project[]>([]);
   const [catalog, setCatalog] = useState<ServiceSummary[]>([]);
-  const [page, setPage] = useState<Page>({ kind: "home" });
+  const [page, setPage] = useState<Page>(() => pageFromLocation());
   const [activeTab, setActiveTab] = useState<HomeTab>("services");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -216,27 +228,49 @@ function App() {
   }, []);
 
   useEffect(() => {
+    const handlePopState = () => setPage(pageFromLocation());
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, []);
+
+  useEffect(() => {
     refreshProjects();
     if (role === "visitor" && page.kind === "project") {
-      setPage({ kind: "home" });
+      navigateHome(true);
     }
   }, [role, auth.userId]);
+
+  function navigate(page: Page, replace = false) {
+    const path = pathForPage(page);
+    if (window.location.pathname !== path) {
+      if (replace) {
+        window.history.replaceState(null, "", path);
+      } else {
+        window.history.pushState(null, "", path);
+      }
+    }
+    setPage(page);
+  }
+
+  function navigateHome(replace = false) {
+    navigate({ kind: "home" }, replace);
+  }
 
   function openProject(project: string) {
     if (role === "visitor") {
       setError("로그인 후 접근할 수 있습니다.");
       setActiveTab("projects");
-      setPage({ kind: "home" });
+      navigateHome();
       return;
     }
     if (!projectNames.has(project) && role !== "admin") {
       setError(`${project} 프로젝트에 대한 권한이 없습니다.`);
       setActiveTab("projects");
-      setPage({ kind: "home" });
+      navigateHome();
       return;
     }
     setError("");
-    setPage({ kind: "project", project });
+    navigate({ kind: "project", project });
   }
 
   return (
@@ -265,7 +299,7 @@ function App() {
           onLogout={() => {
             setSession(null);
             setProjects([]);
-            setPage({ kind: "home" });
+            navigateHome();
             setActiveTab("services");
           }}
         />
@@ -286,7 +320,7 @@ function App() {
           onOpenProject={openProject}
           onCreated={async (project) => {
             await refreshAll();
-            setPage({ kind: "project", project });
+            navigate({ kind: "project", project });
           }}
           onRefresh={refreshAll}
         />
@@ -294,12 +328,12 @@ function App() {
         <ProjectWorkspace
           auth={auth}
           project={selectedProject}
-          onBack={() => setPage({ kind: "home" })}
+          onBack={() => navigateHome()}
           onRefresh={refreshAll}
         />
       ) : (
         <section className="workspace">
-          <button className="secondaryButton" onClick={() => setPage({ kind: "home" })}>메인으로</button>
+          <button className="secondaryButton" onClick={() => navigateHome()}>메인으로</button>
           <p className="hint">프로젝트를 찾을 수 없거나 접근 권한이 없습니다.</p>
         </section>
       )}
