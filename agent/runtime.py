@@ -93,6 +93,9 @@ GITHUB_HTTPS_PATTERN = re.compile(
 )
 MODEL_COOLDOWNS: dict[str, float] = {}
 MODEL_COOLDOWN_LOCK = threading.Lock()
+REPOSITORY_ACCESS_CACHE: dict[str, float] = {}
+REPOSITORY_ACCESS_CACHE_LOCK = threading.Lock()
+REPOSITORY_ACCESS_CACHE_TTL = float(os.getenv("REPOSITORY_ACCESS_CACHE_TTL", "300"))
 
 
 class SkillError(RuntimeError):
@@ -434,11 +437,15 @@ def git_clone(repo_url: str, destination: Path) -> None:
 def validate_github_repository_access(repo_url: str) -> None:
     if not GITHUB_HTTPS_PATTERN.fullmatch(repo_url):
         raise SkillError("repo_url must be a public GitHub HTTPS repository URL")
+    now = time.monotonic()
+    with REPOSITORY_ACCESS_CACHE_LOCK:
+        if REPOSITORY_ACCESS_CACHE.get(repo_url, 0) > now:
+            return
     result = subprocess.run(
         ["git", "ls-remote", "--heads", repo_url],
         capture_output=True,
         text=True,
-        timeout=30,
+        timeout=float(os.getenv("GIT_REPOSITORY_VALIDATE_TIMEOUT", "12")),
         env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
     )
     if result.returncode != 0:
@@ -447,6 +454,8 @@ def validate_github_repository_access(repo_url: str) -> None:
             "repo_url must point to an existing public GitHub repository"
             + (f": {detail}" if detail else "")
         )
+    with REPOSITORY_ACCESS_CACHE_LOCK:
+        REPOSITORY_ACCESS_CACHE[repo_url] = time.monotonic() + REPOSITORY_ACCESS_CACHE_TTL
 
 
 def inspect_repository(repo_url: str) -> dict[str, Any]:

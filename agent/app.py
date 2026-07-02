@@ -323,8 +323,23 @@ FRAMEWORK_ALIASES = {
     "existing": "existing",
     "static": "static",
     "정적": "static",
+    "정적 사이트": "static",
+    "정적 웹": "static",
+    "html": "static",
+    "html js": "static",
+    "html/css/js": "static",
+    "html css js": "static",
+    "vanilla js": "static",
+    "vanilla javascript": "static",
     "바닐라 javascript": "static",
+    "바닐라 js": "static",
     "바닐라 자바스크립트": "static",
+    "순수 js": "static",
+    "순수 자바스크립트": "static",
+    "그냥 js": "static",
+    "그냥 자바스크립트": "static",
+    "javascript": "static",
+    "자바스크립트": "static",
     "vite": "vite",
     "react": "react",
     "리액트": "react",
@@ -600,7 +615,17 @@ def explicit_arguments(message: str, skill: str) -> dict[str, Any]:
             )
         ):
             arguments["is_web"] = False
-        if any(phrase in lowered for phrase in ("웹 서비스", "프론트", "frontend", "외부 공개")):
+        if any(
+            phrase in lowered
+            for phrase in (
+                "웹 서비스",
+                "웹서비스",
+                "web service",
+                "프론트",
+                "frontend",
+                "외부 공개",
+            )
+        ):
             arguments["is_web"] = True
         env_match = re.search(
             r"환경변수\s*(?:이름)?(?:은|는|:|=)?\s*([A-Za-z_][A-Za-z0-9_,\s]*)",
@@ -1819,11 +1844,39 @@ def chat(request: ChatRequest):
                 )
                 current_missing = current_preview.get("needs_input", [])
             except SkillError as exc:
+                error_text = str(exc)
+                if preferred_skill == "service.deploy" and "Service already exists" in error_text:
+                    project = current_arguments.get("project")
+                    service = current_arguments.get("service")
+                    return respond({
+                        "mode": "cli",
+                        "kind": "clarification",
+                        "message": (
+                            f"`{project}` 프로젝트에는 이미 `{service}` 서비스가 있습니다.\n\n"
+                            "원하는 작업을 골라 알려주세요.\n"
+                            f"- 기존 서비스를 최신 Git 코드로 다시 배포하려면: `{service} 재배포해줘`\n"
+                            "- 새 서비스를 추가하려면: 다른 서비스 이름을 알려주세요."
+                        ),
+                        "skill": "service.deploy",
+                        "arguments": current_arguments,
+                        "missing": [{"field": "intent", "label": "재배포 또는 다른 서비스 이름"}],
+                        "context": {
+                            "original_request": (
+                                request.context.get("original_request")
+                                if request.context
+                                else request.message
+                            ),
+                            "skill": "service.deploy",
+                            "arguments": current_arguments,
+                            "missing": [{"field": "intent", "label": "재배포 또는 다른 서비스 이름"}],
+                        },
+                        "requires_approval": False,
+                    })
                 return respond({
                     "mode": "cli",
                     "kind": "clarification",
                     "message": (
-                        f"CLI 검증에서 입력값 문제가 확인됐습니다: {exc}\n\n"
+                        f"CLI 검증에서 입력값 문제가 확인됐습니다: {error_text}\n\n"
                         "잘못된 항목만 다시 알려주세요. GitHub 저장소는 실제 접근 가능한 "
                         "`https://github.com/<owner>/<repo>` 공개 저장소여야 합니다."
                     ),
