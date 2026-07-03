@@ -62,12 +62,20 @@ type AgentResponse = {
   arguments?: Record<string, unknown>;
   preview?: unknown;
   resume?: unknown;
+  ui?: UiHint | null;
 };
 
 type ApprovalAgentResponse = AgentResponse & {
   requires_approval: true;
   skill: string;
   arguments: Record<string, unknown>;
+};
+
+type UiHint = {
+  type?: string;
+  form?: string;
+  arguments?: Record<string, unknown>;
+  missing?: Array<Record<string, unknown>>;
 };
 
 type DeployGuideState = {
@@ -161,28 +169,8 @@ function normalizeFramework(value: unknown): FrameworkId | "" {
   return aliases[raw] || "";
 }
 
-function isDeployIntent(text: string) {
-  return /(새\s*)?서비스.*(배포|등록|추가|만들)|배포.*서비스/.test(text);
-}
-
-function isContextBreakingRequest(text: string) {
-  const normalized = text.toLowerCase();
-  return (
-    /목록|리스트|상태|로그|도움말|프레임워크|지원.*목록|뭐\s*있|보여줘/.test(text)
-    || normalized.includes("list")
-    || normalized.includes("status")
-    || normalized.includes("log")
-    || normalized.includes("help")
-  );
-}
-
-function shouldUseGuidedDeploy(data: AgentResponse, latestUserText: string) {
-  return (
-    data.skill === "service.deploy"
-    && data.requires_approval !== true
-    && isDeployIntent(latestUserText)
-    && !isContextBreakingRequest(latestUserText)
-  );
+function isDeployFormHint(data: AgentResponse) {
+  return data.ui?.type === "form" && data.ui.form === "service.deploy";
 }
 
 function loadStoredSession(): AuthSession {
@@ -918,16 +906,12 @@ function AgentPanel({
   async function sendText(text: string, displayText = text) {
     if (!text.trim()) return;
     setInput("");
-    const requestContext = isContextBreakingRequest(text) ? {} : context;
-    if (isContextBreakingRequest(text)) {
-      setContext({});
-    }
     setMessages((items) => [...items, { from: "user", text: displayText }]);
     setBusy(true);
     try {
       const data = await api<AgentResponse>(`/api/projects/${project}/chat`, auth, {
         method: "POST",
-        body: JSON.stringify({ message: text, session_id: sessionId, context: requestContext })
+        body: JSON.stringify({ message: text, session_id: sessionId, context })
       });
       if (data.context && typeof data.context === "object") {
         setContext(data.context as Record<string, unknown>);
@@ -949,7 +933,7 @@ function AgentPanel({
         ]);
         return;
       }
-      if (shouldUseGuidedDeploy(data, text)) {
+      if (isDeployFormHint(data)) {
         openDeployGuideFromResponse(data);
         return;
       }
@@ -971,7 +955,7 @@ function AgentPanel({
   }
 
   function openDeployGuideFromResponse(data: AgentResponse) {
-    const args = data.arguments || {};
+    const args = data.ui?.arguments || data.arguments || {};
     setDeployGuide((current) => ({
       ...current,
       service: typeof args.service === "string" ? args.service : current.service,

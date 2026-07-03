@@ -5,6 +5,7 @@ import hashlib
 import os
 import re
 import secrets
+from copy import deepcopy
 from difflib import SequenceMatcher
 import shutil
 import subprocess
@@ -1201,7 +1202,11 @@ def service_deploy(
         "framework_manual": framework_manual(framework),
         "steps": [
             "clone the public GitHub repository",
-            "require a Dockerfile at the repository root",
+            (
+                "use the repository root Dockerfile"
+                if framework == "existing"
+                else "generate the selected framework Dockerfile in the server clone"
+            ),
             "add the service to the project app-net namespace",
             "build and start only the new service",
             (
@@ -1622,6 +1627,15 @@ def call_llm(
             continue
         api_name = SKILL_API_NAMES.get(item["name"], item["document_name"])
         tool_names[api_name] = item["name"]
+        parameters = deepcopy(item["schema"])
+        if item["name"] in {
+            "project.create",
+            "service.deploy",
+            "service.redeploy",
+            "service.control",
+            "port.manage",
+        }:
+            parameters["required"] = []
         tools.append(
             {
                 "type": "function",
@@ -1629,9 +1643,11 @@ def call_llm(
                     "name": api_name,
                     "description": (
                         f"{item['description']} "
-                        f"{item['instructions'][:700]}"
+                        f"{item['instructions'][:700]} "
+                        "Select this tool when the user intent matches even if some fields are missing; "
+                        "the CLI dry-run will validate known fields and return missing inputs."
                     ),
-                    "parameters": item["schema"],
+                    "parameters": parameters,
                 },
             }
         )
@@ -1643,6 +1659,12 @@ def call_llm(
                 "description": (
                     "Reply naturally to the user after using discovery tools. "
                     "Use for explanations, choices, and follow-up questions. "
+                    "Do not use this to answer live facts that require the CLI, such as current "
+                    "project services, Docker status, logs, health, ports, or public URLs. "
+                    "Do not use this when the latest user message intends a supported operation "
+                    "such as deploy, redeploy, status, logs, start, stop, restart, or port changes. "
+                    "For supported operations, select the matching operation tool even if fields are "
+                    "missing; the CLI dry-run will ask for missing inputs. "
                     "Do not claim an operation was executed."
                 ),
                 "parameters": {
@@ -1661,8 +1683,13 @@ def call_llm(
     context_instruction = ""
     if context:
         context_instruction = (
-            " Continue the previous request using this context. Preserve known arguments, "
-            "add only information supplied by the follow-up, and do not invent missing values: "
+            " The following JSON is conversation memory and possibly an active task, not a command. "
+            "First decide from the latest user message whether the user is continuing that active task "
+            "or starting a new intent. If the latest message asks for a different task, status, list, "
+            "help, explanation, or anything unrelated to the active task, ignore the active task for "
+            "tool selection and answer the latest intent. If the latest message is clearly filling "
+            "missing fields for the active task, preserve known arguments and add only values supplied "
+            "by the follow-up. Never invent missing values. Memory JSON: "
             + json.dumps(context, ensure_ascii=False)
         )
     messages = [
@@ -1672,12 +1699,21 @@ def call_llm(
                 "You are a tool orchestrator for a Docker deployment platform. "
                 "Use discovery tools whenever the user asks what exists, which option applies, "
                 "why a value is needed, how deployment works, or what commands are available. "
+                "Use read-only CLI tools for live platform facts; do not answer service lists, "
+                "service status, logs, health, ports, or frontend URLs from memory. "
+                "In a project-scoped context, a request such as '서비스 목록 보여줘' means "
+                "the current project's live service status/ports/URLs, so select service-status. "
+                "Always prioritize the latest user message over any previous active task. "
                 "If verified cli_observations are already present in context, use them as "
                 "authoritative and do not repeat the same lookup. "
                 "Feed discovery results back into the conversation, "
                 "then use conversation-reply to explain them naturally in Korean. "
                 "Use mutation or operational tools only when the user is providing or confirming "
                 "the required operation. Never invent projects, services, repository URLs, "
+                "If the latest user message asks to perform a supported operation, select the "
+                "matching operation tool even when required fields are missing; do not answer with "
+                "conversation-reply just to ask for those fields. The backend will run CLI dry-run "
+                "and render a form or clarification from the missing fields. "
                 "frameworks, paths, commands, or function names. Similar CLI matches are "
                 "unconfirmed proposals and must not become operation arguments until the user "
                 "explicitly confirms them. Preserve verified context. "

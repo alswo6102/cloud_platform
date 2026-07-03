@@ -443,6 +443,8 @@ DEPLOYMENT_GUIDE_PHRASES = {
 
 
 def preferred_skill_for(message: str, context: dict[str, Any] | None) -> str | None:
+    if os.getenv("LLM_API_KEY"):
+        return None
     text = message.lower()
     if GITHUB_URL_RE.search(message) and any(
         word in text for word in ("배포", "등록", "추가", "서비스", "저장소", "github")
@@ -467,7 +469,29 @@ def preferred_skill_for(message: str, context: dict[str, Any] | None) -> str | N
     ):
         return "project.create"
     if context and context.get("skill"):
-        return str(context["skill"])
+        missing = {item.get("field") for item in context.get("missing", [])}
+        looks_like_slot_reply = (
+            bool(missing)
+            and not any(
+                word in text
+                for word in (
+                    "목록",
+                    "리스트",
+                    "상태",
+                    "로그",
+                    "도움말",
+                    "프레임워크",
+                    "뭐 있어",
+                    "보여줘",
+                    "list",
+                    "status",
+                    "log",
+                    "help",
+                )
+            )
+        )
+        if looks_like_slot_reply:
+            return str(context["skill"])
     return None
 
 
@@ -1363,8 +1387,27 @@ def load_session(
             session_id,
             {"context": None, "history": [], "updated_at": now},
         )
-        if client_context and not session.get("context"):
-            session["context"] = client_context
+        if client_context:
+            stored_context = session.get("context")
+            if stored_context:
+                # The web layer sends request-scoped facts on every call
+                # (project_scope, public_base_url, authenticated role context).
+                # Keep the active task stored in the agent session, but refresh
+                # these factual request-scoped values so read-only answers such
+                # as frontend URLs do not become stale or disappear after a
+                # deploy form context is stored.
+                merged_context = deepcopy(stored_context)
+                for key in ("project_scope", "public_base_url"):
+                    if client_context.get(key):
+                        merged_context[key] = client_context[key]
+                client_args = client_context.get("arguments")
+                if isinstance(client_args, dict) and client_args.get("project"):
+                    merged_args = dict(merged_context.get("arguments") or {})
+                    merged_args["project"] = client_args["project"]
+                    merged_context["arguments"] = merged_args
+                session["context"] = merged_context
+            else:
+                session["context"] = client_context
         session["updated_at"] = now
         context = session.get("context")
         history = list(session.get("history") or [])
@@ -1407,6 +1450,15 @@ def remember_response(
                 "arguments": response.get("arguments", {}),
                 "missing": [],
             }
+        elif response.get("skill") in {"service.deploy", "service.redeploy", "project.create"} and response.get("missing"):
+            session["context"] = {
+                "original_request": user_message,
+                "skill": response.get("skill"),
+                "arguments": response.get("arguments", {}),
+                "missing": response.get("missing", []),
+            }
+        elif response.get("skill") in READ_ONLY_SKILLS or response.get("kind") in {"help", "guide"}:
+            session["context"] = None
         session["updated_at"] = time.time()
         persist_sessions_locked()
     response["session_id"] = session_id
@@ -1745,6 +1797,52 @@ def naturalize_mutation_message(
     return {"message": fallback, "model": model_hint}
 
 
+def ui_hint_for_response(
+    *,
+    skill: str | None,
+    arguments: dict[str, Any] | None = None,
+    missing: list[dict[str, Any]] | None = None,
+    requires_approval: bool = False,
+    preview: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    if not skill:
+        return None
+    if requires_approval:
+        return {
+            "type": "approval",
+            "skill": skill,
+            "title": "실행 전 승인",
+        }
+    if skill == "service.deploy" and missing:
+        return {
+            "type": "form",
+            "form": "service.deploy",
+            "title": "새 서비스 배포",
+            "required": ["service", "repo_url", "framework"],
+            "optional": ["is_web", "host_port", "environment_names"],
+            "arguments": arguments or {},
+            "missing": missing,
+            "choices": {
+                "framework": [
+                    "static",
+                    "vite",
+                    "react",
+                    "nextjs",
+                    "express",
+                    "fastapi",
+                    "flask",
+                    "django",
+                    "spring-maven",
+                    "go",
+                    "existing",
+                ],
+                "is_web": [True, False],
+                "optional_mode": ["defaults", "custom"],
+            },
+        }
+    return None
+
+
 def exact_entity_from_text(
     text: str,
     choices: list[str],
@@ -2063,10 +2161,10 @@ def chat(request: ChatRequest):
             "message": DEPLOYMENT_GUIDE,
             "requires_approval": False,
         })
-    ambiguous = ambiguity_for(request.message, request.context)
+    ambiguous = None if os.getenv("LLM_API_KEY") else ambiguity_for(request.message, request.context)
     if ambiguous:
         return respond(ambiguous)
-    no_project = no_project_transition(request.message, request.context)
+    no_project = None if os.getenv("LLM_API_KEY") else no_project_transition(request.message, request.context)
     if no_project:
         return respond(no_project)
     framework_help = framework_context_help(request.message, request.context)
@@ -2477,6 +2575,12 @@ def chat(request: ChatRequest):
                         "skill": preferred_skill,
                         "arguments": verified_arguments,
                         "preview": current_preview,
+                        "ui": ui_hint_for_response(
+                            skill=preferred_skill,
+                            arguments=verified_arguments,
+                            requires_approval=True,
+                            preview=current_preview,
+                        ),
                         "requires_approval": True,
                     })
                 return respond({
@@ -2488,6 +2592,11 @@ def chat(request: ChatRequest):
                     "arguments": verified_arguments,
                     "missing": missing,
                     "context": context,
+                    "ui": ui_hint_for_response(
+                        skill=preferred_skill,
+                        arguments=verified_arguments,
+                        missing=missing,
+                    ),
                     "requires_approval": False,
                 })
             return respond({
@@ -2576,6 +2685,7 @@ def chat(request: ChatRequest):
                     "arguments": arguments,
                     "missing": [],
                 },
+                "ui": None,
                 "requires_approval": False,
             })
         if preview.get("needs_input"):
@@ -2616,6 +2726,12 @@ def chat(request: ChatRequest):
                     "arguments": arguments,
                     "missing": preview["needs_input"],
                 },
+                "ui": ui_hint_for_response(
+                    skill=skill,
+                    arguments=arguments,
+                    missing=preview["needs_input"],
+                    preview=preview,
+                ),
                 "requires_approval": False,
             })
         final = naturalize_mutation_message(
@@ -2633,6 +2749,12 @@ def chat(request: ChatRequest):
             "model": final.get("model") or plan.get("model"),
             "arguments": arguments,
             "preview": preview,
+            "ui": ui_hint_for_response(
+                skill=skill,
+                arguments=arguments,
+                requires_approval=True,
+                preview=preview,
+            ),
             "resume": (
                 request.context.get("resume")
                 if request.context
