@@ -526,6 +526,12 @@ pre {
     #f8fbff;
 }
 
+.chatGuidedDeploy {
+  max-width: min(920px, 100%);
+  justify-self: stretch;
+  margin: 0.25rem 0 0.75rem;
+}
+
 .questionBlock {
   display: grid;
   gap: 0.5rem;
