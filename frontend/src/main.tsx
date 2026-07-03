@@ -16,7 +16,8 @@ type FrameworkId =
   | "flask"
   | "django"
   | "spring-maven"
-  | "go";
+  | "go"
+  | "existing";
 
 type Project = {
   name: string;
@@ -93,7 +94,8 @@ const frameworkOptions: Array<{
   { id: "flask", label: "Flask", hint: "Python Flask 백엔드" },
   { id: "django", label: "Django", hint: "Python Django 백엔드" },
   { id: "spring-maven", label: "Spring Maven", hint: "Java Spring Boot Maven" },
-  { id: "go", label: "Go", hint: "Go 웹 서비스" }
+  { id: "go", label: "Go", hint: "Go 웹 서비스" },
+  { id: "existing", label: "기존 Dockerfile", hint: "저장소의 Dockerfile 그대로 사용" }
 ];
 
 const visitorAuth: AuthHeaders = {
@@ -130,6 +132,37 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isApprovalAgentResponse(data: AgentResponse): data is ApprovalAgentResponse {
   return data.requires_approval === true && typeof data.skill === "string" && isRecord(data.arguments);
+}
+
+function normalizeFramework(value: unknown): FrameworkId | "" {
+  const raw = String(value || "").trim().toLowerCase();
+  if (!raw) return "";
+  const aliases: Record<string, FrameworkId> = {
+    static: "static",
+    "vanilla js": "static",
+    javascript: "static",
+    vite: "vite",
+    react: "react",
+    next: "nextjs",
+    nextjs: "nextjs",
+    "next.js": "nextjs",
+    express: "express",
+    nestjs: "express",
+    fastapi: "fastapi",
+    flask: "flask",
+    django: "django",
+    spring: "spring-maven",
+    "spring-maven": "spring-maven",
+    go: "go",
+    golang: "go",
+    existing: "existing",
+    dockerfile: "existing"
+  };
+  return aliases[raw] || "";
+}
+
+function shouldUseGuidedDeploy(data: AgentResponse) {
+  return data.skill === "service.deploy" && data.requires_approval !== true;
 }
 
 function loadStoredSession(): AuthSession {
@@ -812,10 +845,12 @@ function AgentPanel({
 
   useEffect(() => {
     if (!quickPrompt) return;
-    setInput(quickPrompt.text);
     if (quickPrompt.text.includes("서비스 배포")) {
       setShowDeployGuide(true);
+      setInput("");
+      return;
     }
+    setInput(quickPrompt.text);
   }, [quickPrompt?.id]);
 
   useEffect(() => {
@@ -890,6 +925,10 @@ function AgentPanel({
         ]);
         return;
       }
+      if (shouldUseGuidedDeploy(data)) {
+        openDeployGuideFromResponse(data);
+        return;
+      }
       setMessages((items) => [...items, { from: "agent", text: String(data.message || "응답을 받았습니다.") }]);
     } catch (err) {
       setMessages((items) => [...items, { from: "agent", text: err instanceof Error ? err.message : String(err) }]);
@@ -905,6 +944,37 @@ function AgentPanel({
 
   function updateDeployGuide(patch: Partial<DeployGuideState>) {
     setDeployGuide((current) => ({ ...current, ...patch }));
+  }
+
+  function openDeployGuideFromResponse(data: AgentResponse) {
+    const args = data.arguments || {};
+    setDeployGuide((current) => ({
+      ...current,
+      service: typeof args.service === "string" ? args.service : current.service,
+      repoUrl: typeof args.repo_url === "string" ? args.repo_url : current.repoUrl,
+      framework: normalizeFramework(args.framework) || current.framework,
+      isWeb: args.is_web === false ? "internal" : current.isWeb,
+      hostPort:
+        typeof args.host_port === "number" || typeof args.host_port === "string"
+          ? String(args.host_port)
+          : current.hostPort,
+      envNames: Array.isArray(args.environment_names)
+        ? args.environment_names.map(String).join(", ")
+        : current.envNames
+    }));
+    setShowDeployGuide(true);
+    setMessages((items) => [
+      ...items,
+      {
+        from: "agent",
+        text: [
+          "새 서비스 배포는 아래 가이드 카드에서 진행할게요.",
+          "",
+          "필수 항목을 모두 채우면 “이 정보로 AI에게 제출” 버튼이 활성화됩니다.",
+          "프레임워크와 공개 방식은 버튼으로 고르고, 서비스 이름과 GitHub URL만 입력하면 됩니다."
+        ].join("\n")
+      }
+    ]);
   }
 
   async function submitDeployGuide() {
@@ -936,6 +1006,7 @@ function AgentPanel({
   const deployGuideReady = Boolean(
     deployGuide.service.trim()
     && deployGuide.repoUrl.trim()
+    && /^https:\/\/github\.com\/[^/\s]+\/[^/\s]+(?:\.git)?$/.test(deployGuide.repoUrl.trim())
     && deployGuide.framework
     && (deployGuide.useDefaults || !deployGuide.hostPort.trim() || /^\d{2,5}$/.test(deployGuide.hostPort.trim()))
   );
@@ -964,14 +1035,16 @@ function AgentPanel({
         <div className="guidedDeploy">
           <div className="guidedHeader">
             <div>
-              <strong>새 서비스 배포 정보</strong>
-              <p>필수값을 먼저 확정한 뒤 LLM이 의도를 해석하고 CLI로 검증합니다.</p>
+              <p className="eyebrow">Questions</p>
+              <strong>새 서비스 배포를 위해 몇 가지만 확인할게요</strong>
+              <p>선택지는 버튼으로 고르고, 필요한 값만 직접 입력하세요. 필수값이 채워지면 계속 진행할 수 있습니다.</p>
             </div>
             <span className="pill">LLM + CLI guard</span>
           </div>
-          <div className="guidedGrid">
+          <div className="questionBlock">
             <label>
-              <span>서비스 이름</span>
+              <span>서비스 이름이 무엇인가요? <em>필수</em></span>
+              <small>프로젝트 안에서 구분할 이름입니다. 예: horse_front, api_server</small>
               <input
                 value={deployGuide.service}
                 onChange={(event) => updateDeployGuide({ service: event.target.value })}
@@ -979,8 +1052,11 @@ function AgentPanel({
                 disabled={busy}
               />
             </label>
+          </div>
+          <div className="questionBlock">
             <label>
-              <span>GitHub 저장소 URL</span>
+              <span>GitHub 저장소 URL은 무엇인가요? <em>필수</em></span>
+              <small>공개 HTTPS 저장소만 검증할 수 있습니다.</small>
               <input
                 value={deployGuide.repoUrl}
                 onChange={(event) => updateDeployGuide({ repoUrl: event.target.value })}
@@ -989,8 +1065,9 @@ function AgentPanel({
               />
             </label>
           </div>
-          <div className="fieldBlock">
-            <span>프레임워크</span>
+          <div className="questionBlock">
+            <span>어떤 프레임워크로 배포할까요? <em>필수</em></span>
+            <small>잘 모르겠으면 저장소 구조에 가장 가까운 항목을 고르세요. 기존 Dockerfile이 있으면 그대로 사용할 수도 있습니다.</small>
             <div className="choiceGrid">
               {frameworkOptions.map((item) => (
                 <button
@@ -1007,8 +1084,8 @@ function AgentPanel({
             </div>
           </div>
           <div className="guidedGrid compact">
-            <div className="fieldBlock">
-              <span>공개 방식</span>
+            <div className="questionBlock compactQuestion">
+              <span>외부에서 접속하는 웹서비스인가요?</span>
               <div className="segmented">
                 <button
                   type="button"
@@ -1028,8 +1105,8 @@ function AgentPanel({
                 </button>
               </div>
             </div>
-            <div className="fieldBlock">
-              <span>선택 설정</span>
+            <div className="questionBlock compactQuestion">
+              <span>포트·환경변수는 어떻게 할까요?</span>
               <div className="segmented">
                 <button
                   type="button"
@@ -1052,8 +1129,9 @@ function AgentPanel({
           </div>
           {!deployGuide.useDefaults ? (
             <div className="guidedGrid">
-              <label>
+              <label className="questionBlock">
                 <span>호스트 포트</span>
+                <small>비워두면 9000~9100 범위에서 자동 추천합니다.</small>
                 <input
                   value={deployGuide.hostPort}
                   onChange={(event) => updateDeployGuide({ hostPort: event.target.value })}
@@ -1061,8 +1139,9 @@ function AgentPanel({
                   disabled={busy}
                 />
               </label>
-              <label>
+              <label className="questionBlock">
                 <span>환경변수 이름</span>
+                <small>실제 비밀값은 LLM에 보내지 않습니다. 이름만 쉼표로 적어주세요.</small>
                 <input
                   value={deployGuide.envNames}
                   onChange={(event) => updateDeployGuide({ envNames: event.target.value })}
@@ -1073,9 +1152,9 @@ function AgentPanel({
             </div>
           ) : null}
           <div className="guidedFooter">
-            <p>비밀값은 LLM에 보내지 않고, 이름만 안내합니다. 실제 값은 보안 입력에서 따로 설정하는 구조가 맞습니다.</p>
+            <p>{deployGuideReady ? "필수 정보가 채워졌습니다. 제출하면 LLM이 의도를 정리하고 CLI가 실행 계획을 검증합니다." : "서비스 이름, GitHub URL, 프레임워크를 먼저 채워주세요."}</p>
             <button onClick={submitDeployGuide} disabled={busy || !deployGuideReady}>
-              이 정보로 AI에게 제출
+              계속
             </button>
           </div>
         </div>
