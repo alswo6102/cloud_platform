@@ -18,6 +18,7 @@ from runtime import (
     SkillError,
     attach_platform_api_to_existing_control_networks,
     call_llm,
+    call_llm_text,
     command_catalog,
     command_contract,
     command_contracts,
@@ -572,21 +573,29 @@ def slot_value_from_reply(message: str) -> str | None:
     return None
 
 
+def clean_identifier(value: str) -> str:
+    return value.strip().strip("`'\"“”‘’.,，。:;!?")
+
+
+def clean_repo_url(value: str) -> str:
+    return value.strip().strip("`'\"“”‘’.,，。:;!?")
+
+
 def explicit_arguments(message: str, skill: str) -> dict[str, Any]:
     lowered = message.lower()
     arguments: dict[str, Any] = {}
     if skill in {"project.create", "service.deploy", "service.redeploy"}:
         project = explicit_name(message, "project")
         if project:
-            arguments["project"] = project
+            arguments["project"] = clean_identifier(project)
     if skill in {"service.deploy", "service.redeploy"}:
         service = explicit_name(message, "service")
         if service:
-            arguments["service"] = service
+            arguments["service"] = clean_identifier(service)
     if skill == "service.deploy":
         url = GITHUB_URL_RE.search(message)
         if url:
-            arguments["repo_url"] = url.group(0)
+            arguments["repo_url"] = clean_repo_url(url.group(0))
         if any(
             phrase in lowered
             for phrase in (
@@ -683,18 +692,21 @@ def merge_planner_arguments(
         return
     if skill == "project.create":
         project = planner_arguments.get("project")
-        if project and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}", str(project)):
-            verified.setdefault("project", str(project))
+        project_text = clean_identifier(str(project)) if project else ""
+        if project_text and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}", project_text):
+            verified.setdefault("project", project_text)
         return
     if skill not in {"service.deploy", "service.redeploy"}:
         return
     if skill == "service.deploy":
         service = planner_arguments.get("service")
-        if service and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}", str(service)):
-            verified.setdefault("service", str(service))
+        service_text = clean_identifier(str(service)) if service else ""
+        if service_text and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}", service_text):
+            verified.setdefault("service", service_text)
         repo_url = planner_arguments.get("repo_url")
-        if repo_url and GITHUB_URL_RE.fullmatch(str(repo_url).strip()):
-            verified.setdefault("repo_url", str(repo_url).strip())
+        repo_url_text = clean_repo_url(str(repo_url)) if repo_url else ""
+        if repo_url_text and GITHUB_URL_RE.fullmatch(repo_url_text):
+            verified.setdefault("repo_url", repo_url_text)
         framework_query = framework_from_text(planner_arguments.get("framework"))
         if framework_query and "framework" not in verified:
             try:
@@ -720,8 +732,9 @@ def merge_planner_arguments(
                 verified.setdefault("environment_names", names)
     if skill == "service.redeploy":
         service = planner_arguments.get("service")
-        if service and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}", str(service)):
-            verified.setdefault("service", str(service))
+        service_text = clean_identifier(str(service)) if service else ""
+        if service_text and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}", service_text):
+            verified.setdefault("service", service_text)
 
 
 def strict_arguments(
@@ -1209,6 +1222,9 @@ def project_problem_response(
     project = arguments.get("project")
     if not project:
         return None
+    scoped_namespace = os.getenv("PLATFORM_NAMESPACE", "").strip()
+    if scoped_namespace and str(project) == scoped_namespace:
+        return None
     state = project_state(str(project))
     if state == "valid":
         return None
@@ -1527,6 +1543,206 @@ def render_read_only_result(skill: str, result: dict[str, Any]) -> str:
             f"({result['lines']}줄)\n\n```text\n{logs}\n```"
         )
     return f"`{skill}` CLI 조회를 완료했습니다."
+
+
+def public_base_url_from_context(context: dict[str, Any] | None = None) -> str:
+    if context:
+        value = str(context.get("public_base_url") or "").strip()
+        if value:
+            return value.rstrip("/")
+    value = (
+        os.getenv("PUBLIC_BASE_URL", "")
+        or os.getenv("EXTERNAL_BASE_URL", "")
+        or os.getenv("NCP_BASE_URL", "")
+    ).strip()
+    return value.rstrip("/")
+
+
+def url_for_host_port(host_port: Any, context: dict[str, Any] | None = None) -> str | None:
+    try:
+        port = int(host_port)
+    except (TypeError, ValueError):
+        return None
+    base = public_base_url_from_context(context)
+    if base:
+        match = re.match(r"^(https?://[^/:]+)(?::\d+)?", base)
+        if match:
+            return f"{match.group(1)}:{port}"
+    host = (
+        os.getenv("PUBLIC_HOST", "")
+        or os.getenv("EXTERNAL_HOST", "")
+        or os.getenv("NCP_HOST", "")
+    ).strip()
+    if not host:
+        return None
+    return f"http://{host}:{port}"
+
+
+def enrich_read_only_result(
+    skill: str,
+    result: dict[str, Any],
+    context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    enriched = deepcopy(result)
+    if skill != "service.status":
+        return enriched
+    for item in enriched.get("services", []) or []:
+        container = item.get("container") or {}
+        ports = container.get("ports") or []
+        public_urls = []
+        for port in ports:
+            url = url_for_host_port(port.get("host"), context)
+            if url:
+                public_urls.append(
+                    {
+                        "url": url,
+                        "host": port.get("host"),
+                        "container": port.get("container"),
+                    }
+                )
+        item["public_urls"] = public_urls if item.get("frontend") else []
+    return enriched
+
+
+def render_status_fallback(result: dict[str, Any]) -> str:
+    project = result.get("project", "프로젝트")
+    lines = [f"{project} 서비스 상태를 확인했습니다.", ""]
+    for item in result.get("services", []) or []:
+        container = item.get("container")
+        service = item.get("service", "서비스")
+        if not container:
+            lines.append(f"- {service}: 컨테이너가 없습니다.")
+            continue
+        ports = ", ".join(
+            f"{port.get('host')}→{port.get('container')}"
+            for port in container.get("ports", [])
+        ) or "공개 포트 없음"
+        line = (
+            f"- {service}: {container.get('status')}, "
+            f"재시작 {container.get('restart_count', 0)}회, 포트 {ports}"
+        )
+        urls = item.get("public_urls") or []
+        if urls:
+            line += f", 바로가기: {urls[0]['url']}"
+        elif item.get("frontend"):
+            line += ", 프론트엔드로 표시되어 있지만 공개 URL을 계산할 수 없습니다."
+        else:
+            line += ", 내부 서비스라 외부 바로가기는 표시하지 않습니다."
+        lines.append(line)
+    return "\n".join(lines)
+
+
+def naturalize_read_only_result(
+    skill: str,
+    result: dict[str, Any],
+    user_message: str,
+    context: dict[str, Any] | None = None,
+    model_hint: str | None = None,
+) -> dict[str, Any]:
+    enriched = enrich_read_only_result(skill, result, context)
+    if not os.getenv("LLM_API_KEY"):
+        fallback = (
+            render_status_fallback(enriched)
+            if skill == "service.status"
+            else render_read_only_result(skill, enriched)
+        )
+        return {"message": fallback, "result": enriched, "model": model_hint}
+    try:
+        llm = call_llm_text(
+            system=(
+                "You are the final response writer for a Docker deployment console. "
+                "The CLI result is authoritative. Answer in natural Korean. "
+                "Do not expose raw JSON. Do not invent facts. "
+                "If a service has public_urls, show the first URL as a 바로가기. "
+                "If public_urls is empty and frontend is false, explain that it is internal-only. "
+                "Keep it concise and user-friendly."
+            ),
+            user=json.dumps(
+                {
+                    "user_message": user_message,
+                    "skill": skill,
+                    "cli_result": enriched,
+                },
+                ensure_ascii=False,
+                default=str,
+            ),
+        )
+        if llm and llm.get("message"):
+            return {
+                "message": llm["message"],
+                "result": enriched,
+                "model": llm.get("model") or model_hint,
+            }
+    except Exception:
+        pass
+    fallback = (
+        render_status_fallback(enriched)
+        if skill == "service.status"
+        else render_read_only_result(skill, enriched)
+    )
+    return {"message": fallback, "result": enriched, "model": model_hint}
+
+
+def naturalize_mutation_message(
+    *,
+    purpose: str,
+    skill: str,
+    arguments: dict[str, Any],
+    user_message: str,
+    preview: dict[str, Any] | None = None,
+    missing: list[dict[str, Any]] | None = None,
+    error: str | None = None,
+    model_hint: str | None = None,
+) -> dict[str, Any]:
+    fallback_parts = []
+    confirmed = confirmed_information(arguments)
+    if confirmed:
+        fallback_parts.append(confirmed)
+    if purpose == "approval":
+        fallback_parts.append(
+            "필요한 정보와 현재 서버 상태를 확인했습니다. 아래 실행 계획을 검토한 뒤 승인하면 진행할게요."
+        )
+    elif purpose == "missing":
+        labels = [str(item.get("label") or item.get("field")) for item in (missing or [])]
+        fallback_parts.append(
+            "진행하려면 추가 정보가 필요합니다: " + ", ".join(labels)
+        )
+    elif purpose == "error":
+        fallback_parts.append(
+            f"검증 중 문제가 확인됐습니다: {error}\n잘못된 항목만 다시 알려주세요."
+        )
+    fallback = "\n\n".join(part for part in fallback_parts if part).strip()
+    if not os.getenv("LLM_API_KEY"):
+        return {"message": fallback, "model": model_hint}
+    try:
+        llm = call_llm_text(
+            system=(
+                "You write final user-facing Korean responses for a guarded Docker deployment console. "
+                "The CLI validation data is authoritative. Do not expose raw JSON. "
+                "Explain what is confirmed, what is missing, or what will happen next. "
+                "For approval, ask the user to press the approval button, not to type vague confirmation. "
+                "For missing fields, ask only for the missing fields and mention optional defaults briefly. "
+                "Keep the tone natural, concise, and helpful."
+            ),
+            user=json.dumps(
+                {
+                    "purpose": purpose,
+                    "user_message": user_message,
+                    "skill": skill,
+                    "arguments": arguments,
+                    "preview": preview or {},
+                    "missing": missing or [],
+                    "error": error,
+                },
+                ensure_ascii=False,
+                default=str,
+            ),
+        )
+        if llm and llm.get("message"):
+            return {"message": llm["message"], "model": llm.get("model") or model_hint}
+    except Exception:
+        pass
+    return {"message": fallback, "model": model_hint}
 
 
 def exact_entity_from_text(
@@ -1858,7 +2074,10 @@ def chat(request: ChatRequest):
         return respond(framework_help)
     documents = skill_documents()
     try:
-        deterministic_read = deterministic_read_request(request.message)
+        deterministic_read = (
+            None if os.getenv("LLM_API_KEY")
+            else deterministic_read_request(request.message)
+        )
         if deterministic_read:
             skill, arguments = deterministic_read
             if skill == "service.logs" and not arguments.get("service"):
@@ -1892,27 +2111,40 @@ def chat(request: ChatRequest):
                     "requires_approval": False,
                 })
             result = execute_cli_skill(skill, arguments, dry_run=False)
+            final = naturalize_read_only_result(
+                skill,
+                result,
+                request.message,
+                request.context,
+            )
             return respond({
-                "mode": "cli",
-                "message": render_read_only_result(skill, result),
+                "mode": "llm" if final.get("model") else "cli",
+                "message": final["message"],
                 "skill": skill,
-                "result": result,
+                "model": final.get("model"),
+                "result": final["result"],
                 "requires_approval": False,
             })
         preferred_skill = preferred_skill_for(request.message, request.context)
-        cli_proposal = cli_proposal_for_input(
-            request.message,
-            preferred_skill,
-            request.context,
+        cli_proposal = (
+            None if os.getenv("LLM_API_KEY")
+            else cli_proposal_for_input(
+                request.message,
+                preferred_skill,
+                request.context,
+            )
         )
         if cli_proposal:
             return respond(cli_proposal)
         llm_context = dict(request.context or {})
-        if preferred_skill in {
+        if (
+            not os.getenv("LLM_API_KEY")
+            and preferred_skill in {
             "project.create",
             "service.deploy",
             "service.redeploy",
-        }:
+            }
+        ):
             current_arguments = strict_arguments(
                 request.message,
                 preferred_skill,
@@ -2230,13 +2462,18 @@ def chat(request: ChatRequest):
                 if optional_message and "선택 설정" not in message:
                     message += "\n\n" + optional_message
                 if current_preview and not missing:
+                    final = naturalize_mutation_message(
+                        purpose="approval",
+                        skill=preferred_skill,
+                        arguments=verified_arguments,
+                        user_message=request.message,
+                        preview=current_preview,
+                        model_hint=plan.get("model"),
+                    )
                     return respond({
                         "mode": "llm",
-                        "message": (
-                            "CLI에서 모든 입력값과 현재 서버 상태를 검증했습니다. "
-                            "아래 실행 계획을 확인하고 승인해주세요."
-                        ),
-                        "model": plan.get("model"),
+                        "message": final["message"],
+                        "model": final.get("model"),
                         "skill": preferred_skill,
                         "arguments": verified_arguments,
                         "preview": current_preview,
@@ -2291,12 +2528,19 @@ def chat(request: ChatRequest):
                 arguments,
                 dry_run=False,
             )
+            final = naturalize_read_only_result(
+                skill,
+                result,
+                request.message,
+                request.context,
+                plan.get("model"),
+            )
             return respond({
                 "mode": "llm" if os.getenv("LLM_API_KEY") else "fallback",
-                "message": render_read_only_result(skill, result),
+                "message": final["message"],
                 "skill": skill,
-                "model": plan.get("model"),
-                "result": result,
+                "model": final.get("model"),
+                "result": final["result"],
                 "requires_approval": False,
             })
         try:
@@ -2306,14 +2550,20 @@ def chat(request: ChatRequest):
                 dry_run=True,
             )
         except SkillError as exc:
+            final = naturalize_mutation_message(
+                purpose="error",
+                skill=skill,
+                arguments=arguments,
+                user_message=request.message,
+                error=str(exc),
+                model_hint=plan.get("model"),
+            )
             return respond({
-                "mode": "local",
+                "mode": "llm" if final.get("model") else "local",
                 "kind": "clarification",
-                "message": (
-                    f"요청을 실행 계획으로 만들 수 없습니다: {exc}\n\n"
-                    "현재 입력값을 확인하고 잘못된 항목만 다시 알려주세요."
-                ),
+                "message": final["message"],
                 "skill": skill,
+                "model": final.get("model"),
                 "arguments": arguments,
                 "missing": [],
                 "context": {
@@ -2339,12 +2589,21 @@ def chat(request: ChatRequest):
             confirmed = confirmed_information(arguments)
             if confirmed:
                 message = confirmed + "\n\n" + message
+            final = naturalize_mutation_message(
+                purpose="missing",
+                skill=skill,
+                arguments=arguments,
+                user_message=request.message,
+                preview=preview,
+                missing=preview["needs_input"],
+                model_hint=plan.get("model"),
+            )
             return respond({
                 "mode": "llm" if os.getenv("LLM_API_KEY") else "fallback",
                 "kind": "clarification",
-                "message": message,
+                "message": final["message"] or message,
                 "skill": skill,
-                "model": plan.get("model"),
+                "model": final.get("model") or plan.get("model"),
                 "arguments": arguments,
                 "missing": preview["needs_input"],
                 "context": {
@@ -2359,14 +2618,19 @@ def chat(request: ChatRequest):
                 },
                 "requires_approval": False,
             })
+        final = naturalize_mutation_message(
+            purpose="approval",
+            skill=skill,
+            arguments=arguments,
+            user_message=request.message,
+            preview=preview,
+            model_hint=plan.get("model"),
+        )
         return respond({
             "mode": "llm" if os.getenv("LLM_API_KEY") else "fallback",
-            "message": (
-                "CLI에서 모든 입력값과 현재 서버 상태를 검증했습니다. "
-                "아래 실행 계획을 확인하고 승인해주세요."
-            ),
+            "message": final["message"],
             "skill": skill,
-            "model": plan.get("model"),
+            "model": final.get("model") or plan.get("model"),
             "arguments": arguments,
             "preview": preview,
             "resume": (

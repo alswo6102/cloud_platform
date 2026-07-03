@@ -6,6 +6,17 @@ type Role = "visitor" | "user" | "admin";
 type HomeTab = "services" | "projects" | "create";
 type Page = { kind: "home" } | { kind: "project"; project: string };
 type QuickPrompt = { id: number; text: string };
+type FrameworkId =
+  | "static"
+  | "vite"
+  | "react"
+  | "nextjs"
+  | "express"
+  | "fastapi"
+  | "flask"
+  | "django"
+  | "spring-maven"
+  | "go";
 
 type Project = {
   name: string;
@@ -57,6 +68,33 @@ type ApprovalAgentResponse = AgentResponse & {
   skill: string;
   arguments: Record<string, unknown>;
 };
+
+type DeployGuideState = {
+  service: string;
+  repoUrl: string;
+  framework: FrameworkId | "";
+  isWeb: "web" | "internal";
+  useDefaults: boolean;
+  hostPort: string;
+  envNames: string;
+};
+
+const frameworkOptions: Array<{
+  id: FrameworkId;
+  label: string;
+  hint: string;
+}> = [
+  { id: "static", label: "Vanilla JS / Static", hint: "HTML/CSS/JS를 빌드 없이 서빙" },
+  { id: "vite", label: "Vite", hint: "React/Vue/Svelte Vite 앱" },
+  { id: "react", label: "Create React App", hint: "CRA 기반 프론트엔드" },
+  { id: "nextjs", label: "Next.js", hint: "Next.js 앱" },
+  { id: "express", label: "Express / Node", hint: "Node.js 웹 서버" },
+  { id: "fastapi", label: "FastAPI", hint: "Python FastAPI 백엔드" },
+  { id: "flask", label: "Flask", hint: "Python Flask 백엔드" },
+  { id: "django", label: "Django", hint: "Python Django 백엔드" },
+  { id: "spring-maven", label: "Spring Maven", hint: "Java Spring Boot Maven" },
+  { id: "go", label: "Go", hint: "Go 웹 서비스" }
+];
 
 const visitorAuth: AuthHeaders = {
   role: "visitor",
@@ -760,10 +798,24 @@ function AgentPanel({
   const [sessionId] = useState(() => newSessionId());
   const [context, setContext] = useState<Record<string, unknown>>({});
   const [busy, setBusy] = useState(false);
+  const [showDeployGuide, setShowDeployGuide] = useState(false);
+  const [deployGuide, setDeployGuide] = useState<DeployGuideState>({
+    service: "",
+    repoUrl: "",
+    framework: "",
+    isWeb: "web",
+    useDefaults: true,
+    hostPort: "",
+    envNames: ""
+  });
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    if (quickPrompt) setInput(quickPrompt.text);
+    if (!quickPrompt) return;
+    setInput(quickPrompt.text);
+    if (quickPrompt.text.includes("서비스 배포")) {
+      setShowDeployGuide(true);
+    }
   }, [quickPrompt?.id]);
 
   useEffect(() => {
@@ -808,11 +860,10 @@ function AgentPanel({
     }
   }
 
-  async function send() {
-    if (!input.trim()) return;
-    const text = input.trim();
+  async function sendText(text: string, displayText = text) {
+    if (!text.trim()) return;
     setInput("");
-    setMessages((items) => [...items, { from: "user", text }]);
+    setMessages((items) => [...items, { from: "user", text: displayText }]);
     setBusy(true);
     try {
       const data = await api<AgentResponse>(`/api/projects/${project}/chat`, auth, {
@@ -847,6 +898,48 @@ function AgentPanel({
     }
   }
 
+  async function send() {
+    if (!input.trim()) return;
+    await sendText(input.trim());
+  }
+
+  function updateDeployGuide(patch: Partial<DeployGuideState>) {
+    setDeployGuide((current) => ({ ...current, ...patch }));
+  }
+
+  async function submitDeployGuide() {
+    const selectedFramework = frameworkOptions.find((item) => item.id === deployGuide.framework);
+    const envNames = deployGuide.envNames
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+    const optionalParts = deployGuide.useDefaults
+      ? ["선택 설정은 기본값으로 진행해도 돼."]
+      : [
+          deployGuide.hostPort ? `호스트 포트는 ${deployGuide.hostPort}.` : "호스트 포트는 자동 추천해줘.",
+          envNames.length > 0 ? `환경변수 이름은 ${envNames.join(", ")}.` : "환경변수는 지금 없어."
+        ];
+    const text = [
+      `${project} 프로젝트에 새 서비스를 배포하고 싶어.`,
+      `서비스 이름은 ${deployGuide.service}.`,
+      `GitHub 저장소는 ${deployGuide.repoUrl}.`,
+      `프레임워크는 ${selectedFramework?.label || deployGuide.framework} (${deployGuide.framework}).`,
+      deployGuide.isWeb === "web"
+        ? "브라우저에서 접속하는 웹서비스야. 프론트엔드면 바로가기 URL도 보여줘."
+        : "외부 URL이 필요 없는 내부 서비스야.",
+      ...optionalParts,
+      "이 정보로 CLI 검증을 먼저 하고, 실행 계획을 자연어로 보여준 다음 승인받아 진행해줘."
+    ].join(" ");
+    await sendText(text);
+  }
+
+  const deployGuideReady = Boolean(
+    deployGuide.service.trim()
+    && deployGuide.repoUrl.trim()
+    && deployGuide.framework
+    && (deployGuide.useDefaults || !deployGuide.hostPort.trim() || /^\d{2,5}$/.test(deployGuide.hostPort.trim()))
+  );
+
   return (
     <section className="agent">
       <div className="agentTitle">
@@ -856,6 +949,137 @@ function AgentPanel({
         </div>
         <span className="pill">session scoped</span>
       </div>
+      <div className="agentShortcuts">
+        <button className={showDeployGuide ? "active" : ""} onClick={() => setShowDeployGuide((value) => !value)}>
+          새 서비스 배포 가이드
+        </button>
+        <button className="secondaryButton" onClick={() => sendText("서비스 목록 보여줘")} disabled={busy}>
+          서비스 목록
+        </button>
+        <button className="secondaryButton" onClick={() => sendText("지원하는 프레임워크와 각각 언제 쓰는지 알려줘")} disabled={busy}>
+          프레임워크 도움말
+        </button>
+      </div>
+      {showDeployGuide ? (
+        <div className="guidedDeploy">
+          <div className="guidedHeader">
+            <div>
+              <strong>새 서비스 배포 정보</strong>
+              <p>필수값을 먼저 확정한 뒤 LLM이 의도를 해석하고 CLI로 검증합니다.</p>
+            </div>
+            <span className="pill">LLM + CLI guard</span>
+          </div>
+          <div className="guidedGrid">
+            <label>
+              <span>서비스 이름</span>
+              <input
+                value={deployGuide.service}
+                onChange={(event) => updateDeployGuide({ service: event.target.value })}
+                placeholder="예: horse_front"
+                disabled={busy}
+              />
+            </label>
+            <label>
+              <span>GitHub 저장소 URL</span>
+              <input
+                value={deployGuide.repoUrl}
+                onChange={(event) => updateDeployGuide({ repoUrl: event.target.value })}
+                placeholder="https://github.com/owner/repo"
+                disabled={busy}
+              />
+            </label>
+          </div>
+          <div className="fieldBlock">
+            <span>프레임워크</span>
+            <div className="choiceGrid">
+              {frameworkOptions.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  className={deployGuide.framework === item.id ? "choice active" : "choice"}
+                  onClick={() => updateDeployGuide({ framework: item.id })}
+                  disabled={busy}
+                >
+                  <strong>{item.label}</strong>
+                  <small>{item.hint}</small>
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="guidedGrid compact">
+            <div className="fieldBlock">
+              <span>공개 방식</span>
+              <div className="segmented">
+                <button
+                  type="button"
+                  className={deployGuide.isWeb === "web" ? "active" : ""}
+                  onClick={() => updateDeployGuide({ isWeb: "web" })}
+                  disabled={busy}
+                >
+                  웹 바로가기 필요
+                </button>
+                <button
+                  type="button"
+                  className={deployGuide.isWeb === "internal" ? "active" : ""}
+                  onClick={() => updateDeployGuide({ isWeb: "internal" })}
+                  disabled={busy}
+                >
+                  내부 서비스
+                </button>
+              </div>
+            </div>
+            <div className="fieldBlock">
+              <span>선택 설정</span>
+              <div className="segmented">
+                <button
+                  type="button"
+                  className={deployGuide.useDefaults ? "active" : ""}
+                  onClick={() => updateDeployGuide({ useDefaults: true })}
+                  disabled={busy}
+                >
+                  기본값 사용
+                </button>
+                <button
+                  type="button"
+                  className={!deployGuide.useDefaults ? "active" : ""}
+                  onClick={() => updateDeployGuide({ useDefaults: false })}
+                  disabled={busy}
+                >
+                  직접 지정
+                </button>
+              </div>
+            </div>
+          </div>
+          {!deployGuide.useDefaults ? (
+            <div className="guidedGrid">
+              <label>
+                <span>호스트 포트</span>
+                <input
+                  value={deployGuide.hostPort}
+                  onChange={(event) => updateDeployGuide({ hostPort: event.target.value })}
+                  placeholder="비우면 9000~9100 자동 추천"
+                  disabled={busy}
+                />
+              </label>
+              <label>
+                <span>환경변수 이름</span>
+                <input
+                  value={deployGuide.envNames}
+                  onChange={(event) => updateDeployGuide({ envNames: event.target.value })}
+                  placeholder="예: DATABASE_URL, API_KEY"
+                  disabled={busy}
+                />
+              </label>
+            </div>
+          ) : null}
+          <div className="guidedFooter">
+            <p>비밀값은 LLM에 보내지 않고, 이름만 안내합니다. 실제 값은 보안 입력에서 따로 설정하는 구조가 맞습니다.</p>
+            <button onClick={submitDeployGuide} disabled={busy || !deployGuideReady}>
+              이 정보로 AI에게 제출
+            </button>
+          </div>
+        </div>
+      ) : null}
       <div className="messages">
         {messages.length === 0 && (
           <div className="emptyChat">

@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import requests
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
@@ -423,6 +423,7 @@ def create_project(
 def project_chat(
     project: str,
     payload: ChatRequest,
+    request: Request,
     x_user_role: str | None = Header(default=None),
     x_user_id: str | None = Header(default=None),
 ) -> dict[str, Any]:
@@ -432,6 +433,10 @@ def project_chat(
     context.setdefault("arguments", {})
     context["arguments"]["project"] = project
     context["project_scope"] = project
+    context.setdefault(
+        "public_base_url",
+        os.getenv("PUBLIC_BASE_URL", str(request.base_url).rstrip("/")),
+    )
     scoped_message = payload.message
     if project not in scoped_message:
         scoped_message = f"{project} 프로젝트에서: {scoped_message}"

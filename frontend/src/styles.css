@@ -495,6 +495,131 @@ pre {
   color: #64748b;
 }
 
+.agentShortcuts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+  margin-bottom: 1rem;
+}
+
+.agentShortcuts button {
+  background: #eef2ff;
+  color: #1d4ed8;
+  border: 1px solid #dbeafe;
+}
+
+.agentShortcuts button.active {
+  background: #1d4ed8;
+  color: white;
+  border-color: #1d4ed8;
+}
+
+.guidedDeploy {
+  display: grid;
+  gap: 1rem;
+  margin-bottom: 1rem;
+  border: 1px solid #dbeafe;
+  border-radius: 20px;
+  padding: 1rem;
+  background:
+    radial-gradient(circle at top right, rgba(37, 99, 235, 0.08), transparent 18rem),
+    #f8fbff;
+}
+
+.guidedHeader, .guidedFooter {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: flex-start;
+}
+
+.guidedHeader strong {
+  display: block;
+  margin-bottom: 0.2rem;
+  font-size: 1.05rem;
+}
+
+.guidedHeader p, .guidedFooter p {
+  margin: 0;
+  color: #64748b;
+  line-height: 1.55;
+}
+
+.guidedGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.8rem;
+}
+
+.guidedGrid.compact {
+  align-items: start;
+}
+
+.guidedDeploy label, .fieldBlock {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.guidedDeploy label span, .fieldBlock > span {
+  color: #334155;
+  font-size: 0.86rem;
+  font-weight: 900;
+}
+
+.choiceGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 0.55rem;
+}
+
+.choice {
+  display: grid;
+  gap: 0.2rem;
+  text-align: left;
+  background: white;
+  color: #0f172a;
+  border: 1px solid #dbeafe;
+  padding: 0.85rem;
+}
+
+.choice strong {
+  font-size: 0.92rem;
+}
+
+.choice small {
+  color: #64748b;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.choice.active {
+  background: #1d4ed8;
+  color: white;
+  border-color: #1d4ed8;
+}
+
+.choice.active small {
+  color: rgba(255, 255, 255, 0.82);
+}
+
+.segmented {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.5rem;
+}
+
+.segmented button {
+  background: white;
+  color: #1d4ed8;
+  border: 1px solid #bfdbfe;
+}
+
+.segmented button.active {
+  background: #1d4ed8;
+  color: white;
+  border-color: #1d4ed8;
+}
+
 .messages {
   display: grid;
   gap: 0.75rem;
@@ -705,6 +830,11 @@ pre {
   .createPanel {
     display: flex;
     align-items: stretch;
+  }
+
+  .guidedGrid, .segmented, .guidedHeader, .guidedFooter {
+    grid-template-columns: 1fr;
+    flex-direction: column;
   }
 
   .namespaceStats {

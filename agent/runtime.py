@@ -1794,6 +1794,59 @@ def call_llm(
     raise SkillError("Planner exceeded the discovery tool limit")
 
 
+def call_llm_text(
+    *,
+    system: str,
+    user: str,
+) -> dict[str, Any] | None:
+    api_key = os.getenv("LLM_API_KEY", "")
+    api_url = os.getenv("LLM_API_URL", "")
+    models = llm_models()
+    if not api_key or not api_url or not models:
+        return None
+
+    attempted = []
+    for model in models:
+        now = time.monotonic()
+        with MODEL_COOLDOWN_LOCK:
+            cooldown_until = MODEL_COOLDOWNS.get(model, 0)
+        if cooldown_until > now:
+            continue
+        attempted.append(model)
+        response = requests.post(
+            api_url.rstrip("/") + "/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": model,
+                "temperature": 0,
+                "messages": [
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ],
+            },
+            timeout=float(os.getenv("LLM_RESPONSE_TIMEOUT", os.getenv("LLM_REQUEST_TIMEOUT", "10"))),
+        )
+        if response.status_code == 429:
+            cooldown = rate_limit_cooldown(response)
+            with MODEL_COOLDOWN_LOCK:
+                MODEL_COOLDOWNS[model] = time.monotonic() + cooldown
+            continue
+        response.raise_for_status()
+        message = response.json()["choices"][0]["message"]
+        return {
+            "message": str(message.get("content", "")).strip(),
+            "model": model,
+        }
+    cooling = llm_status()["cooldowns"]
+    raise SkillError(
+        "All configured LLM models are rate-limited or cooling down. "
+        f"Attempted: {attempted or 'none'}; cooldowns: {cooling}"
+    )
+
+
 def fallback_plan(message: str) -> dict[str, Any]:
     lowered = message.lower()
     project_match = re.search(r"(?:project|프로젝트)\s*[:=]?\s*([a-zA-Z0-9_.-]+)", message)
