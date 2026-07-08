@@ -667,12 +667,29 @@ def container_summary(container) -> dict[str, Any]:
                 }
             )
     health = (container.attrs.get("State", {}).get("Health") or {}).get("Status")
+    memory: dict[str, Any] | None = None
+    try:
+        stats = container.stats(stream=False)
+        memory_stats = stats.get("memory_stats") or {}
+        usage = int(memory_stats.get("usage") or 0)
+        limit = int(memory_stats.get("limit") or 0)
+        if usage:
+            memory = {
+                "usage_bytes": usage,
+                "limit_bytes": limit or None,
+                "usage_mb": round(usage / 1024 / 1024, 1),
+                "limit_mb": round(limit / 1024 / 1024, 1) if limit else None,
+                "percent": round((usage / limit) * 100, 1) if limit else None,
+            }
+    except Exception:
+        memory = None
     return {
         "name": container.name,
         "status": container.status,
         "health": health,
         "restart_count": container.attrs.get("RestartCount", 0),
         "ports": ports,
+        "memory": memory,
     }
 
 

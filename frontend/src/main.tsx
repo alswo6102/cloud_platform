@@ -29,6 +29,33 @@ type ServiceSummary = {
   service: string;
 };
 
+type RuntimePort = {
+  host?: number | string;
+  container?: number | string;
+};
+
+type RuntimeMemory = {
+  usage_mb?: number;
+  limit_mb?: number | null;
+  percent?: number | null;
+};
+
+type RuntimeContainer = {
+  name?: string;
+  status?: string;
+  health?: string | null;
+  restart_count?: number;
+  ports?: RuntimePort[];
+  memory?: RuntimeMemory | null;
+};
+
+type ServiceRuntime = {
+  service: string;
+  configured_ports?: string[];
+  frontend?: boolean;
+  container?: RuntimeContainer | null;
+};
+
 type AuthSession = {
   id: string;
   role: Role;
@@ -774,49 +801,68 @@ function ProjectWorkspace({
   onRefresh: () => Promise<void>;
 }) {
   const [quickPrompt, setQuickPrompt] = useState<QuickPrompt | null>(null);
+  const [runtimeServices, setRuntimeServices] = useState<Record<string, ServiceRuntime>>({});
+  const [runtimeLoading, setRuntimeLoading] = useState(false);
+  const [runtimeError, setRuntimeError] = useState("");
   const services = project.services || [];
+
+  async function refreshRuntime() {
+    setRuntimeLoading(true);
+    setRuntimeError("");
+    try {
+      const data = await api<{ result?: { services?: ServiceRuntime[] } }>(`/api/projects/${project.name}/execute`, auth, {
+        method: "POST",
+        body: JSON.stringify({
+          skill: "service.status",
+          arguments: {},
+          approved: true
+        })
+      });
+      const next: Record<string, ServiceRuntime> = {};
+      for (const item of data.result?.services || []) {
+        next[item.service] = item;
+      }
+      setRuntimeServices(next);
+    } catch (err) {
+      setRuntimeError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setRuntimeLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    refreshRuntime();
+  }, [project.name]);
+
+  async function refreshWorkspace() {
+    await Promise.all([onRefresh(), refreshRuntime()]);
+  }
 
   return (
     <section className="workspace detailPage">
       <div className="workspaceHeader">
         <div>
           <h2>{project.name}</h2>
-          <p>이 화면의 AI 에이전트는 기본적으로 <code>{project.name}</code> 프로젝트만 context로 받습니다.</p>
+          <p>{services.length}개 서비스 · 프로젝트 권한 범위 안에서만 작업합니다.</p>
         </div>
         <div className="headerActions">
           <button onClick={() => setQuickPrompt(makeQuickPrompt("새 서비스 배포하고 싶어"))}>새 서비스 배포</button>
           <button className="secondaryButton" onClick={onBack}>메인으로</button>
-          <button onClick={onRefresh}>새로고침</button>
+          <button onClick={refreshWorkspace} disabled={runtimeLoading}>{runtimeLoading ? "확인 중..." : "새로고침"}</button>
         </div>
       </div>
-      <div className="namespaceStats">
-        <div>
-          <strong>{services.length}</strong>
-          <span>services</span>
-        </div>
-        <div>
-          <strong>scoped</strong>
-          <span>agent context</span>
-        </div>
-        <div>
-          <strong>검증</strong>
-          <span>safe execution</span>
-        </div>
-      </div>
+      {runtimeError && <div className="error compactError">{runtimeError}</div>}
       <div className="serviceGrid">
         {services.map((service) => (
-          <div className="service" key={service}>
-            <div className="serviceTop">
-              <strong>{service}</strong>
-              <span className="pill">managed</span>
-            </div>
-            <span>상태/로그/재배포는 프로젝트 에이전트가 CLI로 검증해 처리합니다.</span>
-            <div className="serviceActions">
-              <button onClick={() => setQuickPrompt(makeQuickPrompt(`${service} 상태 확인해줘`))}>상태</button>
-              <button onClick={() => setQuickPrompt(makeQuickPrompt(`${service} 로그 40줄 보여줘`))}>로그</button>
-              <button onClick={() => setQuickPrompt(makeQuickPrompt(`${service} 재배포하고 싶어`))}>재배포</button>
-            </div>
-          </div>
+          <ServiceCard
+            key={service}
+            service={service}
+            runtime={runtimeServices[service]}
+            loading={runtimeLoading && !runtimeServices[service]}
+            onStatus={() => setQuickPrompt(makeQuickPrompt(`${service} 상태 확인해줘`))}
+            onLogs={() => setQuickPrompt(makeQuickPrompt(`${service} 로그 40줄 보여줘`))}
+            onRedeploy={() => setQuickPrompt(makeQuickPrompt(`${service} 재배포하고 싶어`))}
+          />
         ))}
         {services.length === 0 && (
           <p className="hint">아직 등록된 서비스가 없습니다. 아래 AI 에이전트에게 “새 서비스 배포하고 싶어”라고 요청하세요.</p>
@@ -824,6 +870,74 @@ function ProjectWorkspace({
       </div>
       <AgentPanel auth={auth} project={project.name} services={services} quickPrompt={quickPrompt} />
     </section>
+  );
+}
+
+function formatPort(runtime?: ServiceRuntime) {
+  const ports = runtime?.container?.ports || [];
+  if (ports.length > 0) {
+    return ports.map((port) => `${port.host}→${port.container}`).join(", ");
+  }
+  const configured = runtime?.configured_ports || [];
+  return configured.length > 0 ? configured.join(", ") : "내부";
+}
+
+function formatMemory(memory?: RuntimeMemory | null) {
+  if (!memory?.usage_mb) return "확인 전";
+  const limit = memory.limit_mb ? ` / ${memory.limit_mb}MB` : "";
+  const percent = memory.percent != null ? ` (${memory.percent}%)` : "";
+  return `${memory.usage_mb}MB${limit}${percent}`;
+}
+
+function statusLabel(status?: string, health?: string | null) {
+  if (!status) return "unknown";
+  return health ? `${status} · ${health}` : status;
+}
+
+function ServiceCard({
+  service,
+  runtime,
+  loading,
+  onStatus,
+  onLogs,
+  onRedeploy
+}: {
+  service: string;
+  runtime?: ServiceRuntime;
+  loading: boolean;
+  onStatus: () => void;
+  onLogs: () => void;
+  onRedeploy: () => void;
+}) {
+  const container = runtime?.container;
+  const status = container?.status || (loading ? "loading" : "unknown");
+  const isRunning = status === "running";
+  return (
+    <div className="service" key={service}>
+      <div className="serviceTop">
+        <strong>{service}</strong>
+        <span className={`pill ${isRunning ? "" : "warning"}`}>{statusLabel(status, container?.health)}</span>
+      </div>
+      <dl className="serviceMetrics">
+        <div>
+          <dt>포트</dt>
+          <dd>{formatPort(runtime)}</dd>
+        </div>
+        <div>
+          <dt>메모리</dt>
+          <dd>{formatMemory(container?.memory)}</dd>
+        </div>
+        <div>
+          <dt>재시작</dt>
+          <dd>{container?.restart_count ?? 0}회</dd>
+        </div>
+      </dl>
+      <div className="serviceActions">
+        <button onClick={onStatus}>상태</button>
+        <button onClick={onLogs}>로그</button>
+        <button onClick={onRedeploy}>재배포</button>
+      </div>
+    </div>
   );
 }
 

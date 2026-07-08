@@ -130,26 +130,16 @@ def authenticated_user(
     if role == "visitor":
         return "", role
     user_id = current_user(x_user_id)
-    if role == "admin":
-        store = load_auth_store()
-        store.setdefault("users", {}).setdefault(user_id, {
-            "password": "",
-            "role": "admin",
-            "name": user_id,
-        })
-        store["users"][user_id]["role"] = "admin"
-        save_auth_store(store)
-        return user_id, "admin"
     store = load_auth_store()
     user = store.get("users", {}).get(user_id)
     if not user:
         store.setdefault("users", {})[user_id] = {
             "password": "",
-            "role": role,
+            "role": "user",
             "name": user_id,
         }
         save_auth_store(store)
-        return user_id, role
+        return user_id, "user"
     stored_role = str(user.get("role", role)).lower()
     if stored_role == "admin":
         return user_id, "admin"
@@ -471,8 +461,9 @@ def project_chat(
 def admin_chat(
     payload: ChatRequest,
     x_user_role: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
 ) -> dict[str, Any]:
-    _, role = authenticated_user(x_user_role, None)
+    _, role = authenticated_user(x_user_role, x_user_id)
     require_admin(role)
     return agent_request("POST", "/chat", json_body=payload.model_dump())
 
