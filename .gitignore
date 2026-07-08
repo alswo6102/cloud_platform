@@ -10,3 +10,5 @@ frontend/dist/
 frontend/.vite/
 web/__pycache__/
 data/
+
+.codex_refs/
