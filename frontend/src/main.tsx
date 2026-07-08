@@ -1090,7 +1090,7 @@ function AgentPanel({
         {busy && (
           <div className="bubble agent loadingBubble">
             <span className="spinner" />
-            <p>요청을 처리하는 중입니다...</p>
+            <p>AI가 응답을 준비 중입니다...</p>
           </div>
         )}
         <div ref={messagesEndRef} />

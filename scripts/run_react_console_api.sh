@@ -6,6 +6,7 @@ IMAGE_NAME="${IMAGE_NAME:-cloud-platform-web-api:dev}"
 CONTAINER_NAME="${CONTAINER_NAME:-cloud-platform-web-api}"
 NETWORK_NAME="${NETWORK_NAME:-cloud-platform-internal}"
 HOST_PORT="${HOST_PORT:-8000}"
+PUBLIC_BASE_URL="${PUBLIC_BASE_URL:-http://localhost:${HOST_PORT}}"
 DATA_DIR="${DATA_DIR:-${ROOT_DIR}/data}"
 FRONTEND_DIST="${FRONTEND_DIST:-${ROOT_DIR}/frontend/dist}"
 CONTAINER_FRONTEND_DIST="${CONTAINER_FRONTEND_DIST:-/var/www/cloud-platform-console}"
@@ -26,6 +27,7 @@ docker run -d \
   -e SKILL_AGENT_URL="${SKILL_AGENT_URL:-http://cloud-platform-skill-agent:8080}" \
   -e AUTH_STORE="${AUTH_STORE:-/var/lib/cloud-platform/auth.json}" \
   -e FRONTEND_DIST="${CONTAINER_FRONTEND_DIST}" \
+  -e PUBLIC_BASE_URL="${PUBLIC_BASE_URL}" \
   -v "${DATA_DIR}:/var/lib/cloud-platform" \
   -v "${FRONTEND_DIST}:${CONTAINER_FRONTEND_DIST}:ro" \
   -p "${HOST_PORT}:8000" \
