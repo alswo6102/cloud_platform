@@ -412,18 +412,12 @@ function App() {
 
   return (
     <main className="shell">
-      <header className="hero">
-        <div className="heroCopy">
-          <p className="eyebrow">Cloud Platform Console</p>
-          <h1>프로젝트별로 분리되는 배포 콘솔</h1>
-          <p>
-            메인에서는 서비스를 탐색하고, 프로젝트 상세에서는 해당 namespace에 귀속된
-            AI 에이전트가 배포·상태·로그 작업을 처리합니다.
-          </p>
-          <div className="heroBadges" aria-label="console architecture summary">
-            <span>Service catalog</span>
-            <span>Project workspace</span>
-            <span>Scoped AI agent</span>
+      <header className="appHeader">
+        <div className="brandLockup">
+          <span className="brandMark" aria-hidden="true">◇</span>
+          <div>
+            <strong>Cloud Platform</strong>
+            <span>Project deploy console</span>
           </div>
         </div>
         <LoginPanel
@@ -630,7 +624,6 @@ function ServiceCatalog({
     <section className="workspace">
       <div className="workspaceHeader">
         <div>
-          <p className="eyebrow">Service catalog</p>
           <h2>서비스 목록</h2>
           <p>메인에서는 전체 서비스 이름만 보여주고, 클릭 시 프로젝트 권한을 확인합니다.</p>
         </div>
@@ -699,7 +692,6 @@ function LandingCard({
     <section className="workspace">
       <div className="workspaceHeader">
         <div>
-          <p className="eyebrow">Create project</p>
           <h2>새 프로젝트 생성</h2>
           <p>프로젝트 생성은 AI가 아니라 명시적 API로 처리합니다. 생성 후 상세 화면에서 프로젝트 AI 에이전트를 사용합니다.</p>
         </div>
@@ -750,7 +742,6 @@ function ProjectList({
     <section className="workspace">
       <div className="workspaceHeader">
         <div>
-          <p className="eyebrow">My projects</p>
           <h2>내 프로젝트</h2>
           <p>{session ? `${session.id} 계정의 JSON 멤버십 기준입니다.` : "로그인 후 접근 가능한 프로젝트를 표시합니다."}</p>
         </div>
@@ -789,7 +780,6 @@ function ProjectWorkspace({
     <section className="workspace detailPage">
       <div className="workspaceHeader">
         <div>
-          <p className="eyebrow">Project workspace</p>
           <h2>{project.name}</h2>
           <p>이 화면의 AI 에이전트는 기본적으로 <code>{project.name}</code> 프로젝트만 context로 받습니다.</p>
         </div>
@@ -999,7 +989,7 @@ function AgentPanel({
     setShowDeployGuide(true);
     setMessages((items) => [
       ...items,
-      { from: "agent", text: String(data.message || "새 서비스 배포는 아래 Questions 카드에서 진행할게요.") }
+      { from: "agent", text: String(data.message || "새 서비스 배포는 아래 입력 카드에서 진행할게요.") }
     ]);
   }
 
@@ -1131,7 +1121,7 @@ function DeployGuideCard({
     <div className="guidedDeploy chatGuidedDeploy">
       <div className="guidedHeader">
         <div>
-          <p className="eyebrow">Questions</p>
+          <p className="formKicker">필수 정보</p>
           <strong>새 서비스 배포를 위해 몇 가지만 확인할게요</strong>
           <p>선택지는 버튼으로 고르고, 필요한 값만 직접 입력하세요. 필수값이 채워지면 계속 진행할 수 있습니다.</p>
         </div>
@@ -1357,7 +1347,6 @@ function AdminConsole({ auth }: { auth: AuthHeaders }) {
     <section className="workspace admin">
       <div className="workspaceHeader">
         <div>
-          <p className="eyebrow">Admin plane</p>
           <h2>루트 AI 에이전트</h2>
           <p>어드민만 접근하는 전체 프로젝트 관리용 에이전트 영역입니다.</p>
         </div>
