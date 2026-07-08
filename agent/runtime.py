@@ -1596,6 +1596,56 @@ def execute_cli_skill(
     return payload[key]
 
 
+def tool_description_for_llm(document: dict[str, Any]) -> str:
+    """Build a compact, Claude-Code-skill-like tool description.
+
+    The LLM should make intent decisions from this contract. The CLI/API still
+    owns validation, permission checks, preview, approval, and execution.
+    """
+    skill = str(document.get("name", ""))
+    try:
+        contract = command_contract(skill)
+    except Exception:
+        contract = {}
+    required = contract.get("required_fields") or []
+    optional = contract.get("optional_fields") or []
+    fields = {
+        item.get("field"): {
+            "type": item.get("type"),
+            "rules": item.get("rules"),
+            "examples": item.get("examples"),
+            "semantic_hint": item.get("semantic_hint"),
+            "enum": item.get("enum"),
+            "default": item.get("default"),
+        }
+        for item in contract.get("fields", [])
+        if item.get("field")
+    }
+    payload = {
+        "skill": skill,
+        "role": contract.get("role") or document.get("description", ""),
+        "use_when": contract.get("use_when", []),
+        "not_for": contract.get("not_for", []),
+        "required_fields": required,
+        "optional_fields": optional,
+        "field_contracts": fields,
+        "examples": contract.get("examples", []),
+        "read_only": contract.get("read_only"),
+        "requires_approval": contract.get("requires_approval"),
+        "security": contract.get("security", []),
+        "ui": contract.get("ui", {}),
+        "runtime_rule": (
+            "Select this tool when the latest user intent matches. "
+            "If required fields are missing, omit or partially fill them; the CLI dry-run "
+            "will return needs_input. Never invent values. Never copy examples or placeholders "
+            "such as https://github.com/example/repo, owner/repository, frontend, or backend "
+            "unless the user actually provided that value. Never use conversation-reply "
+            "instead of a matching operation just to ask for fields."
+        ),
+    }
+    return json.dumps(payload, ensure_ascii=False, default=str)
+
+
 def call_llm(
     message: str,
     skills: list[dict[str, Any]],
@@ -1641,12 +1691,7 @@ def call_llm(
                 "type": "function",
                 "function": {
                     "name": api_name,
-                    "description": (
-                        f"{item['description']} "
-                        f"{item['instructions'][:700]} "
-                        "Select this tool when the user intent matches even if some fields are missing; "
-                        "the CLI dry-run will validate known fields and return missing inputs."
-                    ),
+                    "description": tool_description_for_llm(item),
                     "parameters": parameters,
                 },
             }
@@ -1710,6 +1755,8 @@ def call_llm(
                 "then use conversation-reply to explain them naturally in Korean. "
                 "Use mutation or operational tools only when the user is providing or confirming "
                 "the required operation. Never invent projects, services, repository URLs, "
+                "Never fill missing operation fields with examples, placeholders, or likely defaults; "
+                "omit missing fields so the CLI can return needs_input and the UI can ask for them. "
                 "If the latest user message asks to perform a supported operation, select the "
                 "matching operation tool even when required fields are missing; do not answer with "
                 "conversation-reply just to ask for those fields. The backend will run CLI dry-run "

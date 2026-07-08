@@ -8,9 +8,18 @@ PLANNER_RULE = (
     "Use this CLI as the only execution surface. Choose one command from the "
     "command contracts, fill only fields supported by that command schema, call "
     "preview for mutation commands, ask the user for missing fields returned by "
-    "the CLI, and execute only after explicit approval. Never call platform APIs "
-    "or Docker directly."
+    "the CLI, and execute only after explicit approval. The LLM decides natural "
+    "language intent and writes user-facing replies; the CLI/API enforces allowed "
+    "actions, validation, namespace ownership, and approval. Never call platform "
+    "APIs or Docker directly."
 )
+
+COMMON_SECURITY = [
+    "Do not accept shell commands, arbitrary paths, Docker flags, or raw platform API calls from the user.",
+    "Secret values must never be sent through chat/LLM; only environment variable names are accepted.",
+    "Namespace/project ownership is enforced by the platform API token, not by LLM promises.",
+    "Mutation commands must be previewed and explicitly approved before execution.",
+]
 
 COMMAND_FIELD_ORDER: dict[str, dict[str, list[str]]] = {
     "project.create": {
@@ -80,6 +89,10 @@ COMMAND_HELP: dict[str, dict[str, Any]] = {
         "after_success": [
             "service.deploy로 새 서비스를 추가할 수 있습니다.",
         ],
+        "security": [
+            *COMMON_SECURITY,
+            "Project creation is root/admin scoped. Project-scoped agents cannot create projects.",
+        ],
     },
     "service.deploy": {
         "title": "새 서비스 처음 배포",
@@ -109,6 +122,18 @@ COMMAND_HELP: dict[str, dict[str, Any]] = {
             "framework가 애매하면 framework.list 또는 schema enum 기준으로 다시 묻습니다.",
             "is_web=false인 백엔드는 외부 host_port를 열지 않고 app-net 내부 통신만 사용합니다.",
         ],
+        "ui": {
+            "type": "form",
+            "form": "service.deploy",
+            "show_when_missing": ["service", "repo_url", "framework"],
+            "required": ["service", "repo_url", "framework"],
+            "optional": ["is_web", "host_port", "environment_names"],
+        },
+        "security": [
+            *COMMON_SECURITY,
+            "Only public GitHub HTTPS repositories are accepted.",
+            "A project-scoped agent can deploy only into its own namespace.",
+        ],
     },
     "service.redeploy": {
         "title": "기존 서비스 최신 코드 재배포",
@@ -137,6 +162,11 @@ COMMAND_HELP: dict[str, dict[str, Any]] = {
             "새 소스를 임시 디렉터리에 clone/build하고 검증 성공 시 교체합니다.",
             "검증 실패 시 이전 소스와 컨테이너로 복구합니다.",
         ],
+        "security": [
+            *COMMON_SECURITY,
+            "A project-scoped agent can redeploy only services inside its own namespace.",
+            "The existing service origin is used; user-supplied paths or git flags are rejected.",
+        ],
     },
     "service.control": {
         "title": "서비스 시작/중지/재시작",
@@ -158,6 +188,10 @@ COMMAND_HELP: dict[str, dict[str, Any]] = {
             "demoa의 demo-a 재시작해줘",
             "backend 서비스를 중지해줘",
             "frontend를 다시 시작해줘",
+        ],
+        "security": [
+            *COMMON_SECURITY,
+            "A project-scoped agent can control only services inside its own namespace.",
         ],
     },
     "port.manage": {
@@ -181,6 +215,11 @@ COMMAND_HELP: dict[str, dict[str, Any]] = {
             "컨테이너 포트를 8000으로 바꿔줘",
             "사용 가능한 포트 추천해줘",
         ],
+        "security": [
+            *COMMON_SECURITY,
+            "A project-scoped agent can change only ports for services inside its own namespace.",
+            "Host ports are constrained to the configured managed range.",
+        ],
     },
     "project.list": {
         "title": "프로젝트/서비스 목록",
@@ -188,6 +227,7 @@ COMMAND_HELP: dict[str, dict[str, Any]] = {
         "use_when": ["프로젝트가 뭐가 있는지 확인할 때", "서비스 선택 전 실제 목록을 확인할 때"],
         "not_for": ["프로젝트 생성/삭제 같은 변경 작업"],
         "examples": ["프로젝트 목록 보여줘", "서비스 목록 확인해줘"],
+        "security": ["Read-only. Return only managed Compose projects."],
     },
     "service.status": {
         "title": "서비스 상태 확인",
@@ -195,6 +235,7 @@ COMMAND_HELP: dict[str, dict[str, Any]] = {
         "use_when": ["서비스가 떠 있는지 확인할 때", "프론트/백엔드 외부 포트 공개 여부를 볼 때"],
         "not_for": ["서비스를 시작/중지/재시작하는 작업"],
         "examples": ["demoa 상태 확인해줘", "demoa의 demo-a 상태 보여줘"],
+        "security": ["Read-only. A project-scoped agent can inspect only its own namespace."],
     },
     "service.logs": {
         "title": "서비스 로그 확인",
@@ -202,6 +243,11 @@ COMMAND_HELP: dict[str, dict[str, Any]] = {
         "use_when": ["배포 실패 원인 확인", "앱 런타임 오류 확인", "최근 로그 확인"],
         "not_for": ["로그 파일 직접 수정", "전체 로그 무제한 출력"],
         "examples": ["demoa demo-a 로그 40줄 보여줘", "backend 로그 확인해줘"],
+        "security": [
+            "Read-only bounded log tail.",
+            "A project-scoped agent can read logs only for its own namespace.",
+            "Do not expose environment variables or secret values.",
+        ],
     },
     "server.health": {
         "title": "서버/플랫폼 상태 확인",
@@ -209,6 +255,7 @@ COMMAND_HELP: dict[str, dict[str, Any]] = {
         "use_when": ["서버가 느릴 때", "대시보드가 안 뜰 때", "전체 상태 점검"],
         "not_for": ["개별 서비스 변경 작업"],
         "examples": ["서버 상태 확인해줘", "전체 상태 점검해줘"],
+        "security": ["Read-only root/admin scoped platform status."],
     },
     "framework.list": {
         "title": "프레임워크 프리셋 목록",
@@ -216,6 +263,7 @@ COMMAND_HELP: dict[str, dict[str, Any]] = {
         "use_when": ["프레임워크 선택이 애매할 때", "지원 프리셋 목록을 보여줄 때"],
         "not_for": ["저장소를 실제 배포하는 작업"],
         "examples": ["프레임워크 뭐 있어?", "javascript면 뭘 골라야 해?"],
+        "security": ["Read-only preset catalog."],
     },
     "repository.inspect": {
         "title": "GitHub 저장소 구조 확인",
@@ -223,6 +271,11 @@ COMMAND_HELP: dict[str, dict[str, Any]] = {
         "use_when": ["사용자가 repo_url만 주고 프레임워크를 모를 때", "static/vite/react/nextjs 등을 구분할 때"],
         "not_for": ["비공개 저장소 접근", "저장소를 실제 배포"],
         "examples": ["이 저장소 프레임워크 확인해줘"],
+        "security": [
+            "Read-only.",
+            "Only public GitHub HTTPS repositories are accepted.",
+            "Temporary clones must be removed after inspection.",
+        ],
     },
     "entity.resolve": {
         "title": "이름 후보 확인",
@@ -230,6 +283,10 @@ COMMAND_HELP: dict[str, dict[str, Any]] = {
         "use_when": ["대소문자, 하이픈, 언더바 차이가 있을 때", "사용자가 비슷한 이름을 말했을 때"],
         "not_for": ["후보를 사용자 확인 없이 자동 확정하는 작업"],
         "examples": ["horserace가 horse_race 맞는지 확인"],
+        "security": [
+            "Read-only.",
+            "Similar candidates are suggestions only and require user confirmation before mutation.",
+        ],
     },
     "port.suggest": {
         "title": "사용 가능한 포트 추천",
@@ -237,6 +294,7 @@ COMMAND_HELP: dict[str, dict[str, Any]] = {
         "use_when": ["새 웹 서비스를 배포하기 전", "포트 충돌이 걱정될 때"],
         "not_for": ["실제 포트 변경 실행"],
         "examples": ["사용 가능한 포트 추천해줘"],
+        "security": ["Read-only. Suggest only managed-range host ports."],
     },
     "qa.run": {
         "title": "플랫폼 QA 점검",
@@ -244,6 +302,7 @@ COMMAND_HELP: dict[str, dict[str, Any]] = {
         "use_when": ["작업 후 검증", "서버 이상 여부 확인"],
         "not_for": ["서비스 배포 자체"],
         "examples": ["QA 돌려줘", "플랫폼 검증해줘"],
+        "security": ["Read-only compact platform checks."],
     },
     "help.search": {
         "title": "도움말/문서 검색",
@@ -251,6 +310,7 @@ COMMAND_HELP: dict[str, dict[str, Any]] = {
         "use_when": ["배포 절차, Dockerfile, 포트, 프록시, QA 설명이 필요할 때"],
         "not_for": ["실제 서버 변경"],
         "examples": ["배포 절차 알려줘", "Dockerfile 매뉴얼 보여줘"],
+        "security": ["Read-only local documentation search."],
     },
     "platform.help": {
         "title": "플랫폼 도움말",
@@ -258,6 +318,7 @@ COMMAND_HELP: dict[str, dict[str, Any]] = {
         "use_when": ["전체 기능을 알고 싶을 때", "무슨 명령이 가능한지 볼 때"],
         "not_for": ["실제 서버 변경"],
         "examples": ["도움말", "뭐 할 수 있어?"],
+        "security": ["Read-only command catalog."],
     },
 }
 
@@ -446,6 +507,8 @@ def build_command_contract(
         "examples": help_info.get("examples", []),
         "flow": help_info.get("flow", []),
         "after_success": help_info.get("after_success", []),
+        "security": help_info.get("security", COMMON_SECURITY if not read_only else ["Read-only."]),
+        "ui": help_info.get("ui", {}),
         "mode": "read" if read_only else "mutation",
         "read_only": read_only,
         "dry_run": not read_only,

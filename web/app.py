@@ -188,6 +188,20 @@ def project_agent_url(project: str) -> str:
     return PROJECT_AGENT_URL_TEMPLATE.format(project=project)
 
 
+def wait_project_agent_ready(project: str, *, timeout: float = 20.0) -> bool:
+    deadline = time.monotonic() + timeout
+    url = f"{project_agent_url(project).rstrip('/')}/health"
+    while time.monotonic() < deadline:
+        try:
+            response = requests.get(url, timeout=2)
+            if response.status_code < 500:
+                return True
+        except requests.RequestException:
+            pass
+        time.sleep(0.5)
+    return False
+
+
 def project_agent_request(
     project: str,
     method: str,
@@ -207,6 +221,7 @@ def project_agent_request(
         )
     except requests.RequestException as first_exc:
         ensure_project_agent(project, force=True)
+        wait_project_agent_ready(project)
         try:
             response = requests.request(
                 method,
@@ -241,6 +256,7 @@ def ensure_project_agent(project: str, *, force: bool = False) -> None:
         "arguments": {"project": project},
         "approved": True,
     })
+    wait_project_agent_ready(project)
     with PROJECT_AGENT_ENSURE_LOCK:
         PROJECT_AGENT_ENSURED_AT[project] = time.monotonic()
 

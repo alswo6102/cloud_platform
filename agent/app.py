@@ -954,6 +954,74 @@ def strict_arguments(
     return verified
 
 
+def planner_arguments_for_llm(
+    skill: str,
+    context: dict[str, Any] | None,
+    planner_arguments: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Use LLM-selected arguments without natural-language reparsing.
+
+    The LLM decides intent and extracts fields. This function only preserves
+    already-confirmed active-task arguments and injects the scoped project from
+    the project page/namespace. Validation, enum checks, existence checks, and
+    permission checks remain in the CLI/platform API.
+    """
+    arguments: dict[str, Any] = {}
+    context_arguments = (context or {}).get("arguments")
+    if isinstance(context_arguments, dict) and (context or {}).get("skill") == skill:
+        arguments.update(context_arguments)
+    if isinstance(planner_arguments, dict):
+        for key, value in planner_arguments.items():
+            if value is not None:
+                arguments[key] = value
+    if skill in {
+        "service.deploy",
+        "service.redeploy",
+        "service.status",
+        "service.logs",
+        "service.control",
+        "port.manage",
+    }:
+        scoped_project = (
+            ((context or {}).get("arguments") or {}).get("project")
+            or (context or {}).get("project_scope")
+            or os.getenv("PLATFORM_NAMESPACE")
+        )
+        if scoped_project:
+            arguments["project"] = str(scoped_project)
+    return arguments
+
+
+PLACEHOLDER_ARGUMENT_VALUES = {
+    "https://github.com/example/repo",
+    "https://github.com/owner/repository",
+    "https://github.com/owner/repo",
+    "owner/repository",
+    "owner/repo",
+}
+
+
+def remove_placeholder_arguments(arguments: dict[str, Any]) -> dict[str, Any]:
+    cleaned = dict(arguments)
+    for key, value in list(cleaned.items()):
+        if isinstance(value, str) and value.strip().lower() in PLACEHOLDER_ARGUMENT_VALUES:
+            cleaned.pop(key, None)
+    return cleaned
+
+
+def arguments_for_plan(
+    message: str,
+    skill: str,
+    context: dict[str, Any] | None,
+    planner_arguments: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if os.getenv("LLM_API_KEY"):
+        return remove_placeholder_arguments(
+            planner_arguments_for_llm(skill, context, planner_arguments)
+        )
+    return strict_arguments(message, skill, context, planner_arguments or {})
+
+
 def affirmative(message: str) -> bool:
     normalized = re.sub(r"[\s.!?]+", "", message.lower())
     return any(
@@ -2136,12 +2204,13 @@ def chat(request: ChatRequest):
     def respond(payload: dict[str, Any]) -> dict[str, Any]:
         return remember_response(request.session_id, request.message, payload)
 
-    request.context, proposed_response = handle_proposed_input(
-        request.message,
-        request.context,
-    )
-    if proposed_response:
-        return respond(proposed_response)
+    if not os.getenv("LLM_API_KEY"):
+        request.context, proposed_response = handle_proposed_input(
+            request.message,
+            request.context,
+        )
+        if proposed_response:
+            return respond(proposed_response)
 
     normalized = request.message.strip().lower()
     if normalized in HELP_COMMANDS and not os.getenv("LLM_API_KEY"):
@@ -2523,7 +2592,7 @@ def chat(request: ChatRequest):
                 "service.deploy",
                 "service.redeploy",
             }:
-                verified_arguments = strict_arguments(
+                verified_arguments = arguments_for_plan(
                     request.message,
                     preferred_skill,
                     request.context,
@@ -2618,16 +2687,20 @@ def chat(request: ChatRequest):
                 "requires_approval": False,
             })
         skill = plan["skill"]
-        arguments = strict_arguments(
+        arguments = arguments_for_plan(
             request.message,
             skill,
             request.context,
             plan.get("arguments", {}),
         )
-        project_problem = project_problem_response(
-            skill,
-            arguments,
-            request,
+        project_problem = (
+            None
+            if os.getenv("LLM_API_KEY")
+            else project_problem_response(
+                skill,
+                arguments,
+                request,
+            )
         )
         if project_problem:
             return respond(project_problem)
