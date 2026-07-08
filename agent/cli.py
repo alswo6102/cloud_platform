@@ -25,6 +25,12 @@ from runtime import (
 )
 
 
+class PlatformApiError(RuntimeError):
+    def __init__(self, detail: Any) -> None:
+        super().__init__(str(detail))
+        self.detail = detail
+
+
 def platform_api_url() -> str:
     return os.getenv("PLATFORM_API", "").rstrip("/")
 
@@ -67,7 +73,7 @@ def call_platform_api(
         data = {"detail": response.text}
     if response.status_code >= 400:
         detail = data.get("detail") if isinstance(data, dict) else data
-        raise RuntimeError(str(detail))
+        raise PlatformApiError(detail)
     return data if isinstance(data, dict) else {"result": data}
 
 
@@ -343,7 +349,10 @@ def main() -> int:
         )
         return 0
     except Exception as exc:
-        emit({"error": type(exc).__name__, "detail": str(exc)})
+        emit({
+            "error": type(exc).__name__,
+            "detail": exc.detail if isinstance(exc, PlatformApiError) else str(exc),
+        })
         return 2
 
 

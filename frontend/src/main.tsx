@@ -63,6 +63,8 @@ type AgentResponse = {
   preview?: unknown;
   resume?: unknown;
   ui?: UiHint | null;
+  field_errors?: Record<string, string>;
+  error?: unknown;
 };
 
 type ApprovalAgentResponse = AgentResponse & {
@@ -76,6 +78,7 @@ type UiHint = {
   form?: string;
   arguments?: Record<string, unknown>;
   missing?: Array<Record<string, unknown>>;
+  field_errors?: Record<string, string>;
 };
 
 type DeployGuideState = {
@@ -129,9 +132,20 @@ async function api<T>(path: string, auth: AuthHeaders, init?: RequestInit): Prom
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(data.detail || `Request failed: ${response.status}`);
+    throw new Error(formatApiError(data.detail) || `Request failed: ${response.status}`);
   }
   return data as T;
+}
+
+function formatApiError(detail: unknown): string {
+  if (!detail) return "";
+  if (typeof detail === "string") return detail;
+  if (isRecord(detail)) {
+    const message = String(detail.message || detail.detail || "요청 처리에 실패했습니다.");
+    const hint = detail.hint ? ` ${String(detail.hint)}` : "";
+    return `${message}${hint}`;
+  }
+  return String(detail);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -849,6 +863,7 @@ function AgentPanel({
     hostPort: "",
     envNames: ""
   });
+  const [deployGuideErrors, setDeployGuideErrors] = useState<Record<string, string>>({});
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -951,11 +966,21 @@ function AgentPanel({
   }
 
   function updateDeployGuide(patch: Partial<DeployGuideState>) {
+    setDeployGuideErrors((current) => {
+      const next = { ...current };
+      if ("service" in patch) delete next.service;
+      if ("repoUrl" in patch) delete next.repo_url;
+      if ("framework" in patch) delete next.framework;
+      if ("hostPort" in patch) delete next.host_port;
+      if ("envNames" in patch) delete next.environment_names;
+      return next;
+    });
     setDeployGuide((current) => ({ ...current, ...patch }));
   }
 
   function openDeployGuideFromResponse(data: AgentResponse) {
     const args = data.ui?.arguments || data.arguments || {};
+    const fieldErrors = data.ui?.field_errors || data.field_errors || {};
     setDeployGuide((current) => ({
       ...current,
       service: typeof args.service === "string" ? args.service : current.service,
@@ -970,14 +995,16 @@ function AgentPanel({
         ? args.environment_names.map(String).join(", ")
         : current.envNames
     }));
+    setDeployGuideErrors(fieldErrors);
     setShowDeployGuide(true);
     setMessages((items) => [
       ...items,
-      { from: "agent", text: "새 서비스 배포는 아래 Questions 카드에서 진행할게요." }
+      { from: "agent", text: String(data.message || "새 서비스 배포는 아래 Questions 카드에서 진행할게요.") }
     ]);
   }
 
   async function submitDeployGuide() {
+    setDeployGuideErrors({});
     const selectedFramework = frameworkOptions.find((item) => item.id === deployGuide.framework);
     const envNames = deployGuide.envNames
       .split(",")
@@ -1054,6 +1081,7 @@ function AgentPanel({
           <DeployGuideCard
             busy={busy}
             deployGuide={deployGuide}
+            errors={deployGuideErrors}
             deployGuideReady={deployGuideReady}
             onChange={updateDeployGuide}
             onSubmit={submitDeployGuide}
@@ -1084,16 +1112,21 @@ function AgentPanel({
 function DeployGuideCard({
   busy,
   deployGuide,
+  errors,
   deployGuideReady,
   onChange,
   onSubmit
 }: {
   busy: boolean;
   deployGuide: DeployGuideState;
+  errors: Record<string, string>;
   deployGuideReady: boolean;
   onChange: (patch: Partial<DeployGuideState>) => void;
   onSubmit: () => void;
 }) {
+  const repoUrlLooksValid = !deployGuide.repoUrl.trim()
+    || /^https:\/\/github\.com\/[^/\s]+\/[^/\s]+(?:\.git)?$/.test(deployGuide.repoUrl.trim());
+  const repoUrlError = errors.repo_url || (!repoUrlLooksValid ? "https://github.com/<owner>/<repo> 형식의 공개 저장소 URL을 입력하세요." : "");
   return (
     <div className="guidedDeploy chatGuidedDeploy">
       <div className="guidedHeader">
@@ -1114,6 +1147,7 @@ function DeployGuideCard({
             placeholder="예: horse_front"
             disabled={busy}
           />
+          {errors.service ? <small className="fieldError">{errors.service}</small> : null}
         </label>
       </div>
       <div className="questionBlock">
@@ -1126,6 +1160,7 @@ function DeployGuideCard({
             placeholder="https://github.com/owner/repo"
             disabled={busy}
           />
+          {repoUrlError ? <small className="fieldError">{repoUrlError}</small> : null}
         </label>
       </div>
       <div className="questionBlock">
@@ -1145,6 +1180,7 @@ function DeployGuideCard({
             </button>
           ))}
         </div>
+        {errors.framework ? <small className="fieldError">{errors.framework}</small> : null}
       </div>
       <div className="guidedGrid compact">
         <div className="questionBlock compactQuestion">
@@ -1201,6 +1237,7 @@ function DeployGuideCard({
               placeholder="비우면 9000~9100 자동 추천"
               disabled={busy}
             />
+            {errors.host_port ? <small className="fieldError">{errors.host_port}</small> : null}
           </label>
           <label className="questionBlock">
             <span>환경변수 이름</span>

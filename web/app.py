@@ -246,6 +246,10 @@ def project_agent_request(
 
 def ensure_project_agent(project: str, *, force: bool = False) -> None:
     now = time.monotonic()
+    if not force and wait_project_agent_ready(project, timeout=2.0):
+        with PROJECT_AGENT_ENSURE_LOCK:
+            PROJECT_AGENT_ENSURED_AT[project] = time.monotonic()
+        return
     if AUTO_ENSURE_PROJECT_AGENT and not force:
         with PROJECT_AGENT_ENSURE_LOCK:
             last = PROJECT_AGENT_ENSURED_AT.get(project, 0)

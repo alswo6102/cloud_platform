@@ -39,6 +39,12 @@ SESSION_STORE = Path(
 )
 
 
+def error_detail(exc: Exception) -> Any:
+    if isinstance(exc, SkillError):
+        return exc.to_dict()
+    return str(exc)
+
+
 def namespace_tokens() -> dict[str, str]:
     tokens: dict[str, str] = {}
     store = Path(
@@ -1009,6 +1015,38 @@ def remove_placeholder_arguments(arguments: dict[str, Any]) -> dict[str, Any]:
     return cleaned
 
 
+def skill_error_payload(exc: SkillError) -> dict[str, Any]:
+    return exc.to_dict()
+
+
+def field_errors_from_error(error: dict[str, Any]) -> dict[str, str]:
+    field = error.get("field")
+    if not field:
+        return {}
+    message = str(error.get("message") or "입력값을 확인해주세요.")
+    hint = str(error.get("hint") or "").strip()
+    return {str(field): f"{message} {hint}".strip()}
+
+
+def missing_from_field_errors(field_errors: dict[str, str]) -> list[dict[str, Any]]:
+    labels = {
+        "repo_url": "공개 GitHub HTTPS 저장소 URL",
+        "service": "서비스 이름",
+        "framework": "프레임워크 프리셋",
+        "project": "프로젝트 이름",
+    }
+    return [
+        {
+            "field": field,
+            "name": field,
+            "label": labels.get(field, field),
+            "required": True,
+            "error": message,
+        }
+        for field, message in field_errors.items()
+    ]
+
+
 def arguments_for_plan(
     message: str,
     skill: str,
@@ -1811,7 +1849,7 @@ def naturalize_mutation_message(
     user_message: str,
     preview: dict[str, Any] | None = None,
     missing: list[dict[str, Any]] | None = None,
-    error: str | None = None,
+    error: Any | None = None,
     model_hint: str | None = None,
 ) -> dict[str, Any]:
     fallback_parts = []
@@ -1828,8 +1866,13 @@ def naturalize_mutation_message(
             "진행하려면 추가 정보가 필요합니다: " + ", ".join(labels)
         )
     elif purpose == "error":
+        error_message = (
+            error.get("message")
+            if isinstance(error, dict)
+            else str(error)
+        )
         fallback_parts.append(
-            f"검증 중 문제가 확인됐습니다: {error}\n잘못된 항목만 다시 알려주세요."
+            f"검증 중 문제가 확인됐습니다: {error_message}\n잘못된 항목만 다시 알려주세요."
         )
     fallback = "\n\n".join(part for part in fallback_parts if part).strip()
     if not os.getenv("LLM_API_KEY"):
@@ -1842,6 +1885,8 @@ def naturalize_mutation_message(
                 "Explain what is confirmed, what is missing, or what will happen next. "
                 "For approval, ask the user to press the approval button, not to type vague confirmation. "
                 "For missing fields, ask only for the missing fields and mention optional defaults briefly. "
+                "For validation errors, identify the failed field, explain the concrete reason, "
+                "and ask the user to correct only that field. "
                 "Keep the tone natural, concise, and helpful."
             ),
             user=json.dumps(
@@ -1872,6 +1917,7 @@ def ui_hint_for_response(
     missing: list[dict[str, Any]] | None = None,
     requires_approval: bool = False,
     preview: dict[str, Any] | None = None,
+    field_errors: dict[str, str] | None = None,
 ) -> dict[str, Any] | None:
     if not skill:
         return None
@@ -1890,6 +1936,35 @@ def ui_hint_for_response(
             "optional": ["is_web", "host_port", "environment_names"],
             "arguments": arguments or {},
             "missing": missing,
+            "field_errors": field_errors or {},
+            "choices": {
+                "framework": [
+                    "static",
+                    "vite",
+                    "react",
+                    "nextjs",
+                    "express",
+                    "fastapi",
+                    "flask",
+                    "django",
+                    "spring-maven",
+                    "go",
+                    "existing",
+                ],
+                "is_web": [True, False],
+                "optional_mode": ["defaults", "custom"],
+            },
+        }
+    if skill == "service.deploy" and field_errors:
+        return {
+            "type": "form",
+            "form": "service.deploy",
+            "title": "새 서비스 배포",
+            "required": ["service", "repo_url", "framework"],
+            "optional": ["is_web", "host_port", "environment_names"],
+            "arguments": arguments or {},
+            "missing": missing or [],
+            "field_errors": field_errors,
             "choices": {
                 "framework": [
                     "static",
@@ -2732,12 +2807,15 @@ def chat(request: ChatRequest):
                 dry_run=True,
             )
         except SkillError as exc:
+            error_payload = skill_error_payload(exc)
+            field_errors = field_errors_from_error(error_payload)
+            missing_from_error = missing_from_field_errors(field_errors)
             final = naturalize_mutation_message(
                 purpose="error",
                 skill=skill,
                 arguments=arguments,
                 user_message=request.message,
-                error=str(exc),
+                error=error_payload,
                 model_hint=plan.get("model"),
             )
             return respond({
@@ -2747,7 +2825,7 @@ def chat(request: ChatRequest):
                 "skill": skill,
                 "model": final.get("model"),
                 "arguments": arguments,
-                "missing": [],
+                "missing": missing_from_error,
                 "context": {
                     "original_request": (
                         request.context.get("original_request")
@@ -2756,9 +2834,17 @@ def chat(request: ChatRequest):
                     ),
                     "skill": skill,
                     "arguments": arguments,
-                    "missing": [],
+                    "missing": missing_from_error,
+                    "last_error": error_payload,
                 },
-                "ui": None,
+                "error": error_payload,
+                "field_errors": field_errors,
+                "ui": ui_hint_for_response(
+                    skill=skill,
+                    arguments=arguments,
+                    missing=missing_from_error,
+                    field_errors=field_errors,
+                ),
                 "requires_approval": False,
             })
         if preview.get("needs_input"):
@@ -2836,7 +2922,7 @@ def chat(request: ChatRequest):
             "requires_approval": True,
         })
     except (SkillError, KeyError, ValueError) as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise HTTPException(status_code=400, detail=error_detail(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Planner failed: {exc}") from exc
 
@@ -2871,7 +2957,7 @@ def execute(request: ExecuteRequest, http_request: Request):
     except HTTPException:
         raise
     except (SkillError, KeyError, ValueError) as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise HTTPException(status_code=400, detail=error_detail(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
@@ -2903,4 +2989,4 @@ def preview(request: PreviewRequest, http_request: Request):
     except HTTPException:
         raise
     except (SkillError, KeyError, ValueError) as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise HTTPException(status_code=400, detail=error_detail(exc)) from exc

@@ -100,7 +100,54 @@ REPOSITORY_ACCESS_CACHE_TTL = float(os.getenv("REPOSITORY_ACCESS_CACHE_TTL", "30
 
 
 class SkillError(RuntimeError):
-    pass
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: str | None = None,
+        field: str | None = None,
+        hint: str | None = None,
+        detail: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.message = message
+        self.code = code
+        self.field = field
+        self.hint = hint
+        self.detail = detail
+
+    def to_dict(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {"message": self.message}
+        if self.code:
+            payload["code"] = self.code
+        if self.field:
+            payload["field"] = self.field
+        if self.hint:
+            payload["hint"] = self.hint
+        if self.detail:
+            payload["detail"] = self.detail
+        return payload
+
+    @classmethod
+    def from_detail(cls, detail: Any) -> "SkillError":
+        if isinstance(detail, dict):
+            return cls(
+                str(detail.get("message") or detail.get("detail") or "CLI execution failed"),
+                code=str(detail["code"]) if detail.get("code") else None,
+                field=str(detail["field"]) if detail.get("field") else None,
+                hint=str(detail["hint"]) if detail.get("hint") else None,
+                detail=str(detail["detail"]) if detail.get("detail") else None,
+            )
+        return cls(str(detail or "CLI execution failed"))
+
+
+def invalid_repo_url_error() -> SkillError:
+    return SkillError(
+        "GitHub 저장소 URL 형식이 올바르지 않습니다.",
+        code="repo_url_invalid_format",
+        field="repo_url",
+        hint="https://github.com/<owner>/<repo> 형태의 공개 저장소 URL을 입력하세요.",
+    )
 
 
 def trigger_safe_docker_cleanup(reason: str) -> None:
@@ -436,35 +483,79 @@ def compose_command(
 
 def git_clone(repo_url: str, destination: Path) -> None:
     if not GITHUB_HTTPS_PATTERN.fullmatch(repo_url):
-        raise SkillError("repo_url must be a public GitHub HTTPS repository URL")
-    subprocess.run(
-        ["git", "clone", "--depth", "1", repo_url, str(destination)],
-        check=True,
-        capture_output=True,
-        text=True,
-        timeout=300,
-    )
+        raise invalid_repo_url_error()
+    try:
+        result = subprocess.run(
+            ["git", "clone", "--depth", "1", repo_url, str(destination)],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=300,
+            env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise SkillError(
+            "GitHub 저장소 clone 시간이 초과되었습니다.",
+            code="repo_clone_timeout",
+            field="repo_url",
+            hint="저장소 크기나 네트워크 상태를 확인하고 다시 시도하세요.",
+            detail=str(exc),
+        ) from exc
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip()
+        raise SkillError(
+            "GitHub 저장소를 clone할 수 없습니다.",
+            code="repo_clone_failed",
+            field="repo_url",
+            hint="URL이 맞는지, 공개 저장소인지, 기본 브랜치에 접근 가능한지 확인하세요.",
+            detail=detail,
+        )
 
 
 def validate_github_repository_access(repo_url: str) -> None:
     if not GITHUB_HTTPS_PATTERN.fullmatch(repo_url):
-        raise SkillError("repo_url must be a public GitHub HTTPS repository URL")
+        raise invalid_repo_url_error()
     now = time.monotonic()
     with REPOSITORY_ACCESS_CACHE_LOCK:
         if REPOSITORY_ACCESS_CACHE.get(repo_url, 0) > now:
             return
-    result = subprocess.run(
-        ["git", "ls-remote", "--heads", repo_url],
-        capture_output=True,
-        text=True,
-        timeout=float(os.getenv("GIT_REPOSITORY_VALIDATE_TIMEOUT", "12")),
-        env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
-    )
+    try:
+        result = subprocess.run(
+            ["git", "ls-remote", "--heads", repo_url],
+            capture_output=True,
+            text=True,
+            timeout=float(os.getenv("GIT_REPOSITORY_VALIDATE_TIMEOUT", "12")),
+            env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise SkillError(
+            "GitHub 저장소 접근 확인 시간이 초과되었습니다.",
+            code="repo_access_timeout",
+            field="repo_url",
+            hint="저장소 URL이 맞는지 확인하고 잠시 후 다시 시도하세요. GitHub 또는 서버 네트워크가 느릴 수 있습니다.",
+            detail=str(exc),
+        ) from exc
     if result.returncode != 0:
         detail = (result.stderr or result.stdout).strip()
+        lowered = detail.lower()
+        if "repository not found" in lowered or "not found" in lowered:
+            code = "repo_not_found_or_private"
+            message = "GitHub 저장소를 찾을 수 없거나 비공개 저장소입니다."
+            hint = "저장소 URL이 정확한지 확인하고, 현재 배포 기능은 공개 GitHub HTTPS 저장소만 지원합니다."
+        elif "authentication failed" in lowered or "could not read" in lowered or "permission denied" in lowered:
+            code = "repo_private_or_auth_required"
+            message = "GitHub 저장소 접근에 인증이 필요합니다."
+            hint = "비공개 저장소는 현재 지원하지 않습니다. 공개 저장소로 변경하거나 공개 저장소 URL을 입력하세요."
+        else:
+            code = "repo_access_failed"
+            message = "GitHub 저장소 접근 검증에 실패했습니다."
+            hint = "URL, 공개 여부, 네트워크 접근 가능 여부를 확인하세요."
         raise SkillError(
-            "repo_url must point to an existing public GitHub repository"
-            + (f": {detail}" if detail else "")
+            message,
+            code=code,
+            field="repo_url",
+            hint=hint,
+            detail=detail or None,
         )
     with REPOSITORY_ACCESS_CACHE_LOCK:
         REPOSITORY_ACCESS_CACHE[repo_url] = time.monotonic() + REPOSITORY_ACCESS_CACHE_TTL
@@ -472,7 +563,7 @@ def validate_github_repository_access(repo_url: str) -> None:
 
 def inspect_repository(repo_url: str) -> dict[str, Any]:
     if not GITHUB_HTTPS_PATTERN.fullmatch(repo_url):
-        raise SkillError("repo_url must be a public GitHub HTTPS repository URL")
+        raise invalid_repo_url_error()
     with tempfile.TemporaryDirectory(prefix="cloud-platform-inspect-") as temp_dir:
         root = Path(temp_dir) / "repository"
         git_clone(repo_url, root)
@@ -1138,7 +1229,12 @@ def service_deploy(
         if not name:
             continue
         if not ENV_NAME_PATTERN.fullmatch(name):
-            raise SkillError(f"Invalid environment variable name: {name!r}")
+            raise SkillError(
+                f"환경변수 이름 형식이 올바르지 않습니다: {name}",
+                code="environment_name_invalid",
+                field="environment_names",
+                hint="환경변수 이름은 영문자 또는 밑줄로 시작하고, 영문자·숫자·밑줄만 사용할 수 있습니다. 예: API_KEY",
+            )
         if name not in environment_names:
             environment_names.append(name)
     environment_names.sort()
@@ -1157,28 +1253,59 @@ def service_deploy(
         "external": True,
     }
     if service in data["services"]:
-        raise SkillError(f"Service already exists: {project}/{service}")
+        raise SkillError(
+            f"이미 존재하는 서비스 이름입니다: {service}",
+            code="service_already_exists",
+            field="service",
+            hint="같은 프로젝트 안에서는 서비스 이름이 중복될 수 없습니다. 다른 서비스 이름을 입력하세요.",
+        )
     if not GITHUB_HTTPS_PATTERN.fullmatch(repo_url):
-        raise SkillError("repo_url must be a public GitHub HTTPS repository URL")
+        raise invalid_repo_url_error()
     validate_github_repository_access(repo_url)
     if not 1 <= container_port <= 65535:
-        raise SkillError("container_port must be between 1 and 65535")
+        raise SkillError(
+            "컨테이너 포트 범위가 올바르지 않습니다.",
+            code="container_port_invalid",
+            field="container_port",
+            hint="컨테이너 포트는 1~65535 사이 숫자여야 합니다. 일반 웹 프론트는 보통 3000을 사용합니다.",
+        )
 
     if is_web:
         selected_host_port = host_port if host_port is not None else next_port()
         if not PORT_START <= selected_host_port <= PORT_END:
-            raise SkillError(f"host_port must be between {PORT_START} and {PORT_END}")
+            raise SkillError(
+                "호스트 포트 범위가 올바르지 않습니다.",
+                code="host_port_invalid_range",
+                field="host_port",
+                hint=f"호스트 포트는 {PORT_START}~{PORT_END} 사이 숫자여야 합니다. 비워두면 자동 선택됩니다.",
+            )
         owners = reserved_ports().get(selected_host_port, [])
         if owners:
-            raise SkillError(f"Port {selected_host_port} is already used by {', '.join(owners)}")
+            raise SkillError(
+                f"이미 사용 중인 호스트 포트입니다: {selected_host_port}",
+                code="host_port_already_used",
+                field="host_port",
+                hint="다른 포트를 입력하거나 비워두면 사용 가능한 포트를 자동 선택합니다.",
+                detail=", ".join(owners),
+            )
     else:
         if host_port is not None:
-            raise SkillError("host_port can only be set for externally exposed web services")
+            raise SkillError(
+                "내부 서비스에는 호스트 포트를 지정할 수 없습니다.",
+                code="host_port_not_allowed_for_internal_service",
+                field="host_port",
+                hint="외부 공개가 필요한 웹 서비스일 때만 호스트 포트를 사용합니다. 내부 서비스는 포트를 비워두세요.",
+            )
         selected_host_port = None
 
     destination = project_path(project) / service
     if destination.exists():
-        raise SkillError(f"Service directory already exists: {project}/{service}")
+        raise SkillError(
+            f"서비스 디렉터리가 이미 존재합니다: {service}",
+            code="service_directory_already_exists",
+            field="service",
+            hint="기존 서비스라면 재배포를 사용하고, 새 서비스라면 다른 이름을 입력하세요.",
+        )
 
     plan = {
         "project": project,
@@ -1415,14 +1542,30 @@ def port_manage(
 
     if operation == "change_host":
         if host_port is None or not PORT_START <= host_port <= PORT_END:
-            raise SkillError(f"host_port must be between {PORT_START} and {PORT_END}")
+            raise SkillError(
+                "호스트 포트 범위가 올바르지 않습니다.",
+                code="host_port_invalid_range",
+                field="host_port",
+                hint=f"호스트 포트는 {PORT_START}~{PORT_END} 사이 숫자여야 합니다.",
+            )
         owners = reserved_ports((project, service)).get(host_port, [])
         if owners:
-            raise SkillError(f"Port {host_port} is already used by {', '.join(owners)}")
+            raise SkillError(
+                f"이미 사용 중인 호스트 포트입니다: {host_port}",
+                code="host_port_already_used",
+                field="host_port",
+                hint="다른 포트를 입력하세요.",
+                detail=", ".join(owners),
+            )
         new_host, new_target = host_port, current_target
     elif operation == "change_container":
         if container_port is None or not 1 <= container_port <= 65535:
-            raise SkillError("container_port must be between 1 and 65535")
+            raise SkillError(
+                "컨테이너 포트 범위가 올바르지 않습니다.",
+                code="container_port_invalid",
+                field="container_port",
+                hint="컨테이너 포트는 1~65535 사이 숫자여야 합니다.",
+            )
         new_host, new_target = current_host, container_port
     else:
         raise SkillError(f"Unsupported operation: {operation}")
@@ -1589,7 +1732,7 @@ def execute_cli_skill(
             completed.stderr.strip() or "CLI returned malformed JSON"
         ) from exc
     if completed.returncode != 0:
-        raise SkillError(payload.get("detail", "CLI execution failed"))
+        raise SkillError.from_detail(payload.get("detail", "CLI execution failed"))
     key = "preview" if dry_run else "result"
     if key not in payload:
         raise SkillError(f"CLI response is missing {key}")

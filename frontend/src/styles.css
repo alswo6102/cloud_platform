@@ -566,6 +566,14 @@ pre {
   font-weight: 700;
 }
 
+.questionBlock .fieldError {
+  color: #dc2626;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: 12px;
+  padding: 0.45rem 0.6rem;
+}
+
 .guidedHeader, .guidedFooter {
   display: flex;
   justify-content: space-between;
