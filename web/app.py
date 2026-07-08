@@ -389,6 +389,20 @@ def service_catalog() -> dict[str, Any]:
     }
 
 
+@app.get("/api/system/summary")
+def system_summary(
+    x_user_role: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
+) -> dict[str, Any]:
+    _, role = authenticated_user(x_user_role, x_user_id)
+    require_login(role)
+    return agent_request("POST", "/execute", json_body={
+        "skill": "server.health",
+        "arguments": {},
+        "approved": True,
+    })
+
+
 @app.get("/api/frameworks")
 def frameworks() -> dict[str, Any]:
     return agent_request("GET", "/frameworks")

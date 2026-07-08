@@ -244,7 +244,7 @@ pre {
   display: flex;
   flex-wrap: wrap;
   gap: 0.45rem;
-  margin: 0 0 0.8rem;
+  margin: 0.85rem 0 0.8rem;
 }
 
 .tabs button,
@@ -292,6 +292,42 @@ pre {
   margin-top: 0.85rem;
 }
 
+.systemOverview {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 0.65rem;
+}
+
+.systemMetric,
+.capacityStrip > div {
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--panel);
+  padding: 0.78rem 0.85rem;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.03);
+}
+
+.systemMetric span,
+.capacityStrip span {
+  display: block;
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 740;
+}
+
+.systemMetric strong,
+.capacityStrip strong {
+  display: block;
+  margin-top: 0.22rem;
+  color: var(--ink);
+  font-size: 1.08rem;
+  letter-spacing: -0.02em;
+}
+
+.systemMetric.warn strong {
+  color: var(--warning);
+}
+
 .workspaceHeader {
   display: flex;
   justify-content: space-between;
@@ -314,6 +350,10 @@ pre {
   margin: 0.32rem 0 0;
   color: var(--muted);
   line-height: 1.55;
+}
+
+.workspaceHeader p:empty {
+  display: none;
 }
 
 .headerActions {
@@ -427,14 +467,14 @@ pre {
 
 .serviceGrid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
   gap: 0.65rem;
   margin: 0.85rem 0;
 }
 
 .service {
   display: grid;
-  gap: 0.58rem;
+  gap: 0.64rem;
   border: 1px solid var(--line);
   border-radius: var(--r-sm);
   background: var(--panel);
@@ -456,6 +496,24 @@ pre {
   color: var(--muted);
   font-size: 0.84rem;
   line-height: 1.45;
+}
+
+.serviceUrl {
+  width: fit-content;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  color: var(--gold);
+  font-size: 0.84rem;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.serviceUrl:hover {
+  text-decoration: underline;
+}
+
+.mutedUrl {
+  color: var(--muted);
 }
 
 .serviceMetrics {
@@ -520,6 +578,44 @@ pre {
   font-size: 0.82rem;
 }
 
+.capacityStrip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.65rem;
+  margin-bottom: 0.75rem;
+}
+
+.actionOutput {
+  margin: 0.75rem 0;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-sm);
+  background: var(--panel);
+  padding: 0.78rem;
+}
+
+.actionOutput.error {
+  border-color: #fecaca;
+  background: var(--danger-bg);
+}
+
+.actionOutput > div {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 0.55rem;
+}
+
+.actionOutput strong {
+  color: var(--ink);
+}
+
+.actionOutput pre {
+  max-height: 360px;
+  margin: 0;
+  white-space: pre-wrap;
+}
+
 .agent {
   margin-top: 0.9rem;
   border-top: 1px solid var(--line);
@@ -543,6 +639,10 @@ pre {
 .agentTitle p {
   margin: 0.22rem 0 0;
   color: var(--muted);
+}
+
+.agentTitle > .pill {
+  display: none;
 }
 
 .agentShortcuts {
@@ -949,7 +1049,9 @@ pre {
   }
 
   .guidedGrid,
-  .segmented {
+  .segmented,
+  .systemOverview,
+  .capacityStrip {
     grid-template-columns: 1fr;
   }
 

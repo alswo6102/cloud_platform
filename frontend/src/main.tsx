@@ -56,6 +56,22 @@ type ServiceRuntime = {
   container?: RuntimeContainer | null;
 };
 
+type SystemSummary = {
+  docker?: boolean;
+  containers?: number;
+  running?: number;
+  disk_percent?: number;
+  memory_percent?: number;
+  unhealthy?: string[];
+  restarting?: string[];
+};
+
+type ServiceActionOutput = {
+  title: string;
+  text: string;
+  tone?: "ok" | "warn" | "error";
+};
+
 type AuthSession = {
   id: string;
   role: Role;
@@ -339,8 +355,9 @@ function App() {
   const [session, setSession] = useState<AuthSession>(() => loadStoredSession());
   const [projects, setProjects] = useState<Project[]>([]);
   const [catalog, setCatalog] = useState<ServiceSummary[]>([]);
+  const [systemSummary, setSystemSummary] = useState<SystemSummary | null>(null);
   const [page, setPage] = useState<Page>(() => pageFromLocation());
-  const [activeTab, setActiveTab] = useState<HomeTab>("services");
+  const [activeTab, setActiveTab] = useState<HomeTab>(() => loadStoredSession() ? "projects" : "services");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(() => Boolean(loadStoredSession()));
   const [projectsLoaded, setProjectsLoaded] = useState(false);
@@ -382,8 +399,21 @@ function App() {
     }
   }
 
+  async function refreshSystemSummary() {
+    if (role === "visitor") {
+      setSystemSummary(null);
+      return;
+    }
+    try {
+      const data = await api<{ result?: SystemSummary }>("/api/system/summary", auth);
+      setSystemSummary(data.result || null);
+    } catch {
+      setSystemSummary(null);
+    }
+  }
+
   async function refreshAll() {
-    await Promise.all([refreshCatalog(), refreshProjects()]);
+    await Promise.all([refreshCatalog(), refreshProjects(), refreshSystemSummary()]);
   }
 
   useEffect(() => {
@@ -399,6 +429,7 @@ function App() {
   useEffect(() => {
     setProjectsLoaded(false);
     refreshProjects();
+    refreshSystemSummary();
     if (role === "visitor" && page.kind === "project") {
       navigateHome(true);
     }
@@ -444,7 +475,7 @@ function App() {
           <span className="brandMark" aria-hidden="true">◇</span>
           <div>
             <strong>Cloud Platform</strong>
-            <span>Project deploy console</span>
+            <span>Deploy console</span>
           </div>
         </div>
         <LoginPanel
@@ -476,6 +507,7 @@ function App() {
           activeTab={activeTab}
           setActiveTab={setActiveTab}
           catalog={catalog}
+          systemSummary={systemSummary}
           projects={projects}
           loading={loading}
           onOpenProject={openProject}
@@ -515,6 +547,7 @@ function HomePage({
   activeTab,
   setActiveTab,
   catalog,
+  systemSummary,
   projects,
   loading,
   onOpenProject,
@@ -527,6 +560,7 @@ function HomePage({
   activeTab: HomeTab;
   setActiveTab: (tab: HomeTab) => void;
   catalog: ServiceSummary[];
+  systemSummary: SystemSummary | null;
   projects: Project[];
   loading: boolean;
   onOpenProject: (project: string) => void;
@@ -535,6 +569,7 @@ function HomePage({
 }) {
   return (
     <>
+      <SystemOverview summary={systemSummary} role={role} />
       <nav className="tabs" aria-label="main navigation">
         <button className={activeTab === "services" ? "active" : ""} onClick={() => setActiveTab("services")}>서비스 목록</button>
         <button className={activeTab === "projects" ? "active" : ""} onClick={() => setActiveTab("projects")}>내 프로젝트</button>
@@ -609,7 +644,7 @@ function LoginPanel({
       {session ? (
         <>
           <strong>{session.name || session.id}</strong>
-          <small>{session.role} · JSON auth</small>
+          <small>{session.role}</small>
           <button className="secondaryButton" onClick={onLogout}>로그아웃</button>
         </>
       ) : (
@@ -633,6 +668,36 @@ function LoginPanel({
   );
 }
 
+function SystemOverview({ summary, role }: { summary: SystemSummary | null; role: Role }) {
+  if (role === "visitor") return null;
+  const unhealthy = summary?.unhealthy || [];
+  const restarting = summary?.restarting || [];
+  return (
+    <section className="systemOverview">
+      <div className="systemMetric">
+        <span>Docker</span>
+        <strong>{summary?.docker ? "online" : "checking"}</strong>
+      </div>
+      <div className="systemMetric">
+        <span>컨테이너</span>
+        <strong>{summary ? `${summary.running || 0}/${summary.containers || 0}` : "-"}</strong>
+      </div>
+      <div className="systemMetric">
+        <span>메모리</span>
+        <strong>{formatPercent(summary?.memory_percent)}</strong>
+      </div>
+      <div className="systemMetric">
+        <span>디스크</span>
+        <strong>{formatPercent(summary?.disk_percent)}</strong>
+      </div>
+      <div className={`systemMetric ${unhealthy.length || restarting.length ? "warn" : ""}`}>
+        <span>주의</span>
+        <strong>{unhealthy.length + restarting.length || 0}</strong>
+      </div>
+    </section>
+  );
+}
+
 function ServiceCatalog({
   catalog,
   projects,
@@ -652,7 +717,6 @@ function ServiceCatalog({
       <div className="workspaceHeader">
         <div>
           <h2>서비스 목록</h2>
-          <p>메인에서는 전체 서비스 이름만 보여주고, 클릭 시 프로젝트 권한을 확인합니다.</p>
         </div>
         <button onClick={onRefresh}>새로고침</button>
       </div>
@@ -667,7 +731,7 @@ function ServiceCatalog({
             >
               <span className="catalogService">{item.service}</span>
               <span className="catalogProject">{item.project}</span>
-              <span className={`pill ${allowed ? "" : "warning"}`}>{allowed ? "접근 가능" : "권한 필요"}</span>
+              <span className={`pill ${allowed ? "" : "warning"}`}>{allowed ? "open" : "locked"}</span>
             </button>
           );
         })}
@@ -720,7 +784,6 @@ function LandingCard({
       <div className="workspaceHeader">
         <div>
           <h2>새 프로젝트 생성</h2>
-          <p>프로젝트 생성은 AI가 아니라 명시적 API로 처리합니다. 생성 후 상세 화면에서 프로젝트 AI 에이전트를 사용합니다.</p>
         </div>
       </div>
       <div className="createPanel">
@@ -740,12 +803,12 @@ function LandingCard({
           승인 생성
         </button>
       </div>
-      {role === "visitor" && <p className="hint">비유저는 로그인 후 프로젝트를 생성할 수 있습니다.</p>}
+      {role === "visitor" && <p className="hint">로그인 후 생성할 수 있습니다.</p>}
       {message && <p className="hint">{message}</p>}
       {preview !== null && (
         <div className="previewCard">
           <strong>생성 전 확인</strong>
-          <p><code>{name}</code> 프로젝트를 생성합니다. 승인하면 namespace, 기본 agent, 네트워크 구성이 만들어집니다.</p>
+          <p><code>{name}</code> 프로젝트를 생성합니다.</p>
         </div>
       )}
     </section>
@@ -770,7 +833,6 @@ function ProjectList({
       <div className="workspaceHeader">
         <div>
           <h2>내 프로젝트</h2>
-          <p>{session ? `${session.id} 계정의 JSON 멤버십 기준입니다.` : "로그인 후 접근 가능한 프로젝트를 표시합니다."}</p>
         </div>
       </div>
       {loading && <p className="hint">불러오는 중...</p>}
@@ -780,7 +842,7 @@ function ProjectList({
           <button key={project.name} className="projectCard" onClick={() => onSelect(project.name)}>
             <strong>{project.name}</strong>
             <span>{project.services?.length || 0} services</span>
-            <small>상세 workspace로 이동</small>
+            <small>{(project.services || []).join(", ") || "서비스 없음"}</small>
           </button>
         ))}
         {role !== "visitor" && projects.length === 0 && <p className="hint">아직 접근 가능한 프로젝트가 없습니다.</p>}
@@ -804,7 +866,11 @@ function ProjectWorkspace({
   const [runtimeServices, setRuntimeServices] = useState<Record<string, ServiceRuntime>>({});
   const [runtimeLoading, setRuntimeLoading] = useState(false);
   const [runtimeError, setRuntimeError] = useState("");
+  const [actionBusy, setActionBusy] = useState<string>("");
+  const [actionOutput, setActionOutput] = useState<ServiceActionOutput | null>(null);
   const services = project.services || [];
+  const runtimeList = Object.values(runtimeServices);
+  const summary = projectRuntimeSummary(runtimeList);
 
   async function refreshRuntime() {
     setRuntimeLoading(true);
@@ -838,12 +904,56 @@ function ProjectWorkspace({
     await Promise.all([onRefresh(), refreshRuntime()]);
   }
 
+  async function runServiceAction(
+    service: string,
+    action: "logs" | "start" | "stop" | "restart" | "redeploy"
+  ) {
+    const busyKey = `${service}:${action}`;
+    setActionBusy(busyKey);
+    setActionOutput(null);
+    try {
+      const body =
+        action === "logs"
+          ? { skill: "service.logs", arguments: { service, lines: 80 }, approved: true }
+          : action === "redeploy"
+            ? { skill: "service.redeploy", arguments: { service }, approved: true }
+            : { skill: "service.control", arguments: { service, action }, approved: true };
+      const data = await api<Record<string, unknown>>(`/api/projects/${project.name}/execute`, auth, {
+        method: "POST",
+        body: JSON.stringify(body)
+      });
+      if (action === "logs") {
+        const result = isRecord(data.result) ? data.result : {};
+        setActionOutput({
+          title: `${service} 로그`,
+          text: String(result.logs || "로그가 비어 있습니다."),
+          tone: "ok"
+        });
+      } else {
+        setActionOutput({
+          title: `${service} ${serviceActionLabel(action)}`,
+          text: `${serviceActionLabel(action)} 작업을 실행했고 상태를 다시 확인했습니다.`,
+          tone: "ok"
+        });
+        await Promise.all([onRefresh(), refreshRuntime()]);
+      }
+    } catch (err) {
+      setActionOutput({
+        title: `${service} ${serviceActionLabel(action)} 실패`,
+        text: err instanceof Error ? err.message : String(err),
+        tone: "error"
+      });
+    } finally {
+      setActionBusy("");
+    }
+  }
+
   return (
     <section className="workspace detailPage">
       <div className="workspaceHeader">
         <div>
           <h2>{project.name}</h2>
-          <p>{services.length}개 서비스 · 프로젝트 권한 범위 안에서만 작업합니다.</p>
+          <p>{summary.running}/{summary.total || services.length} running · {summary.memory}MB memory · {summary.publicCount} public URLs</p>
         </div>
         <div className="headerActions">
           <button onClick={() => setQuickPrompt(makeQuickPrompt("새 서비스 배포하고 싶어"))}>새 서비스 배포</button>
@@ -852,6 +962,8 @@ function ProjectWorkspace({
         </div>
       </div>
       {runtimeError && <div className="error compactError">{runtimeError}</div>}
+      <ProjectCapacity summary={summary} loading={runtimeLoading} />
+      {actionOutput ? <ActionOutput output={actionOutput} onClose={() => setActionOutput(null)} /> : null}
       <div className="serviceGrid">
         {services.map((service) => (
           <ServiceCard
@@ -859,9 +971,8 @@ function ProjectWorkspace({
             service={service}
             runtime={runtimeServices[service]}
             loading={runtimeLoading && !runtimeServices[service]}
-            onStatus={() => setQuickPrompt(makeQuickPrompt(`${service} 상태 확인해줘`))}
-            onLogs={() => setQuickPrompt(makeQuickPrompt(`${service} 로그 40줄 보여줘`))}
-            onRedeploy={() => setQuickPrompt(makeQuickPrompt(`${service} 재배포하고 싶어`))}
+            busyAction={actionBusy.startsWith(`${service}:`) ? actionBusy.split(":")[1] ?? "" : ""}
+            onAction={(action) => runServiceAction(service, action)}
           />
         ))}
         {services.length === 0 && (
@@ -889,35 +1000,114 @@ function formatMemory(memory?: RuntimeMemory | null) {
   return `${memory.usage_mb}MB${limit}${percent}`;
 }
 
+function formatPercent(value?: number | null) {
+  return typeof value === "number" ? `${value}%` : "-";
+}
+
+function firstHostPort(runtime?: ServiceRuntime) {
+  return (runtime?.container?.ports || []).find((port) => port.host)?.host;
+}
+
+function publicUrl(runtime?: ServiceRuntime) {
+  if (!runtime?.frontend) return "";
+  const hostPort = firstHostPort(runtime);
+  if (!hostPort) return "";
+  return `${window.location.protocol}//${window.location.hostname}:${hostPort}`;
+}
+
+function projectRuntimeSummary(services: ServiceRuntime[]) {
+  const running = services.filter((item) => item.container?.status === "running").length;
+  const memory = services.reduce((sum, item) => sum + (item.container?.memory?.usage_mb || 0), 0);
+  const publicCount = services.filter((item) => publicUrl(item)).length;
+  return {
+    running,
+    total: services.length,
+    memory: Math.round(memory * 10) / 10,
+    publicCount
+  };
+}
+
 function statusLabel(status?: string, health?: string | null) {
   if (!status) return "unknown";
   return health ? `${status} · ${health}` : status;
+}
+
+function serviceActionLabel(action: string) {
+  const labels: Record<string, string> = {
+    logs: "로그 조회",
+    start: "시작",
+    stop: "중지",
+    restart: "재시작",
+    redeploy: "재배포"
+  };
+  return labels[action] || action;
+}
+
+function ProjectCapacity({
+  summary,
+  loading
+}: {
+  summary: ReturnType<typeof projectRuntimeSummary>;
+  loading: boolean;
+}) {
+  return (
+    <div className="capacityStrip">
+      <div>
+        <span>실행 상태</span>
+        <strong>{loading ? "확인 중" : `${summary.running}/${summary.total} running`}</strong>
+      </div>
+      <div>
+        <span>메모리</span>
+        <strong>{summary.memory}MB</strong>
+      </div>
+      <div>
+        <span>외부 URL</span>
+        <strong>{summary.publicCount}</strong>
+      </div>
+    </div>
+  );
+}
+
+function ActionOutput({ output, onClose }: { output: ServiceActionOutput; onClose: () => void }) {
+  return (
+    <div className={`actionOutput ${output.tone || "ok"}`}>
+      <div>
+        <strong>{output.title}</strong>
+        <button className="secondaryButton" onClick={onClose}>닫기</button>
+      </div>
+      <pre>{output.text}</pre>
+    </div>
+  );
 }
 
 function ServiceCard({
   service,
   runtime,
   loading,
-  onStatus,
-  onLogs,
-  onRedeploy
+  busyAction,
+  onAction
 }: {
   service: string;
   runtime?: ServiceRuntime;
   loading: boolean;
-  onStatus: () => void;
-  onLogs: () => void;
-  onRedeploy: () => void;
+  busyAction: string;
+  onAction: (action: "logs" | "start" | "stop" | "restart" | "redeploy") => void;
 }) {
   const container = runtime?.container;
   const status = container?.status || (loading ? "loading" : "unknown");
   const isRunning = status === "running";
+  const url = publicUrl(runtime);
   return (
     <div className="service" key={service}>
       <div className="serviceTop">
         <strong>{service}</strong>
         <span className={`pill ${isRunning ? "" : "warning"}`}>{statusLabel(status, container?.health)}</span>
       </div>
+      {url ? (
+        <a className="serviceUrl" href={url} target="_blank" rel="noreferrer">{url}</a>
+      ) : (
+        <span className="serviceUrl mutedUrl">{runtime?.frontend ? "공개 URL 없음" : "내부 서비스"}</span>
+      )}
       <dl className="serviceMetrics">
         <div>
           <dt>포트</dt>
@@ -929,13 +1119,22 @@ function ServiceCard({
         </div>
         <div>
           <dt>재시작</dt>
-          <dd>{container?.restart_count ?? 0}회</dd>
+          <dd>{container?.restart_count ?? 0}</dd>
         </div>
       </dl>
       <div className="serviceActions">
-        <button onClick={onStatus}>상태</button>
-        <button onClick={onLogs}>로그</button>
-        <button onClick={onRedeploy}>재배포</button>
+        <button onClick={() => onAction("logs")} disabled={Boolean(busyAction)}>
+          {busyAction === "logs" ? "조회 중" : "로그"}
+        </button>
+        <button onClick={() => onAction(isRunning ? "stop" : "start")} disabled={Boolean(busyAction)}>
+          {busyAction === "stop" || busyAction === "start" ? "처리 중" : isRunning ? "중지" : "시작"}
+        </button>
+        <button onClick={() => onAction("restart")} disabled={Boolean(busyAction) || !container}>
+          {busyAction === "restart" ? "재시작 중" : "재시작"}
+        </button>
+        <button onClick={() => onAction("redeploy")} disabled={Boolean(busyAction)}>
+          {busyAction === "redeploy" ? "배포 중" : "재배포"}
+        </button>
       </div>
     </div>
   );
@@ -1146,17 +1345,16 @@ function AgentPanel({
     <section className="agent">
       <div className="agentTitle">
         <div>
-          <h3>프로젝트 AI 에이전트</h3>
-          <p>서비스 배포·상태·로그·재배포를 이 프로젝트 범위에서만 처리합니다.</p>
+          <h3>AI 작업</h3>
+          <p>배포 · 상태 · 로그 · 재배포</p>
         </div>
-        <span className="pill">session scoped</span>
       </div>
       <div className="agentShortcuts">
         <button className={showDeployGuide ? "active" : ""} onClick={() => setShowDeployGuide((value) => !value)}>
-          새 서비스 배포 가이드
+          새 서비스 배포
         </button>
         <button className="secondaryButton" onClick={() => sendText("서비스 목록 보여줘")} disabled={busy}>
-          서비스 목록
+          상태 요약
         </button>
         <button className="secondaryButton" onClick={() => sendText("지원하는 프레임워크와 각각 언제 쓰는지 알려줘")} disabled={busy}>
           프레임워크 도움말
@@ -1462,7 +1660,6 @@ function AdminConsole({ auth }: { auth: AuthHeaders }) {
       <div className="workspaceHeader">
         <div>
           <h2>루트 AI 에이전트</h2>
-          <p>어드민만 접근하는 전체 프로젝트 관리용 에이전트 영역입니다.</p>
         </div>
       </div>
       <div className="agent">
