@@ -560,11 +560,19 @@ function HomePage({
 
   return (
     <div className="homeSurface">
-      <nav className="homeTabs" aria-label="console sections">
-        <button className={tab === "all" ? "active" : ""} onClick={() => setTab("all")}>전체 프로젝트</button>
-        <button className={tab === "mine" ? "active" : ""} onClick={() => setTab("mine")}>내 프로젝트</button>
-        <button className={tab === "create" ? "active" : ""} onClick={() => setTab("create")}>새 프로젝트</button>
-      </nav>
+      <div className="homeToolbar">
+        <nav className="homeTabs" aria-label="console sections">
+          <button className={tab === "all" ? "active" : ""} onClick={() => setTab("all")}>전체 프로젝트</button>
+          <button className={tab === "mine" ? "active" : ""} onClick={() => setTab("mine")}>내 프로젝트</button>
+          <button className={tab === "create" ? "active" : ""} onClick={() => setTab("create")}>새 프로젝트</button>
+        </nav>
+        <span className="homeSessionHint">
+          {session ? `${session.name || session.id} · ${session.role}` : "로그인하면 프로젝트를 열 수 있습니다"}
+        </span>
+      </div>
+
+      <SystemOverview summary={systemSummary} role={role} />
+
       <div className="homeDashboard">
         {tab === "all" && (
           <ProjectList
@@ -593,10 +601,6 @@ function HomePage({
         {tab === "create" && (
           <LandingCard auth={auth} onCreated={onCreated} />
         )}
-        <aside className="homeRail">
-          <SystemOverview summary={systemSummary} role={role} />
-          {tab !== "create" && <LandingCard auth={auth} onCreated={onCreated} compact />}
-        </aside>
       </div>
     </div>
   );
@@ -757,6 +761,7 @@ function LandingCard({
       <div className="workspaceHeader">
         <div>
           <h2>새 프로젝트</h2>
+          <p>프로젝트 이름을 정하고 생성 계획을 확인한 뒤 승인합니다.</p>
         </div>
       </div>
       <div className="createPanel">
@@ -816,24 +821,20 @@ function ProjectList({
         </div>
       </div>
       {loading && <p className="hint">불러오는 중...</p>}
-      <div className="projectGrid">
+      <div className="projectIndex" role="list">
         {projects.map((project) => {
           const canOpen = role === "admin" || ownedProjects.has(project.name);
           const locked = readOnly || !canOpen;
           return (
-            <button
+            <article
               key={project.name}
-              className={`projectCard ${locked ? "locked" : ""}`}
-              onClick={() => onSelect(project.name)}
-              aria-label={locked ? `${project.name} 프로젝트는 로그인 또는 권한이 필요합니다.` : `${project.name} 프로젝트 열기`}
+              className={`projectRow ${locked ? "locked" : ""}`}
+              role="listitem"
             >
-              <span className={`projectCardMeta ${locked ? "locked" : ""}`}>
-                {locked ? "권한 필요" : "열기 가능"}
-              </span>
-              <span className="projectCardMain">
+              <div className="projectNameCell">
                 <strong>{project.name}</strong>
                 <small>{project.services?.length || 0} services</small>
-              </span>
+              </div>
               <span className="projectServiceChips">
                 {(project.services || []).slice(0, 4).map((service) => (
                   <span key={service}>{service}</span>
@@ -841,8 +842,17 @@ function ProjectList({
                 {(project.services || []).length > 4 && <span>+{(project.services || []).length - 4}</span>}
                 {!(project.services || []).length && <span>서비스 없음</span>}
               </span>
-              <span className="projectCardAction">{locked ? "로그인 후 접근" : "프로젝트 열기 →"}</span>
-            </button>
+              <span className={`projectAccess ${locked ? "locked" : ""}`}>
+                {locked ? "권한 필요" : "접근 가능"}
+              </span>
+              <button
+                className="projectOpenButton"
+                onClick={() => onSelect(project.name)}
+                aria-label={locked ? `${project.name} 프로젝트는 로그인 또는 권한이 필요합니다.` : `${project.name} 프로젝트 열기`}
+              >
+                {locked ? "확인" : "열기"}
+              </button>
+            </article>
           );
         })}
         {projects.length === 0 && <p className="hint">표시할 프로젝트가 없습니다.</p>}
@@ -949,27 +959,27 @@ function ProjectWorkspace({
   }
 
   return (
-    <section className="workspace detailPage">
-      <div className="workspaceHeader detailHeader">
-        <div>
+    <section className="detailPage">
+      <div className="projectHero">
+        <div className="projectHeroMain">
+          <button className="textButton" onClick={onBack}>← 프로젝트</button>
           <h2>{project.name}</h2>
-          <p>이 프로젝트 안의 서비스만 조회하고 조작합니다.</p>
+          <ProjectCapacity summary={summary} loading={runtimeLoading} />
         </div>
         <div className="headerActions">
           <button onClick={() => setQuickPrompt(makeQuickPrompt("새 서비스 배포하고 싶어"))}>새 서비스 배포</button>
           <button className="secondaryButton" onClick={onBack}>메인으로</button>
-          <button onClick={refreshWorkspace} disabled={runtimeLoading}>{runtimeLoading ? "확인 중..." : "새로고침"}</button>
+          <button className="secondaryButton" onClick={refreshWorkspace} disabled={runtimeLoading}>{runtimeLoading ? "확인 중..." : "새로고침"}</button>
         </div>
       </div>
       {runtimeError && <div className="error compactError">{runtimeError}</div>}
-      <ProjectCapacity summary={summary} loading={runtimeLoading} />
 
       <div className="projectDetailLayout">
         <main className="operationsPanel">
           <div className="panelHeader">
             <div>
-              <h3>서비스 운영</h3>
-              <p>상태와 URL을 확인하고 로그, 시작·중지, 재시작, 재배포를 바로 실행합니다.</p>
+              <h3>서비스</h3>
+              <p>URL, 상태, 로그, 재배포를 한 곳에서 처리합니다.</p>
             </div>
             <span className="panelMeta">{services.length} services</span>
           </div>

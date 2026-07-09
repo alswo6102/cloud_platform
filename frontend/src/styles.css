@@ -1408,6 +1408,437 @@ pre {
   text-transform: uppercase;
 }
 
+/* Impeccable console redesign: project index first, operations second, AI as assistant. */
+.shell {
+  width: min(1440px, calc(100vw - 48px));
+  padding: 0.75rem 0 3rem;
+}
+
+.appHeader {
+  min-height: 56px;
+  margin-bottom: 1.45rem;
+  padding: 0.45rem 0 0.7rem;
+}
+
+.brandMark {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+}
+
+.brandLockup strong {
+  font-size: 0.95rem;
+}
+
+.brandLockup span:not(.brandMark) {
+  font-size: 0.76rem;
+}
+
+.homeSurface {
+  gap: 1rem;
+}
+
+.homeToolbar {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: center;
+}
+
+.homeSessionHint {
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 680;
+}
+
+.homeTabs {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
+  gap: 0.2rem;
+}
+
+.homeTabs button {
+  min-height: 34px;
+  border: 0;
+  border-radius: 8px;
+  padding: 0.42rem 0.66rem;
+  background: transparent;
+  color: #5f6d7f;
+  font-size: 0.86rem;
+}
+
+.homeTabs button.active {
+  border: 0;
+  background: #eaf1ff;
+  color: var(--gold);
+}
+
+.homeDashboard {
+  display: block;
+}
+
+.systemOverview {
+  position: static;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1.4rem;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #ffffff;
+  padding: 0.72rem 0.85rem;
+  box-shadow: none;
+}
+
+.resourceHeader {
+  min-width: 150px;
+  justify-content: flex-start;
+}
+
+.resourceHeader span {
+  font-size: 0.72rem;
+}
+
+.resourceHeader strong {
+  font-size: 0.88rem;
+}
+
+.gaugeRow {
+  display: flex;
+  gap: 0.8rem;
+}
+
+.gauge {
+  grid-template-columns: auto auto;
+  justify-items: start;
+  align-items: center;
+  gap: 0.38rem;
+}
+
+.gaugeDial {
+  width: 34px;
+}
+
+.gaugeDial strong {
+  font-size: 0.64rem;
+}
+
+.gauge > span {
+  font-size: 0.74rem;
+}
+
+.projectBoard {
+  padding: 0;
+}
+
+.projectBoard .workspaceHeader {
+  margin-bottom: 0.7rem;
+}
+
+.projectBoard .workspaceHeader h2 {
+  font-size: 1.22rem;
+}
+
+.projectBoard .workspaceHeader p {
+  margin-top: 0.24rem;
+  color: #5f6d7f;
+  font-size: 0.88rem;
+}
+
+.projectIndex {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #ffffff;
+}
+
+.projectRow {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.8fr) minmax(260px, 1.4fr) auto auto;
+  gap: 1rem;
+  align-items: center;
+  min-height: 68px;
+  padding: 0.82rem 0.95rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.projectRow:last-child {
+  border-bottom: 0;
+}
+
+.projectRow:hover {
+  background: #fbfdff;
+}
+
+.projectRow.locked {
+  background: #fcfdff;
+}
+
+.projectNameCell {
+  display: grid;
+  gap: 0.1rem;
+  min-width: 0;
+}
+
+.projectNameCell strong {
+  color: var(--ink);
+  font-size: 1rem;
+  letter-spacing: -0.015em;
+}
+
+.projectNameCell small {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 680;
+}
+
+.projectAccess {
+  width: fit-content;
+  border-radius: var(--r-pill);
+  background: #ecfdf3;
+  color: var(--success);
+  padding: 0.2rem 0.5rem;
+  font-size: 0.72rem;
+  font-weight: 780;
+  white-space: nowrap;
+}
+
+.projectAccess.locked {
+  background: #fff7ed;
+  color: var(--warning);
+}
+
+.projectOpenButton {
+  min-height: 32px;
+  border-color: var(--line);
+  border-radius: 8px;
+  background: #ffffff;
+  color: var(--ink);
+  padding: 0.36rem 0.62rem;
+  font-size: 0.82rem;
+}
+
+.projectOpenButton:hover:not(:disabled) {
+  border-color: var(--gold);
+  background: #eff6ff;
+  color: var(--gold);
+  transform: none;
+}
+
+.projectServiceChips {
+  grid-column: auto;
+  gap: 0.3rem;
+}
+
+.projectServiceChips span {
+  border-color: #dfe7f2;
+  background: #f8fafc;
+  color: #334155 !important;
+}
+
+.createProject {
+  max-width: 720px;
+  border-radius: 12px;
+  box-shadow: none;
+}
+
+.createPanel {
+  grid-template-columns: minmax(0, 1fr) auto auto;
+}
+
+.detailPage {
+  display: grid;
+  gap: 1rem;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}
+
+.projectHero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 1rem;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #ffffff;
+  padding: 1rem 1.1rem;
+}
+
+.projectHeroMain {
+  min-width: 0;
+  display: grid;
+  gap: 0.55rem;
+}
+
+.projectHero h2 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 1.45rem;
+  letter-spacing: -0.025em;
+}
+
+.textButton {
+  justify-self: start;
+  min-height: auto;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  padding: 0;
+  font-size: 0.82rem;
+}
+
+.textButton:hover:not(:disabled) {
+  background: transparent;
+  color: var(--gold);
+  transform: none;
+}
+
+.projectHero .capacityStrip {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.projectHero .capacityStrip > div {
+  min-width: 120px;
+  border-radius: 999px;
+  padding: 0.38rem 0.62rem;
+  box-shadow: none;
+}
+
+.projectHero .capacityStrip span,
+.projectHero .capacityStrip strong {
+  display: inline;
+  font-size: 0.78rem;
+}
+
+.projectHero .capacityStrip span::after {
+  content: " ";
+}
+
+.projectDetailLayout {
+  grid-template-columns: minmax(0, 1fr) 360px;
+  gap: 1rem;
+}
+
+.operationsPanel,
+.agentSidePanel {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #ffffff;
+  box-shadow: none;
+}
+
+.operationsPanel {
+  padding: 1rem;
+}
+
+.panelHeader {
+  margin-bottom: 0.65rem;
+}
+
+.panelHeader h3 {
+  font-size: 1rem;
+}
+
+.panelHeader p {
+  color: #5f6d7f;
+  font-size: 0.84rem;
+}
+
+.panelMeta {
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.serviceTable {
+  min-width: 820px;
+  border-collapse: collapse;
+  border-spacing: 0;
+  font-size: 0.84rem;
+}
+
+.serviceTable th {
+  position: static;
+  border-bottom: 1px solid var(--line);
+  background: #ffffff;
+  padding: 0.62rem 0.58rem;
+}
+
+.serviceTable td {
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  background: #ffffff;
+  padding: 0.72rem 0.58rem;
+}
+
+.serviceTable td:first-child,
+.serviceTable td:last-child {
+  border-left: 0;
+  border-right: 0;
+  border-radius: 0;
+}
+
+.serviceTable tbody tr:hover td {
+  background: #fbfdff;
+}
+
+.serviceActions {
+  gap: 0.32rem;
+}
+
+.compactActions {
+  min-width: 0;
+}
+
+.serviceActions button {
+  min-height: 30px;
+  border-radius: 7px;
+  padding: 0.34rem 0.48rem;
+  font-size: 0.78rem;
+}
+
+.agentSidePanel {
+  top: 76px;
+  overflow: hidden;
+}
+
+.agentPanel {
+  padding: 1rem;
+}
+
+.agentTitle {
+  margin-bottom: 0.7rem;
+}
+
+.agentTitle h3 {
+  font-size: 1rem;
+}
+
+.agentTitle p {
+  color: #5f6d7f;
+  font-size: 0.84rem;
+}
+
+.agentShortcuts button {
+  min-height: 32px;
+  border-radius: 8px;
+  padding: 0.38rem 0.54rem;
+  font-size: 0.8rem;
+}
+
+.emptyChat {
+  border-style: solid;
+  background: #f8fafc;
+}
+
 @keyframes spin {
   to {
     transform: rotate(360deg);
@@ -1464,8 +1895,37 @@ pre {
   .systemOverview,
   .homeDashboard,
   .capacityStrip,
+  .projectHero,
   .projectDetailLayout {
     grid-template-columns: 1fr;
+  }
+
+  .homeToolbar,
+  .projectHero {
+    align-items: stretch;
+  }
+
+  .homeToolbar {
+    flex-direction: column;
+  }
+
+  .homeSessionHint {
+    display: none;
+  }
+
+  .systemOverview {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .projectRow {
+    grid-template-columns: 1fr;
+    gap: 0.55rem;
+  }
+
+  .projectOpenButton,
+  .projectAccess {
+    justify-self: start;
   }
 
   .projectGrid {
