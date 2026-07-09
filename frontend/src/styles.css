@@ -5,14 +5,14 @@
   --bg: #f7f8fa;
   --bg-deep: #eef1f5;
   --panel: #ffffff;
-  --panel-2: #f5f7fa;
-  --panel-3: #eef2ff;
+  --panel-2: #f8fafc;
+  --panel-3: #eef5ff;
   --ink: #111827;
   --text: #1f2937;
   --muted: #667085;
   --faint: #98a2b3;
-  --line: #e4e7ec;
-  --line-strong: #c7d7fe;
+  --line: #e6ebf2;
+  --line-strong: #bfd4ff;
   --gold: #2563eb;
   --gold-soft: #1d4ed8;
   --gold-deep: #1e40af;
@@ -311,16 +311,16 @@ pre {
   border: 1px solid var(--line);
   border-radius: var(--r-md);
   background: var(--panel);
-  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.04);
   padding: 1rem;
 }
 
 .projectBoard {
-  min-height: 460px;
-  padding: 1.35rem;
-  border-color: #d4def2;
-  background:
-    linear-gradient(180deg, #ffffff 0%, #fbfcff 100%);
+  min-height: 420px;
+  padding: 1.2rem;
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
 }
 
 .projectBoard .workspaceHeader {
@@ -328,8 +328,8 @@ pre {
 }
 
 .projectBoard .workspaceHeader h2 {
-  font-size: 1.65rem;
-  letter-spacing: -0.035em;
+  font-size: 1.45rem;
+  letter-spacing: -0.03em;
 }
 
 .workspace + .workspace {
@@ -343,7 +343,7 @@ pre {
   border-radius: var(--r-sm);
   background: var(--panel);
   padding: 0.95rem;
-  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.03);
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.04);
   position: sticky;
   top: 74px;
 }
@@ -362,38 +362,6 @@ pre {
 
 .compactCreate .createPanel {
   grid-template-columns: 1fr;
-}
-
-.compactCatalog {
-  padding: 0.95rem;
-}
-
-.compactCatalog .workspaceHeader {
-  margin-bottom: 0.72rem;
-}
-
-.compactCatalog .workspaceHeader h2 {
-  font-size: 1.05rem;
-}
-
-.compactCatalog .catalogGrid {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.45rem;
-}
-
-.compactCatalog .catalogCard {
-  min-height: 0;
-  width: auto;
-  display: inline-flex;
-  align-items: center;
-  gap: 0.55rem;
-  padding: 0.5rem 0.62rem;
-}
-
-.compactCatalog .catalogService,
-.compactCatalog .catalogProject {
-  font-size: 0.82rem;
 }
 
 .resourceHeader {
@@ -533,77 +501,43 @@ pre {
   color: #b91c1c;
 }
 
-.catalogGrid,
 .projectGrid {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
   gap: 0.75rem;
 }
 
-.catalogCard,
 .projectCard {
-  min-height: 150px;
+  min-height: 154px;
   display: grid;
   align-content: space-between;
   gap: 0.8rem;
   text-align: left;
   border: 1px solid var(--line);
-  border-radius: var(--r-sm);
+  border-radius: var(--r-md);
   background: var(--panel);
   color: var(--text);
   padding: 1rem;
-}
-
-.catalogCard {
-  grid-column: span 2;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.035);
 }
 
 .projectCard {
-  grid-column: span 3;
-  min-height: 172px;
+  grid-column: auto;
 }
 
-.projectCard:first-of-type {
-  grid-column: span 4;
-  min-height: 220px;
-  background:
-    linear-gradient(135deg, #ffffff 0%, #f7faff 58%, #eef4ff 100%);
-  border-color: #bcd3ff;
-}
-
-.projectCard:nth-of-type(2) {
-  grid-column: span 2;
-}
-
-.catalogCard:hover:not(:disabled),
 .projectCard:hover:not(:disabled) {
   border-color: var(--line-strong);
   background: #f8fbff;
+  transform: translateY(-1px);
 }
 
-.catalogCard.locked {
-  color: var(--faint);
-  border-style: dashed;
-}
-
-.catalogService,
 .projectCard strong {
   color: var(--ink);
-  font-size: 1.48rem;
+  font-size: 1.22rem;
   font-weight: 760;
   letter-spacing: -0.015em;
 }
 
-.projectCard:first-of-type strong {
-  font-size: 2rem;
-  letter-spacing: -0.04em;
-}
-
-.catalogService {
-  font-size: 1.02rem;
-}
-
-.catalogProject,
 .projectCard span,
 .projectCard small {
   color: var(--muted);
@@ -673,11 +607,11 @@ pre {
 }
 
 .detailHeader {
-  border: 1px solid var(--line);
+  border: 1px solid transparent;
   border-radius: var(--r-md);
-  background: var(--panel);
+  background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
   padding: 1rem;
-  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.04);
 }
 
 .projectDetailLayout {
@@ -690,10 +624,10 @@ pre {
 .operationsPanel,
 .agentSidePanel {
   min-width: 0;
-  border: 1px solid var(--line);
+  border: 1px solid transparent;
   border-radius: var(--r-md);
   background: var(--panel);
-  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.055);
 }
 
 .operationsPanel {
@@ -743,21 +677,21 @@ pre {
 
 .serviceTableWrap {
   overflow: auto;
-  border: 1px solid var(--line);
-  border-radius: var(--r-sm);
+  border: 0;
+  border-radius: var(--r-md);
 }
 
 .serviceTable {
   width: 100%;
   min-width: 860px;
-  border-collapse: collapse;
+  border-collapse: separate;
+  border-spacing: 0 0.46rem;
   color: var(--text);
   font-size: 0.86rem;
 }
 
 .serviceTable th,
 .serviceTable td {
-  border-bottom: 1px solid var(--line);
   padding: 0.72rem 0.78rem;
   text-align: left;
   vertical-align: middle;
@@ -767,17 +701,36 @@ pre {
   position: sticky;
   top: 0;
   z-index: 1;
-  background: var(--panel-2);
+  background: var(--panel);
   color: var(--muted);
   font-size: 0.74rem;
   font-weight: 800;
 }
 
-.serviceTable tbody tr:last-child td {
-  border-bottom: 0;
+.serviceTable td {
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+
+.serviceTable td:first-child {
+  border-left: 1px solid var(--line);
+  border-top-left-radius: var(--r-md);
+  border-bottom-left-radius: var(--r-md);
+}
+
+.serviceTable td:last-child {
+  border-right: 1px solid var(--line);
+  border-top-right-radius: var(--r-md);
+  border-bottom-right-radius: var(--r-md);
 }
 
 .serviceTable tbody tr:hover {
+  background: transparent;
+}
+
+.serviceTable tbody tr:hover td {
+  border-color: var(--line-strong);
   background: #f8fbff;
 }
 
@@ -939,6 +892,17 @@ pre {
   min-height: 34px;
   padding: 0.42rem 0.56rem;
   font-size: 0.82rem;
+}
+
+.serviceActions .dangerButton {
+  border-color: #fecaca;
+  color: #b91c1c;
+}
+
+.serviceActions .dangerButton:hover:not(:disabled) {
+  border-color: #fca5a5;
+  background: var(--danger-bg);
+  color: #991b1b;
 }
 
 .capacityStrip {
@@ -1429,12 +1393,10 @@ pre {
     grid-template-columns: 1fr;
   }
 
-  .catalogGrid,
   .projectGrid {
     grid-template-columns: 1fr;
   }
 
-  .catalogCard,
   .projectCard,
   .projectCard:first-of-type,
   .projectCard:nth-of-type(2) {

@@ -23,11 +23,6 @@ type Project = {
   services?: string[];
 };
 
-type ServiceSummary = {
-  project: string;
-  service: string;
-};
-
 type RuntimePort = {
   host?: number | string;
   container?: number | string;
@@ -353,7 +348,6 @@ function makeQuickPrompt(text: string): QuickPrompt {
 function App() {
   const [session, setSession] = useState<AuthSession>(() => loadStoredSession());
   const [projects, setProjects] = useState<Project[]>([]);
-  const [catalog, setCatalog] = useState<ServiceSummary[]>([]);
   const [systemSummary, setSystemSummary] = useState<SystemSummary | null>(null);
   const [page, setPage] = useState<Page>(() => pageFromLocation());
   const [error, setError] = useState("");
@@ -368,15 +362,6 @@ function App() {
     ? projects.find((project) => project.name === page.project)
     : undefined;
   const projectNames = useMemo(() => new Set(projects.map((project) => project.name)), [projects]);
-
-  async function refreshCatalog() {
-    try {
-      const data = await api<{ services: ServiceSummary[] }>("/api/catalog", visitorAuth);
-      setCatalog(data.services || []);
-    } catch {
-      setCatalog([]);
-    }
-  }
 
   async function refreshProjects() {
     if (role === "visitor") {
@@ -411,12 +396,8 @@ function App() {
   }
 
   async function refreshAll() {
-    await Promise.all([refreshCatalog(), refreshProjects(), refreshSystemSummary()]);
+    await Promise.all([refreshProjects(), refreshSystemSummary()]);
   }
-
-  useEffect(() => {
-    refreshCatalog();
-  }, []);
 
   useEffect(() => {
     const handlePopState = () => setPage(pageFromLocation());
@@ -498,7 +479,6 @@ function App() {
           auth={auth}
           role={role}
           session={session}
-          catalog={catalog}
           systemSummary={systemSummary}
           projects={projects}
           loading={loading}
@@ -536,24 +516,20 @@ function HomePage({
   auth,
   role,
   session,
-  catalog,
   systemSummary,
   projects,
   loading,
   onOpenProject,
-  onCreated,
-  onRefresh
+  onCreated
 }: {
   auth: AuthHeaders;
   role: Role;
   session: AuthSession;
-  catalog: ServiceSummary[];
   systemSummary: SystemSummary | null;
   projects: Project[];
   loading: boolean;
   onOpenProject: (project: string) => void;
   onCreated: (project: string) => Promise<void>;
-  onRefresh: () => Promise<void>;
 }) {
   return (
     <div className="homeSurface">
@@ -569,16 +545,6 @@ function HomePage({
           <SystemOverview summary={systemSummary} role={role} />
           <LandingCard auth={auth} onCreated={onCreated} compact />
         </aside>
-      </div>
-      <div className="secondarySurface">
-        <ServiceCatalog
-          catalog={catalog}
-          projects={projects}
-          role={role}
-          onOpenProject={onOpenProject}
-          onRefresh={onRefresh}
-          compact
-        />
       </div>
     </div>
   );
@@ -694,51 +660,6 @@ function CircularGauge({ label, value }: { label: string; value?: number | null 
   );
 }
 
-function ServiceCatalog({
-  catalog,
-  projects,
-  role,
-  onOpenProject,
-  onRefresh,
-  compact = false
-}: {
-  catalog: ServiceSummary[];
-  projects: Project[];
-  role: Role;
-  onOpenProject: (project: string) => void;
-  onRefresh: () => Promise<void>;
-  compact?: boolean;
-}) {
-  const owned = new Set(projects.map((project) => project.name));
-  return (
-    <section className={compact ? "workspace serviceCatalog compactCatalog" : "workspace serviceCatalog"}>
-      <div className="workspaceHeader">
-        <div>
-          <h2>전체 서비스</h2>
-        </div>
-        <button onClick={onRefresh}>새로고침</button>
-      </div>
-      <div className="catalogGrid">
-        {catalog.map((item) => {
-          const allowed = role === "admin" || owned.has(item.project);
-          return (
-            <button
-              key={`${item.project}:${item.service}`}
-              className={`catalogCard ${allowed ? "" : "locked"}`}
-              onClick={() => onOpenProject(item.project)}
-            >
-              <span className="catalogService">{item.service}</span>
-              <span className="catalogProject">{item.project}</span>
-              <span className={`pill ${allowed ? "" : "warning"}`}>{allowed ? "open" : "locked"}</span>
-            </button>
-          );
-        })}
-        {catalog.length === 0 && <p className="hint">아직 표시할 서비스가 없습니다.</p>}
-      </div>
-    </section>
-  );
-}
-
 function LandingCard({
   auth,
   onCreated,
@@ -832,7 +753,8 @@ function ProjectList({
     <section className="workspace projectBoard">
       <div className="workspaceHeader">
         <div>
-          <h2>내 프로젝트</h2>
+          <h2>Projects</h2>
+          <p>{role === "admin" ? "관리 가능한 프로젝트입니다." : "접근 권한이 있는 프로젝트입니다."}</p>
         </div>
       </div>
       {loading && <p className="hint">불러오는 중...</p>}
@@ -1173,8 +1095,11 @@ function ServiceRow({
           <button onClick={() => onAction("logs")} disabled={Boolean(busyAction)}>
             {busyAction === "logs" ? "조회 중" : "로그"}
           </button>
-          <button onClick={() => onAction(isRunning ? "stop" : "start")} disabled={Boolean(busyAction)}>
-            {busyAction === "stop" || busyAction === "start" ? "처리 중" : isRunning ? "중지" : "시작"}
+          <button onClick={() => onAction("start")} disabled={Boolean(busyAction) || isRunning}>
+            {busyAction === "start" ? "시작 중" : "시작"}
+          </button>
+          <button className="dangerButton" onClick={() => onAction("stop")} disabled={Boolean(busyAction) || !isRunning}>
+            {busyAction === "stop" ? "중지 중" : "중지"}
           </button>
           <button onClick={() => onAction("restart")} disabled={Boolean(busyAction) || !container}>
             {busyAction === "restart" ? "재시작 중" : "재시작"}
