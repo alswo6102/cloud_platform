@@ -2,10 +2,10 @@
   color-scheme: light;
   font-family: Inter, Pretendard, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 
-  --bg: #f6f7fb;
-  --bg-deep: #eef2f7;
+  --bg: #f7f8fa;
+  --bg-deep: #eef1f5;
   --panel: #ffffff;
-  --panel-2: #f8fafc;
+  --panel-2: #f5f7fa;
   --panel-3: #eef2ff;
   --ink: #111827;
   --text: #1f2937;
@@ -130,9 +130,9 @@ pre {
 }
 
 .shell {
-  width: min(1180px, calc(100vw - 32px));
+  width: min(1280px, calc(100vw - 32px));
   margin: 0 auto;
-  padding: 1rem 0 2rem;
+  padding: 0.65rem 0 2.5rem;
 }
 
 .appHeader {
@@ -143,14 +143,13 @@ pre {
   justify-content: space-between;
   align-items: center;
   gap: 1rem;
-  min-height: 68px;
-  margin: 0 -4px 1rem;
-  padding: 0.72rem 0.8rem;
-  border: 1px solid var(--line);
-  border-radius: var(--r-md);
-  background: rgba(255, 255, 255, 0.92);
+  min-height: 58px;
+  margin: 0 0 1.15rem;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid var(--line);
+  background: rgba(247, 248, 250, 0.9);
   backdrop-filter: blur(16px);
-  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+  box-shadow: none;
 }
 
 .brandLockup {
@@ -161,8 +160,8 @@ pre {
 }
 
 .brandMark {
-  width: 34px;
-  height: 34px;
+  width: 30px;
+  height: 30px;
   display: grid;
   place-items: center;
   border: 1px solid var(--line-strong);
@@ -244,7 +243,12 @@ pre {
   display: flex;
   flex-wrap: wrap;
   gap: 0.45rem;
-  margin: 0.85rem 0 0.8rem;
+  margin: 0 0 0.9rem;
+  padding: 0.22rem;
+  width: fit-content;
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  background: var(--panel);
 }
 
 .tabs button,
@@ -258,7 +262,9 @@ pre {
 }
 
 .tabs button {
-  min-height: 38px;
+  min-height: 34px;
+  border-radius: var(--r-pill);
+  padding: 0.42rem 0.72rem;
   color: var(--muted);
 }
 
@@ -282,8 +288,8 @@ pre {
 
 .homeDashboard {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 280px;
-  gap: 0.9rem;
+  grid-template-columns: minmax(0, 1fr) 260px;
+  gap: 1.05rem;
   align-items: start;
 }
 
@@ -293,6 +299,20 @@ pre {
   background: var(--panel);
   box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
   padding: 1rem;
+}
+
+.projectBoard {
+  min-height: 420px;
+  padding: 1.2rem;
+}
+
+.projectBoard .workspaceHeader {
+  margin-bottom: 1.15rem;
+}
+
+.projectBoard .workspaceHeader h2 {
+  font-size: 1.65rem;
+  letter-spacing: -0.035em;
 }
 
 .workspace + .workspace {
@@ -307,6 +327,8 @@ pre {
   background: var(--panel);
   padding: 0.95rem;
   box-shadow: 0 1px 2px rgba(16, 24, 40, 0.03);
+  position: sticky;
+  top: 74px;
 }
 
 .resourceHeader {
@@ -346,7 +368,7 @@ pre {
 
 .gaugeDial {
   --value: 0%;
-  width: 96px;
+  width: 88px;
   aspect-ratio: 1;
   display: grid;
   place-items: center;
@@ -449,8 +471,8 @@ pre {
 .catalogGrid,
 .projectGrid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-  gap: 0.72rem;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 0.75rem;
 }
 
 .catalogCard,
@@ -467,10 +489,31 @@ pre {
   padding: 1rem;
 }
 
+.catalogCard {
+  grid-column: span 2;
+}
+
+.projectCard {
+  grid-column: span 3;
+  min-height: 172px;
+}
+
+.projectCard:first-of-type {
+  grid-column: span 4;
+  min-height: 220px;
+  background:
+    linear-gradient(135deg, #ffffff 0%, #f7faff 58%, #eef4ff 100%);
+  border-color: #bcd3ff;
+}
+
+.projectCard:nth-of-type(2) {
+  grid-column: span 2;
+}
+
 .catalogCard:hover:not(:disabled),
 .projectCard:hover:not(:disabled) {
   border-color: var(--line-strong);
-  background: var(--panel-2);
+  background: #f8fbff;
 }
 
 .catalogCard.locked {
@@ -481,9 +524,14 @@ pre {
 .catalogService,
 .projectCard strong {
   color: var(--ink);
-  font-size: 1.28rem;
+  font-size: 1.48rem;
   font-weight: 760;
   letter-spacing: -0.015em;
+}
+
+.projectCard:first-of-type strong {
+  font-size: 2rem;
+  letter-spacing: -0.04em;
 }
 
 .catalogService {
@@ -511,6 +559,7 @@ pre {
   display: flex;
   flex-wrap: wrap;
   gap: 0.32rem;
+  align-self: end;
 }
 
 .projectServiceChips span {
@@ -1152,6 +1201,22 @@ pre {
   .homeDashboard,
   .capacityStrip {
     grid-template-columns: 1fr;
+  }
+
+  .catalogGrid,
+  .projectGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .catalogCard,
+  .projectCard,
+  .projectCard:first-of-type,
+  .projectCard:nth-of-type(2) {
+    grid-column: auto;
+  }
+
+  .systemOverview {
+    position: static;
   }
 
   .bubble {

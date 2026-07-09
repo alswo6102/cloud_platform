@@ -728,7 +728,7 @@ function ServiceCatalog({
 }) {
   const owned = new Set(projects.map((project) => project.name));
   return (
-    <section className="workspace">
+    <section className="workspace projectBoard">
       <div className="workspaceHeader">
         <div>
           <h2>서비스 목록</h2>
