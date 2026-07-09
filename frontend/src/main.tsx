@@ -956,10 +956,10 @@ function ProjectWorkspace({
 
   return (
     <section className="workspace detailPage">
-      <div className="workspaceHeader">
+      <div className="workspaceHeader detailHeader">
         <div>
           <h2>{project.name}</h2>
-          <p>{summary.running}/{summary.total || services.length} running · {summary.memory}MB memory · {summary.publicCount} public URLs</p>
+          <p>이 프로젝트 안의 서비스만 조회하고 조작합니다.</p>
         </div>
         <div className="headerActions">
           <button onClick={() => setQuickPrompt(makeQuickPrompt("새 서비스 배포하고 싶어"))}>새 서비스 배포</button>
@@ -969,23 +969,57 @@ function ProjectWorkspace({
       </div>
       {runtimeError && <div className="error compactError">{runtimeError}</div>}
       <ProjectCapacity summary={summary} loading={runtimeLoading} />
-      {actionOutput ? <ActionOutput output={actionOutput} onClose={() => setActionOutput(null)} /> : null}
-      <div className="serviceGrid">
-        {services.map((service) => (
-          <ServiceCard
-            key={service}
-            service={service}
-            runtime={runtimeServices[service]}
-            loading={runtimeLoading && !runtimeServices[service]}
-            busyAction={actionBusy.startsWith(`${service}:`) ? actionBusy.split(":")[1] ?? "" : ""}
-            onAction={(action) => runServiceAction(service, action)}
-          />
-        ))}
-        {services.length === 0 && (
-          <p className="hint">아직 등록된 서비스가 없습니다. 아래 AI 에이전트에게 “새 서비스 배포하고 싶어”라고 요청하세요.</p>
-        )}
+
+      <div className="projectDetailLayout">
+        <main className="operationsPanel">
+          <div className="panelHeader">
+            <div>
+              <h3>서비스 운영</h3>
+              <p>상태와 URL을 확인하고 로그, 시작·중지, 재시작, 재배포를 바로 실행합니다.</p>
+            </div>
+            <span className="panelMeta">{services.length} services</span>
+          </div>
+          {actionOutput ? <ActionOutput output={actionOutput} onClose={() => setActionOutput(null)} /> : null}
+          {services.length > 0 ? (
+            <div className="serviceTableWrap">
+              <table className="serviceTable">
+                <thead>
+                  <tr>
+                    <th>서비스</th>
+                    <th>상태</th>
+                    <th>접속</th>
+                    <th>포트</th>
+                    <th>메모리</th>
+                    <th>액션</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {services.map((service) => (
+                    <ServiceRow
+                      key={service}
+                      service={service}
+                      runtime={runtimeServices[service]}
+                      loading={runtimeLoading && !runtimeServices[service]}
+                      busyAction={actionBusy.startsWith(`${service}:`) ? actionBusy.split(":")[1] ?? "" : ""}
+                      onAction={(action) => runServiceAction(service, action)}
+                    />
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="emptyState">
+              <strong>아직 등록된 서비스가 없습니다.</strong>
+              <p>새 서비스 배포 버튼을 눌러 GitHub 저장소와 프레임워크를 입력하면 CLI 검증 후 배포 계획을 확인할 수 있습니다.</p>
+              <button onClick={() => setQuickPrompt(makeQuickPrompt("새 서비스 배포하고 싶어"))}>첫 서비스 배포</button>
+            </div>
+          )}
+        </main>
+
+        <aside className="agentSidePanel">
+          <AgentPanel auth={auth} project={project.name} services={services} quickPrompt={quickPrompt} />
+        </aside>
       </div>
-      <AgentPanel auth={auth} project={project.name} services={services} quickPrompt={quickPrompt} />
     </section>
   );
 }
@@ -1086,7 +1120,18 @@ function ActionOutput({ output, onClose }: { output: ServiceActionOutput; onClos
   );
 }
 
-function ServiceCard({
+function serviceKind(runtime?: ServiceRuntime) {
+  if (!runtime) return "확인 전";
+  return runtime.frontend ? "Frontend" : "Internal";
+}
+
+function serviceStatusTone(status: string) {
+  if (status === "running") return "";
+  if (status === "loading" || status === "unknown") return "neutral";
+  return "warning";
+}
+
+function ServiceRow({
   service,
   runtime,
   loading,
@@ -1104,45 +1149,42 @@ function ServiceCard({
   const isRunning = status === "running";
   const url = publicUrl(runtime);
   return (
-    <div className="service" key={service}>
-      <div className="serviceTop">
-        <strong>{service}</strong>
-        <span className={`pill ${isRunning ? "" : "warning"}`}>{statusLabel(status, container?.health)}</span>
-      </div>
-      {url ? (
-        <a className="serviceUrl" href={url} target="_blank" rel="noreferrer">{url}</a>
-      ) : (
-        <span className="serviceUrl mutedUrl">{runtime?.frontend ? "공개 URL 없음" : "내부 서비스"}</span>
-      )}
-      <dl className="serviceMetrics">
-        <div>
-          <dt>포트</dt>
-          <dd>{formatPort(runtime)}</dd>
+    <tr>
+      <td>
+        <div className="serviceIdentity">
+          <strong>{service}</strong>
+          <span>{serviceKind(runtime)}</span>
         </div>
-        <div>
-          <dt>메모리</dt>
-          <dd>{formatMemory(container?.memory)}</dd>
+      </td>
+      <td>
+        <span className={`pill ${serviceStatusTone(status)}`}>{statusLabel(status, container?.health)}</span>
+      </td>
+      <td>
+        {url ? (
+          <a className="serviceUrl" href={url} target="_blank" rel="noreferrer">바로가기</a>
+        ) : (
+          <span className="mutedUrl">{runtime?.frontend ? "공개 URL 없음" : "내부 통신"}</span>
+        )}
+      </td>
+      <td>{formatPort(runtime)}</td>
+      <td>{formatMemory(container?.memory)}</td>
+      <td>
+        <div className="serviceActions compactActions">
+          <button onClick={() => onAction("logs")} disabled={Boolean(busyAction)}>
+            {busyAction === "logs" ? "조회 중" : "로그"}
+          </button>
+          <button onClick={() => onAction(isRunning ? "stop" : "start")} disabled={Boolean(busyAction)}>
+            {busyAction === "stop" || busyAction === "start" ? "처리 중" : isRunning ? "중지" : "시작"}
+          </button>
+          <button onClick={() => onAction("restart")} disabled={Boolean(busyAction) || !container}>
+            {busyAction === "restart" ? "재시작 중" : "재시작"}
+          </button>
+          <button onClick={() => onAction("redeploy")} disabled={Boolean(busyAction)}>
+            {busyAction === "redeploy" ? "배포 중" : "재배포"}
+          </button>
         </div>
-        <div>
-          <dt>재시작</dt>
-          <dd>{container?.restart_count ?? 0}</dd>
-        </div>
-      </dl>
-      <div className="serviceActions">
-        <button onClick={() => onAction("logs")} disabled={Boolean(busyAction)}>
-          {busyAction === "logs" ? "조회 중" : "로그"}
-        </button>
-        <button onClick={() => onAction(isRunning ? "stop" : "start")} disabled={Boolean(busyAction)}>
-          {busyAction === "stop" || busyAction === "start" ? "처리 중" : isRunning ? "중지" : "시작"}
-        </button>
-        <button onClick={() => onAction("restart")} disabled={Boolean(busyAction) || !container}>
-          {busyAction === "restart" ? "재시작 중" : "재시작"}
-        </button>
-        <button onClick={() => onAction("redeploy")} disabled={Boolean(busyAction)}>
-          {busyAction === "redeploy" ? "배포 중" : "재배포"}
-        </button>
-      </div>
-    </div>
+      </td>
+    </tr>
   );
 }
 
@@ -1348,7 +1390,7 @@ function AgentPanel({
   );
 
   return (
-    <section className="agent">
+    <section className="agentPanel">
       <div className="agentTitle">
         <div>
           <h3>AI 작업</h3>
@@ -1668,7 +1710,7 @@ function AdminConsole({ auth }: { auth: AuthHeaders }) {
           <h2>루트 AI 에이전트</h2>
         </div>
       </div>
-      <div className="agent">
+      <div className="agentPanel">
         <div className="messages">
           {messages.map((message, index) => (
             <div className={`bubble ${message.from}`} key={index}>

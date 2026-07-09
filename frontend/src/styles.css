@@ -667,6 +667,155 @@ pre {
 
 .detailPage {
   padding: 1.05rem;
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.detailHeader {
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--panel);
+  padding: 1rem;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+}
+
+.projectDetailLayout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(340px, 420px);
+  gap: 0.85rem;
+  align-items: start;
+}
+
+.operationsPanel,
+.agentSidePanel {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--panel);
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+}
+
+.operationsPanel {
+  padding: 1rem;
+}
+
+.agentSidePanel {
+  position: sticky;
+  top: 74px;
+  max-height: calc(100vh - 92px);
+  overflow: hidden;
+}
+
+.panelHeader {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: flex-start;
+  margin-bottom: 0.85rem;
+}
+
+.panelHeader h3 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 1.08rem;
+  letter-spacing: -0.015em;
+}
+
+.panelHeader p {
+  max-width: 68ch;
+  margin: 0.22rem 0 0;
+  color: var(--muted);
+  font-size: 0.88rem;
+  line-height: 1.5;
+}
+
+.panelMeta {
+  flex: 0 0 auto;
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  background: var(--panel-2);
+  color: var(--muted);
+  padding: 0.26rem 0.58rem;
+  font-size: 0.78rem;
+  font-weight: 760;
+}
+
+.serviceTableWrap {
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+}
+
+.serviceTable {
+  width: 100%;
+  min-width: 860px;
+  border-collapse: collapse;
+  color: var(--text);
+  font-size: 0.86rem;
+}
+
+.serviceTable th,
+.serviceTable td {
+  border-bottom: 1px solid var(--line);
+  padding: 0.72rem 0.78rem;
+  text-align: left;
+  vertical-align: middle;
+}
+
+.serviceTable th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--panel-2);
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 800;
+}
+
+.serviceTable tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.serviceTable tbody tr:hover {
+  background: #f8fbff;
+}
+
+.serviceIdentity {
+  display: grid;
+  gap: 0.18rem;
+}
+
+.serviceIdentity strong {
+  color: var(--ink);
+  font-size: 0.95rem;
+}
+
+.serviceIdentity span {
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 680;
+}
+
+.emptyState {
+  display: grid;
+  gap: 0.55rem;
+  justify-items: start;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--r-sm);
+  background: #f8fbff;
+  padding: 1rem;
+}
+
+.emptyState strong {
+  color: var(--ink);
+}
+
+.emptyState p {
+  max-width: 68ch;
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.55;
 }
 
 .serviceGrid {
@@ -770,10 +919,20 @@ pre {
   color: var(--warning);
 }
 
+.pill.neutral {
+  border-color: var(--line);
+  background: var(--panel-2);
+  color: var(--muted);
+}
+
 .serviceActions {
   display: flex;
   flex-wrap: wrap;
   gap: 0.42rem;
+}
+
+.compactActions {
+  min-width: 290px;
 }
 
 .serviceActions button {
@@ -828,10 +987,11 @@ pre {
   white-space: pre-wrap;
 }
 
-.agent {
-  margin-top: 0.9rem;
-  border-top: 1px solid var(--line);
-  padding-top: 0.9rem;
+.agentPanel {
+  display: grid;
+  min-height: 0;
+  margin-top: 0;
+  padding: 0.9rem;
 }
 
 .agentTitle {
@@ -872,7 +1032,7 @@ pre {
 .messages {
   display: grid;
   gap: 0.65rem;
-  max-height: 540px;
+  max-height: min(520px, calc(100vh - 300px));
   overflow: auto;
   margin-bottom: 0.75rem;
   padding-right: 0.2rem;
@@ -1264,7 +1424,8 @@ pre {
   .segmented,
   .systemOverview,
   .homeDashboard,
-  .capacityStrip {
+  .capacityStrip,
+  .projectDetailLayout {
     grid-template-columns: 1fr;
   }
 
@@ -1282,6 +1443,16 @@ pre {
 
   .systemOverview {
     position: static;
+  }
+
+  .agentSidePanel {
+    position: static;
+    max-height: none;
+    overflow: visible;
+  }
+
+  .serviceTable {
+    min-width: 760px;
   }
 
   .bubble {
