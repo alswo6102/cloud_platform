@@ -569,7 +569,7 @@ function HomePage({
         {tab === "all" && (
           <ProjectList
             title="전체 프로젝트"
-            description="현재 서버에 등록된 프로젝트입니다. 로그인 후 권한이 있는 프로젝트만 상세로 들어갈 수 있습니다."
+            description="서버에 등록된 프로젝트입니다. 권한이 있는 프로젝트만 열 수 있습니다."
             role={role}
             projects={publicProjects}
             ownedProjects={owned}
@@ -581,7 +581,7 @@ function HomePage({
         {tab === "mine" && (
           <ProjectList
             title="내 프로젝트"
-            description={role === "visitor" ? "로그인하면 접근 가능한 프로젝트가 표시됩니다." : "상세 운영과 AI 에이전트를 사용할 수 있는 프로젝트입니다."}
+            description={role === "visitor" ? "로그인하면 접근 가능한 프로젝트가 표시됩니다." : "서비스 운영과 배포를 이어갈 프로젝트입니다."}
             role={role}
             projects={projects}
             ownedProjects={owned}
@@ -828,9 +828,12 @@ function ProjectList({
               aria-label={locked ? `${project.name} 프로젝트는 로그인 또는 권한이 필요합니다.` : `${project.name} 프로젝트 열기`}
             >
               <span className={`projectCardMeta ${locked ? "locked" : ""}`}>
-                {locked ? "locked" : `${project.services?.length || 0} services`}
+                {locked ? "권한 필요" : "열기 가능"}
               </span>
-              <strong>{project.name}</strong>
+              <span className="projectCardMain">
+                <strong>{project.name}</strong>
+                <small>{project.services?.length || 0} services</small>
+              </span>
               <span className="projectServiceChips">
                 {(project.services || []).slice(0, 4).map((service) => (
                   <span key={service}>{service}</span>
@@ -838,6 +841,7 @@ function ProjectList({
                 {(project.services || []).length > 4 && <span>+{(project.services || []).length - 4}</span>}
                 {!(project.services || []).length && <span>서비스 없음</span>}
               </span>
+              <span className="projectCardAction">{locked ? "로그인 후 접근" : "프로젝트 열기 →"}</span>
             </button>
           );
         })}

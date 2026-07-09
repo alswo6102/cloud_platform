@@ -79,7 +79,10 @@ button:active:not(:disabled) {
 }
 
 button:disabled {
-  opacity: 0.45;
+  border-color: #d8e0eb;
+  background: #edf2f7;
+  color: #94a3b8;
+  opacity: 1;
   cursor: not-allowed;
 }
 
@@ -288,34 +291,36 @@ pre {
 
 .homeDashboard {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 300px;
-  gap: 1.15rem;
+  grid-template-columns: minmax(0, 1fr) 280px;
+  gap: 1.3rem;
   align-items: start;
 }
 
 .homeSurface {
   display: grid;
-  gap: 1rem;
+  gap: 1.25rem;
 }
 
 .homeTabs {
   display: inline-flex;
   width: fit-content;
-  gap: 0.24rem;
+  gap: 0.12rem;
   border: 1px solid var(--line);
-  border-radius: var(--r-pill);
+  border-radius: var(--r-md);
   background: var(--panel);
-  padding: 0.24rem;
-  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.035);
+  padding: 0.2rem;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.03);
 }
 
 .homeTabs button {
-  min-height: 34px;
+  min-height: 36px;
   border-color: transparent;
-  border-radius: var(--r-pill);
+  border-radius: var(--r-sm);
   background: transparent;
   color: var(--muted);
-  padding: 0.42rem 0.78rem;
+  padding: 0.46rem 0.82rem;
+  font-size: 0.88rem;
+  font-weight: 720;
 }
 
 .homeTabs button:hover:not(:disabled) {
@@ -325,9 +330,9 @@ pre {
 }
 
 .homeTabs button.active {
-  border-color: var(--line);
-  background: var(--ink);
-  color: #ffffff;
+  border-color: #dbe7ff;
+  background: #eff6ff;
+  color: var(--gold);
 }
 
 .homeRail {
@@ -343,25 +348,25 @@ pre {
   border: 1px solid var(--line);
   border-radius: var(--r-md);
   background: var(--panel);
-  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.04);
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.03);
   padding: 1rem;
 }
 
 .projectBoard {
-  min-height: 420px;
-  padding: 1.2rem;
+  min-height: 0;
+  padding: 0.35rem 0 0;
   border-color: transparent;
   background: transparent;
   box-shadow: none;
 }
 
 .projectBoard .workspaceHeader {
-  margin-bottom: 1.15rem;
+  margin-bottom: 0.95rem;
 }
 
 .projectBoard .workspaceHeader h2 {
-  font-size: 1.45rem;
-  letter-spacing: -0.03em;
+  font-size: 1.25rem;
+  letter-spacing: -0.025em;
 }
 
 .workspace + .workspace {
@@ -375,13 +380,13 @@ pre {
   border-radius: var(--r-sm);
   background: var(--panel);
   padding: 0.95rem;
-  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.04);
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.03);
   position: sticky;
   top: 74px;
 }
 
 .compactCreate {
-  padding: 0.95rem;
+  padding: 0.9rem;
 }
 
 .compactCreate .workspaceHeader {
@@ -494,8 +499,9 @@ pre {
 .workspaceHeader p {
   max-width: 70ch;
   margin: 0.32rem 0 0;
-  color: var(--muted);
+  color: #536176;
   line-height: 1.55;
+  font-size: 0.92rem;
 }
 
 .workspaceHeader p:empty {
@@ -535,22 +541,22 @@ pre {
 
 .projectGrid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
-  gap: 0.75rem;
+  grid-template-columns: 1fr;
+  gap: 0.55rem;
 }
 
 .projectCard {
-  min-height: 154px;
   display: grid;
-  align-content: space-between;
-  gap: 0.8rem;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.5rem 0.8rem;
   text-align: left;
   border: 1px solid var(--line);
-  border-radius: var(--r-md);
+  border-radius: var(--r-sm);
   background: var(--panel);
   color: var(--text);
-  padding: 1rem;
-  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.035);
+  padding: 0.82rem 0.92rem;
+  box-shadow: none;
 }
 
 .projectCard {
@@ -564,7 +570,6 @@ pre {
 }
 
 .projectCard.locked {
-  border-style: dashed;
   background: #fbfcfe;
   color: var(--muted);
 }
@@ -576,8 +581,8 @@ pre {
 
 .projectCard strong {
   color: var(--ink);
-  font-size: 1.22rem;
-  font-weight: 760;
+  font-size: 1.03rem;
+  font-weight: 780;
   letter-spacing: -0.015em;
 }
 
@@ -591,10 +596,11 @@ pre {
   width: fit-content;
   border-radius: var(--r-pill);
   background: var(--panel-2);
-  padding: 0.18rem 0.5rem;
+  padding: 0.18rem 0.48rem;
   color: var(--muted) !important;
-  font-size: 0.74rem !important;
+  font-size: 0.72rem !important;
   font-weight: 780;
+  white-space: nowrap;
 }
 
 .projectCardMeta.locked {
@@ -602,11 +608,24 @@ pre {
   color: var(--warning) !important;
 }
 
+.projectCardMain {
+  min-width: 0;
+  display: grid;
+  gap: 0.08rem;
+}
+
+.projectCardMain small {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 650;
+}
+
 .projectServiceChips {
+  grid-column: 2 / -1;
   display: flex;
   flex-wrap: wrap;
-  gap: 0.32rem;
-  align-self: end;
+  gap: 0.28rem;
+  align-self: start;
 }
 
 .projectServiceChips span {
@@ -614,10 +633,18 @@ pre {
   border: 1px solid var(--line);
   border-radius: var(--r-pill);
   background: var(--panel-2);
-  padding: 0.22rem 0.5rem;
+  padding: 0.18rem 0.45rem;
   color: var(--text) !important;
-  font-size: 0.76rem !important;
+  font-size: 0.72rem !important;
   font-weight: 680;
+}
+
+.projectCardAction {
+  justify-self: end;
+  color: var(--muted) !important;
+  font-size: 0.78rem !important;
+  font-weight: 720;
+  white-space: nowrap;
 }
 
 .createPanel {
@@ -1445,9 +1472,17 @@ pre {
     grid-template-columns: 1fr;
   }
 
-  .projectCard,
-  .projectCard:first-of-type,
-  .projectCard:nth-of-type(2) {
+  .projectCard {
+    grid-template-columns: 1fr;
+    gap: 0.45rem;
+  }
+
+  .projectCardMeta,
+  .projectCardAction {
+    justify-self: start;
+  }
+
+  .projectServiceChips {
     grid-column: auto;
   }
 
