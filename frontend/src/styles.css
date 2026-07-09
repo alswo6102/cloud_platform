@@ -280,6 +280,13 @@ pre {
   color: var(--gold);
 }
 
+.homeDashboard {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 280px;
+  gap: 0.9rem;
+  align-items: start;
+}
+
 .workspace {
   border: 1px solid var(--line);
   border-radius: var(--r-md);
@@ -294,20 +301,22 @@ pre {
 
 .systemOverview {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 0.65rem;
-}
-
-.systemMetric,
-.capacityStrip > div {
+  gap: 0.85rem;
   border: 1px solid var(--line);
   border-radius: var(--r-sm);
   background: var(--panel);
-  padding: 0.78rem 0.85rem;
+  padding: 0.95rem;
   box-shadow: 0 1px 2px rgba(16, 24, 40, 0.03);
 }
 
-.systemMetric span,
+.resourceHeader {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  align-items: center;
+}
+
+.resourceHeader span,
 .capacityStrip span {
   display: block;
   color: var(--muted);
@@ -315,17 +324,67 @@ pre {
   font-weight: 740;
 }
 
-.systemMetric strong,
+.resourceHeader strong,
 .capacityStrip strong {
   display: block;
-  margin-top: 0.22rem;
   color: var(--ink);
-  font-size: 1.08rem;
+  font-size: 0.92rem;
   letter-spacing: -0.02em;
 }
 
-.systemMetric.warn strong {
+.gaugeRow {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.gauge {
+  display: grid;
+  justify-items: center;
+  gap: 0.45rem;
+}
+
+.gaugeDial {
+  --value: 0%;
+  width: 96px;
+  aspect-ratio: 1;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at center, var(--panel) 0 58%, transparent 59%),
+    conic-gradient(var(--gold) var(--value), var(--bg-deep) 0);
+}
+
+.gaugeDial.warn {
+  background:
+    radial-gradient(circle at center, var(--panel) 0 58%, transparent 59%),
+    conic-gradient(#d97706 var(--value), var(--bg-deep) 0);
+}
+
+.gaugeDial.danger {
+  background:
+    radial-gradient(circle at center, var(--panel) 0 58%, transparent 59%),
+    conic-gradient(var(--danger) var(--value), var(--bg-deep) 0);
+}
+
+.gaugeDial strong {
+  color: var(--ink);
+  font-size: 1.04rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.gauge > span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 760;
+}
+
+.resourceWarning {
+  margin: 0;
   color: var(--warning);
+  font-size: 0.82rem;
+  line-height: 1.45;
 }
 
 .workspaceHeader {
@@ -390,22 +449,22 @@ pre {
 .catalogGrid,
 .projectGrid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-  gap: 0.65rem;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 0.72rem;
 }
 
 .catalogCard,
 .projectCard {
-  min-height: 112px;
+  min-height: 150px;
   display: grid;
   align-content: space-between;
-  gap: 0.55rem;
+  gap: 0.8rem;
   text-align: left;
   border: 1px solid var(--line);
   border-radius: var(--r-sm);
   background: var(--panel);
   color: var(--text);
-  padding: 0.85rem;
+  padding: 1rem;
 }
 
 .catalogCard:hover:not(:disabled),
@@ -422,9 +481,13 @@ pre {
 .catalogService,
 .projectCard strong {
   color: var(--ink);
-  font-size: 1.02rem;
+  font-size: 1.28rem;
   font-weight: 760;
   letter-spacing: -0.015em;
+}
+
+.catalogService {
+  font-size: 1.02rem;
 }
 
 .catalogProject,
@@ -432,6 +495,33 @@ pre {
 .projectCard small {
   color: var(--muted);
   font-size: 0.84rem;
+}
+
+.projectCardMeta {
+  width: fit-content;
+  border-radius: var(--r-pill);
+  background: var(--panel-2);
+  padding: 0.18rem 0.5rem;
+  color: var(--muted) !important;
+  font-size: 0.74rem !important;
+  font-weight: 780;
+}
+
+.projectServiceChips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.32rem;
+}
+
+.projectServiceChips span {
+  width: fit-content;
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  background: var(--panel-2);
+  padding: 0.22rem 0.5rem;
+  color: var(--text) !important;
+  font-size: 0.76rem !important;
+  font-weight: 680;
 }
 
 .createPanel {
@@ -583,6 +673,14 @@ pre {
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 0.65rem;
   margin-bottom: 0.75rem;
+}
+
+.capacityStrip > div {
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--panel);
+  padding: 0.78rem 0.85rem;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.03);
 }
 
 .actionOutput {
@@ -1051,6 +1149,7 @@ pre {
   .guidedGrid,
   .segmented,
   .systemOverview,
+  .homeDashboard,
   .capacityStrip {
     grid-template-columns: 1fr;
   }

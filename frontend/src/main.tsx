@@ -569,11 +569,10 @@ function HomePage({
 }) {
   return (
     <>
-      <SystemOverview summary={systemSummary} role={role} />
       <nav className="tabs" aria-label="main navigation">
-        <button className={activeTab === "services" ? "active" : ""} onClick={() => setActiveTab("services")}>서비스 목록</button>
         <button className={activeTab === "projects" ? "active" : ""} onClick={() => setActiveTab("projects")}>내 프로젝트</button>
-        <button className={activeTab === "create" ? "active" : ""} onClick={() => setActiveTab("create")}>프로젝트 생성</button>
+        <button className={activeTab === "create" ? "active" : ""} onClick={() => setActiveTab("create")}>새 프로젝트</button>
+        <button className={activeTab === "services" ? "active" : ""} onClick={() => setActiveTab("services")}>전체 서비스</button>
       </nav>
 
       {activeTab === "services" && (
@@ -586,13 +585,16 @@ function HomePage({
         />
       )}
       {activeTab === "projects" && (
-        <ProjectList
-          role={role}
-          session={session}
-          projects={projects}
-          loading={loading}
-          onSelect={onOpenProject}
-        />
+        <div className="homeDashboard">
+          <ProjectList
+            role={role}
+            session={session}
+            projects={projects}
+            loading={loading}
+            onSelect={onOpenProject}
+          />
+          <SystemOverview summary={systemSummary} role={role} />
+        </div>
       )}
       {activeTab === "create" && (
         <LandingCard auth={auth} onCreated={onCreated} />
@@ -672,29 +674,42 @@ function SystemOverview({ summary, role }: { summary: SystemSummary | null; role
   if (role === "visitor") return null;
   const unhealthy = summary?.unhealthy || [];
   const restarting = summary?.restarting || [];
+  const attentionCount = unhealthy.length + restarting.length;
   return (
-    <section className="systemOverview">
-      <div className="systemMetric">
-        <span>Docker</span>
-        <strong>{summary?.docker ? "online" : "checking"}</strong>
+    <section className="systemOverview" aria-label="server capacity">
+      <div className="resourceHeader">
+        <span>서버 용량</span>
+        <strong>{attentionCount ? `${attentionCount} issues` : "정상"}</strong>
       </div>
-      <div className="systemMetric">
-        <span>컨테이너</span>
-        <strong>{summary ? `${summary.running || 0}/${summary.containers || 0}` : "-"}</strong>
+      <div className="gaugeRow">
+        <CircularGauge label="메모리" value={summary?.memory_percent} />
+        <CircularGauge label="디스크" value={summary?.disk_percent} />
       </div>
-      <div className="systemMetric">
-        <span>메모리</span>
-        <strong>{formatPercent(summary?.memory_percent)}</strong>
-      </div>
-      <div className="systemMetric">
-        <span>디스크</span>
-        <strong>{formatPercent(summary?.disk_percent)}</strong>
-      </div>
-      <div className={`systemMetric ${unhealthy.length || restarting.length ? "warn" : ""}`}>
-        <span>주의</span>
-        <strong>{unhealthy.length + restarting.length || 0}</strong>
-      </div>
+      {attentionCount > 0 && (
+        <p className="resourceWarning">
+          {unhealthy.length ? `헬스체크 ${unhealthy.length}` : ""}
+          {unhealthy.length && restarting.length ? " · " : ""}
+          {restarting.length ? `재시작 ${restarting.length}` : ""}
+        </p>
+      )}
     </section>
+  );
+}
+
+function CircularGauge({ label, value }: { label: string; value?: number | null }) {
+  const safeValue = Math.max(0, Math.min(100, Number(value ?? 0)));
+  const level = safeValue >= 90 ? "danger" : safeValue >= 75 ? "warn" : "ok";
+  return (
+    <div className="gauge">
+      <div
+        className={`gaugeDial ${level}`}
+        style={{ "--value": `${safeValue}%` } as React.CSSProperties}
+        aria-label={`${label} ${formatPercent(value)}`}
+      >
+        <strong>{formatPercent(value)}</strong>
+      </div>
+      <span>{label}</span>
+    </div>
   );
 }
 
@@ -840,9 +855,15 @@ function ProjectList({
       <div className="projectGrid">
         {projects.map((project) => (
           <button key={project.name} className="projectCard" onClick={() => onSelect(project.name)}>
+            <span className="projectCardMeta">{project.services?.length || 0} services</span>
             <strong>{project.name}</strong>
-            <span>{project.services?.length || 0} services</span>
-            <small>{(project.services || []).join(", ") || "서비스 없음"}</small>
+            <span className="projectServiceChips">
+              {(project.services || []).slice(0, 4).map((service) => (
+                <span key={service}>{service}</span>
+              ))}
+              {(project.services || []).length > 4 && <span>+{(project.services || []).length - 4}</span>}
+              {!(project.services || []).length && <span>서비스 없음</span>}
+            </span>
           </button>
         ))}
         {role !== "visitor" && projects.length === 0 && <p className="hint">아직 접근 가능한 프로젝트가 없습니다.</p>}
