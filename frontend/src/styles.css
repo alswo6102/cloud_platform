@@ -530,6 +530,17 @@ pre {
   line-height: 1.55;
 }
 
+.inlineError {
+  margin: 0 0 0.7rem;
+  border: 1px solid #fecaca;
+  border-radius: 10px;
+  background: #fff7f7;
+  color: #991b1b;
+  padding: 0.62rem 0.75rem;
+  font-size: 0.88rem;
+  line-height: 1.45;
+}
+
 .error {
   margin: 0 0 0.8rem;
   padding: 0.78rem 0.9rem;

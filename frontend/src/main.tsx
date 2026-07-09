@@ -353,6 +353,8 @@ function App() {
   const [session, setSession] = useState<AuthSession>(() => loadStoredSession());
   const [projects, setProjects] = useState<Project[]>([]);
   const [publicProjects, setPublicProjects] = useState<Project[]>([]);
+  const [publicProjectsLoading, setPublicProjectsLoading] = useState(true);
+  const [publicProjectsError, setPublicProjectsError] = useState("");
   const [systemSummary, setSystemSummary] = useState<SystemSummary | null>(null);
   const [page, setPage] = useState<Page>(() => pageFromLocation());
   const [error, setError] = useState("");
@@ -369,11 +371,18 @@ function App() {
   const projectNames = useMemo(() => new Set(projects.map((project) => project.name)), [projects]);
 
   async function refreshPublicProjects() {
+    setPublicProjectsLoading(true);
+    setPublicProjectsError("");
     try {
-      const data = await api<PublicCatalog>("/api/catalog", visitorAuth);
+      const response = await fetch("/api/catalog", { cache: "no-store" });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(formatApiError(data.detail) || `Request failed: ${response.status}`);
       setPublicProjects(data.projects || []);
-    } catch {
+    } catch (err) {
       setPublicProjects([]);
+      setPublicProjectsError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setPublicProjectsLoading(false);
     }
   }
 
@@ -499,6 +508,8 @@ function App() {
           session={session}
           systemSummary={systemSummary}
           publicProjects={publicProjects}
+          publicProjectsLoading={publicProjectsLoading}
+          publicProjectsError={publicProjectsError}
           projects={projects}
           loading={loading}
           onOpenProject={openProject}
@@ -536,6 +547,8 @@ function HomePage({
   session,
   systemSummary,
   publicProjects,
+  publicProjectsLoading,
+  publicProjectsError,
   projects,
   loading,
   onOpenProject,
@@ -546,6 +559,8 @@ function HomePage({
   session: AuthSession;
   systemSummary: SystemSummary | null;
   publicProjects: Project[];
+  publicProjectsLoading: boolean;
+  publicProjectsError: string;
   projects: Project[];
   loading: boolean;
   onOpenProject: (project: string) => void;
@@ -581,7 +596,8 @@ function HomePage({
             role={role}
             projects={publicProjects}
             ownedProjects={owned}
-            loading={false}
+            loading={publicProjectsLoading}
+            error={publicProjectsError}
             readOnly={role === "visitor"}
             onSelect={onOpenProject}
           />
@@ -594,6 +610,7 @@ function HomePage({
             projects={projects}
             ownedProjects={owned}
             loading={loading}
+            error=""
             readOnly={role === "visitor"}
             onSelect={onOpenProject}
           />
@@ -800,6 +817,7 @@ function ProjectList({
   projects,
   ownedProjects,
   loading,
+  error,
   readOnly,
   onSelect
 }: {
@@ -809,6 +827,7 @@ function ProjectList({
   projects: Project[];
   ownedProjects: Set<string>;
   loading: boolean;
+  error?: string;
   readOnly?: boolean;
   onSelect: (name: string) => void;
 }) {
@@ -821,6 +840,7 @@ function ProjectList({
         </div>
       </div>
       {loading && <p className="hint">불러오는 중...</p>}
+      {error && <p className="inlineError">프로젝트 목록을 불러오지 못했습니다: {error}</p>}
       <div className="projectIndex" role="list">
         {projects.map((project) => {
           const canOpen = role === "admin" || ownedProjects.has(project.name);
@@ -855,7 +875,7 @@ function ProjectList({
             </article>
           );
         })}
-        {projects.length === 0 && <p className="hint">표시할 프로젝트가 없습니다.</p>}
+        {!loading && !error && projects.length === 0 && <p className="hint">표시할 프로젝트가 없습니다.</p>}
       </div>
     </section>
   );
