@@ -23,6 +23,10 @@ type Project = {
   services?: string[];
 };
 
+type PublicCatalog = {
+  projects?: Project[];
+};
+
 type RuntimePort = {
   host?: number | string;
   container?: number | string;
@@ -348,6 +352,7 @@ function makeQuickPrompt(text: string): QuickPrompt {
 function App() {
   const [session, setSession] = useState<AuthSession>(() => loadStoredSession());
   const [projects, setProjects] = useState<Project[]>([]);
+  const [publicProjects, setPublicProjects] = useState<Project[]>([]);
   const [systemSummary, setSystemSummary] = useState<SystemSummary | null>(null);
   const [page, setPage] = useState<Page>(() => pageFromLocation());
   const [error, setError] = useState("");
@@ -362,6 +367,15 @@ function App() {
     ? projects.find((project) => project.name === page.project)
     : undefined;
   const projectNames = useMemo(() => new Set(projects.map((project) => project.name)), [projects]);
+
+  async function refreshPublicProjects() {
+    try {
+      const data = await api<PublicCatalog>("/api/catalog", visitorAuth);
+      setPublicProjects(data.projects || []);
+    } catch {
+      setPublicProjects([]);
+    }
+  }
 
   async function refreshProjects() {
     if (role === "visitor") {
@@ -396,8 +410,12 @@ function App() {
   }
 
   async function refreshAll() {
-    await Promise.all([refreshProjects(), refreshSystemSummary()]);
+    await Promise.all([refreshPublicProjects(), refreshProjects(), refreshSystemSummary()]);
   }
+
+  useEffect(() => {
+    refreshPublicProjects();
+  }, []);
 
   useEffect(() => {
     const handlePopState = () => setPage(pageFromLocation());
@@ -480,6 +498,7 @@ function App() {
           role={role}
           session={session}
           systemSummary={systemSummary}
+          publicProjects={publicProjects}
           projects={projects}
           loading={loading}
           onOpenProject={openProject}
@@ -517,6 +536,7 @@ function HomePage({
   role,
   session,
   systemSummary,
+  publicProjects,
   projects,
   loading,
   onOpenProject,
@@ -526,24 +546,57 @@ function HomePage({
   role: Role;
   session: AuthSession;
   systemSummary: SystemSummary | null;
+  publicProjects: Project[];
   projects: Project[];
   loading: boolean;
   onOpenProject: (project: string) => void;
   onCreated: (project: string) => Promise<void>;
 }) {
+  const [tab, setTab] = useState<"all" | "mine" | "create">(() => role === "visitor" ? "all" : "mine");
+  const owned = useMemo(() => new Set(projects.map((project) => project.name)), [projects]);
+
+  useEffect(() => {
+    setTab(role === "visitor" ? "all" : "mine");
+  }, [role, session?.id]);
+
   return (
     <div className="homeSurface">
+      <nav className="homeTabs" aria-label="console sections">
+        <button className={tab === "all" ? "active" : ""} onClick={() => setTab("all")}>전체 프로젝트</button>
+        <button className={tab === "mine" ? "active" : ""} onClick={() => setTab("mine")}>내 프로젝트</button>
+        <button className={tab === "create" ? "active" : ""} onClick={() => setTab("create")}>새 프로젝트</button>
+      </nav>
       <div className="homeDashboard">
-        <ProjectList
-          role={role}
-          session={session}
-          projects={projects}
-          loading={loading}
-          onSelect={onOpenProject}
-        />
+        {tab === "all" && (
+          <ProjectList
+            title="전체 프로젝트"
+            description="현재 서버에 등록된 프로젝트입니다. 로그인 후 권한이 있는 프로젝트만 상세로 들어갈 수 있습니다."
+            role={role}
+            projects={publicProjects}
+            ownedProjects={owned}
+            loading={false}
+            readOnly={role === "visitor"}
+            onSelect={onOpenProject}
+          />
+        )}
+        {tab === "mine" && (
+          <ProjectList
+            title="내 프로젝트"
+            description={role === "visitor" ? "로그인하면 접근 가능한 프로젝트가 표시됩니다." : "상세 운영과 AI 에이전트를 사용할 수 있는 프로젝트입니다."}
+            role={role}
+            projects={projects}
+            ownedProjects={owned}
+            loading={loading}
+            readOnly={role === "visitor"}
+            onSelect={onOpenProject}
+          />
+        )}
+        {tab === "create" && (
+          <LandingCard auth={auth} onCreated={onCreated} />
+        )}
         <aside className="homeRail">
           <SystemOverview summary={systemSummary} role={role} />
-          <LandingCard auth={auth} onCreated={onCreated} compact />
+          {tab !== "create" && <LandingCard auth={auth} onCreated={onCreated} compact />}
         </aside>
       </div>
     </div>
@@ -737,43 +790,59 @@ function LandingCard({
 }
 
 function ProjectList({
+  title,
+  description,
   role,
-  session,
   projects,
+  ownedProjects,
   loading,
+  readOnly,
   onSelect
 }: {
+  title: string;
+  description: string;
   role: Role;
-  session: AuthSession;
   projects: Project[];
+  ownedProjects: Set<string>;
   loading: boolean;
+  readOnly?: boolean;
   onSelect: (name: string) => void;
 }) {
   return (
     <section className="workspace projectBoard">
       <div className="workspaceHeader">
         <div>
-          <h2>Projects</h2>
-          <p>{role === "admin" ? "관리 가능한 프로젝트입니다." : "접근 권한이 있는 프로젝트입니다."}</p>
+          <h2>{title}</h2>
+          <p>{description}</p>
         </div>
       </div>
       {loading && <p className="hint">불러오는 중...</p>}
-      {role === "visitor" && <p className="hint">로그인 후 프로젝트 목록이 표시됩니다.</p>}
       <div className="projectGrid">
-        {projects.map((project) => (
-          <button key={project.name} className="projectCard" onClick={() => onSelect(project.name)}>
-            <span className="projectCardMeta">{project.services?.length || 0} services</span>
-            <strong>{project.name}</strong>
-            <span className="projectServiceChips">
-              {(project.services || []).slice(0, 4).map((service) => (
-                <span key={service}>{service}</span>
-              ))}
-              {(project.services || []).length > 4 && <span>+{(project.services || []).length - 4}</span>}
-              {!(project.services || []).length && <span>서비스 없음</span>}
-            </span>
-          </button>
-        ))}
-        {role !== "visitor" && projects.length === 0 && <p className="hint">아직 접근 가능한 프로젝트가 없습니다.</p>}
+        {projects.map((project) => {
+          const canOpen = role === "admin" || ownedProjects.has(project.name);
+          const locked = readOnly || !canOpen;
+          return (
+            <button
+              key={project.name}
+              className={`projectCard ${locked ? "locked" : ""}`}
+              onClick={() => onSelect(project.name)}
+              aria-label={locked ? `${project.name} 프로젝트는 로그인 또는 권한이 필요합니다.` : `${project.name} 프로젝트 열기`}
+            >
+              <span className={`projectCardMeta ${locked ? "locked" : ""}`}>
+                {locked ? "locked" : `${project.services?.length || 0} services`}
+              </span>
+              <strong>{project.name}</strong>
+              <span className="projectServiceChips">
+                {(project.services || []).slice(0, 4).map((service) => (
+                  <span key={service}>{service}</span>
+                ))}
+                {(project.services || []).length > 4 && <span>+{(project.services || []).length - 4}</span>}
+                {!(project.services || []).length && <span>서비스 없음</span>}
+              </span>
+            </button>
+          );
+        })}
+        {projects.length === 0 && <p className="hint">표시할 프로젝트가 없습니다.</p>}
       </div>
     </section>
   );

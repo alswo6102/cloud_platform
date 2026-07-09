@@ -298,6 +298,38 @@ pre {
   gap: 1rem;
 }
 
+.homeTabs {
+  display: inline-flex;
+  width: fit-content;
+  gap: 0.24rem;
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  background: var(--panel);
+  padding: 0.24rem;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.035);
+}
+
+.homeTabs button {
+  min-height: 34px;
+  border-color: transparent;
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--muted);
+  padding: 0.42rem 0.78rem;
+}
+
+.homeTabs button:hover:not(:disabled) {
+  background: var(--panel-2);
+  color: var(--ink);
+  transform: none;
+}
+
+.homeTabs button.active {
+  border-color: var(--line);
+  background: var(--ink);
+  color: #ffffff;
+}
+
 .homeRail {
   display: grid;
   gap: 0.8rem;
@@ -531,6 +563,17 @@ pre {
   transform: translateY(-1px);
 }
 
+.projectCard.locked {
+  border-style: dashed;
+  background: #fbfcfe;
+  color: var(--muted);
+}
+
+.projectCard.locked:hover:not(:disabled) {
+  border-color: #cbd5e1;
+  background: #f8fafc;
+}
+
 .projectCard strong {
   color: var(--ink);
   font-size: 1.22rem;
@@ -552,6 +595,11 @@ pre {
   color: var(--muted) !important;
   font-size: 0.74rem !important;
   font-weight: 780;
+}
+
+.projectCardMeta.locked {
+  background: #fff7ed;
+  color: var(--warning) !important;
 }
 
 .projectServiceChips {
