@@ -288,9 +288,23 @@ pre {
 
 .homeDashboard {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 260px;
-  gap: 1.05rem;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  gap: 1.15rem;
   align-items: start;
+}
+
+.homeSurface {
+  display: grid;
+  gap: 1rem;
+}
+
+.homeRail {
+  display: grid;
+  gap: 0.8rem;
+}
+
+.secondarySurface {
+  margin-top: 0.15rem;
 }
 
 .workspace {
@@ -302,8 +316,11 @@ pre {
 }
 
 .projectBoard {
-  min-height: 420px;
-  padding: 1.2rem;
+  min-height: 460px;
+  padding: 1.35rem;
+  border-color: #d4def2;
+  background:
+    linear-gradient(180deg, #ffffff 0%, #fbfcff 100%);
 }
 
 .projectBoard .workspaceHeader {
@@ -329,6 +346,54 @@ pre {
   box-shadow: 0 1px 2px rgba(16, 24, 40, 0.03);
   position: sticky;
   top: 74px;
+}
+
+.compactCreate {
+  padding: 0.95rem;
+}
+
+.compactCreate .workspaceHeader {
+  margin-bottom: 0.7rem;
+}
+
+.compactCreate .workspaceHeader h2 {
+  font-size: 1.08rem;
+}
+
+.compactCreate .createPanel {
+  grid-template-columns: 1fr;
+}
+
+.compactCatalog {
+  padding: 0.95rem;
+}
+
+.compactCatalog .workspaceHeader {
+  margin-bottom: 0.72rem;
+}
+
+.compactCatalog .workspaceHeader h2 {
+  font-size: 1.05rem;
+}
+
+.compactCatalog .catalogGrid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.compactCatalog .catalogCard {
+  min-height: 0;
+  width: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.5rem 0.62rem;
+}
+
+.compactCatalog .catalogService,
+.compactCatalog .catalogProject {
+  font-size: 0.82rem;
 }
 
 .resourceHeader {

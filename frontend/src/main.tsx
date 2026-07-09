@@ -3,7 +3,6 @@ import { createRoot } from "react-dom/client";
 import "./styles.css";
 
 type Role = "visitor" | "user" | "admin";
-type HomeTab = "services" | "projects" | "create";
 type Page = { kind: "home" } | { kind: "project"; project: string };
 type QuickPrompt = { id: number; text: string };
 type FrameworkId =
@@ -357,7 +356,6 @@ function App() {
   const [catalog, setCatalog] = useState<ServiceSummary[]>([]);
   const [systemSummary, setSystemSummary] = useState<SystemSummary | null>(null);
   const [page, setPage] = useState<Page>(() => pageFromLocation());
-  const [activeTab, setActiveTab] = useState<HomeTab>(() => loadStoredSession() ? "projects" : "services");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(() => Boolean(loadStoredSession()));
   const [projectsLoaded, setProjectsLoaded] = useState(false);
@@ -454,13 +452,11 @@ function App() {
   function openProject(project: string) {
     if (role === "visitor") {
       setError("로그인 후 접근할 수 있습니다.");
-      setActiveTab("projects");
       navigateHome();
       return;
     }
     if (!projectNames.has(project) && role !== "admin") {
       setError(`${project} 프로젝트에 대한 권한이 없습니다.`);
-      setActiveTab("projects");
       navigateHome();
       return;
     }
@@ -484,7 +480,6 @@ function App() {
             storeSession(next);
             setSession(next);
             setError("");
-            setActiveTab("projects");
           }}
           onLogout={() => {
             clearStoredSession();
@@ -492,7 +487,6 @@ function App() {
             setProjects([]);
             setProjectsLoaded(false);
             navigateHome();
-            setActiveTab("services");
           }}
         />
       </header>
@@ -504,8 +498,6 @@ function App() {
           auth={auth}
           role={role}
           session={session}
-          activeTab={activeTab}
-          setActiveTab={setActiveTab}
           catalog={catalog}
           systemSummary={systemSummary}
           projects={projects}
@@ -544,8 +536,6 @@ function HomePage({
   auth,
   role,
   session,
-  activeTab,
-  setActiveTab,
   catalog,
   systemSummary,
   projects,
@@ -557,8 +547,6 @@ function HomePage({
   auth: AuthHeaders;
   role: Role;
   session: AuthSession;
-  activeTab: HomeTab;
-  setActiveTab: (tab: HomeTab) => void;
   catalog: ServiceSummary[];
   systemSummary: SystemSummary | null;
   projects: Project[];
@@ -568,38 +556,31 @@ function HomePage({
   onRefresh: () => Promise<void>;
 }) {
   return (
-    <>
-      <nav className="tabs" aria-label="main navigation">
-        <button className={activeTab === "projects" ? "active" : ""} onClick={() => setActiveTab("projects")}>내 프로젝트</button>
-        <button className={activeTab === "create" ? "active" : ""} onClick={() => setActiveTab("create")}>새 프로젝트</button>
-        <button className={activeTab === "services" ? "active" : ""} onClick={() => setActiveTab("services")}>전체 서비스</button>
-      </nav>
-
-      {activeTab === "services" && (
+    <div className="homeSurface">
+      <div className="homeDashboard">
+        <ProjectList
+          role={role}
+          session={session}
+          projects={projects}
+          loading={loading}
+          onSelect={onOpenProject}
+        />
+        <aside className="homeRail">
+          <SystemOverview summary={systemSummary} role={role} />
+          <LandingCard auth={auth} onCreated={onCreated} compact />
+        </aside>
+      </div>
+      <div className="secondarySurface">
         <ServiceCatalog
           catalog={catalog}
           projects={projects}
           role={role}
           onOpenProject={onOpenProject}
           onRefresh={onRefresh}
+          compact
         />
-      )}
-      {activeTab === "projects" && (
-        <div className="homeDashboard">
-          <ProjectList
-            role={role}
-            session={session}
-            projects={projects}
-            loading={loading}
-            onSelect={onOpenProject}
-          />
-          <SystemOverview summary={systemSummary} role={role} />
-        </div>
-      )}
-      {activeTab === "create" && (
-        <LandingCard auth={auth} onCreated={onCreated} />
-      )}
-    </>
+      </div>
+    </div>
   );
 }
 
@@ -718,20 +699,22 @@ function ServiceCatalog({
   projects,
   role,
   onOpenProject,
-  onRefresh
+  onRefresh,
+  compact = false
 }: {
   catalog: ServiceSummary[];
   projects: Project[];
   role: Role;
   onOpenProject: (project: string) => void;
   onRefresh: () => Promise<void>;
+  compact?: boolean;
 }) {
   const owned = new Set(projects.map((project) => project.name));
   return (
-    <section className="workspace projectBoard">
+    <section className={compact ? "workspace serviceCatalog compactCatalog" : "workspace serviceCatalog"}>
       <div className="workspaceHeader">
         <div>
-          <h2>서비스 목록</h2>
+          <h2>전체 서비스</h2>
         </div>
         <button onClick={onRefresh}>새로고침</button>
       </div>
@@ -758,10 +741,12 @@ function ServiceCatalog({
 
 function LandingCard({
   auth,
-  onCreated
+  onCreated,
+  compact = false
 }: {
   auth: AuthHeaders;
   onCreated: (project: string) => Promise<void>;
+  compact?: boolean;
 }) {
   const role = auth.role;
   const [name, setName] = useState("");
@@ -795,10 +780,10 @@ function LandingCard({
   }
 
   return (
-    <section className="workspace">
+    <section className={compact ? "workspace createProject compactCreate" : "workspace createProject"}>
       <div className="workspaceHeader">
         <div>
-          <h2>새 프로젝트 생성</h2>
+          <h2>새 프로젝트</h2>
         </div>
       </div>
       <div className="createPanel">
@@ -844,7 +829,7 @@ function ProjectList({
   onSelect: (name: string) => void;
 }) {
   return (
-    <section className="workspace">
+    <section className="workspace projectBoard">
       <div className="workspaceHeader">
         <div>
           <h2>내 프로젝트</h2>
