@@ -506,7 +506,6 @@ function App() {
             await refreshAll();
             navigate({ kind: "project", project });
           }}
-          onRefresh={refreshAll}
         />
       ) : selectedProject ? (
         <ProjectWorkspace
