@@ -26,6 +26,7 @@ docker run -d \
   --network "${NETWORK_NAME}" \
   -e SKILL_AGENT_URL="${SKILL_AGENT_URL:-http://cloud-platform-skill-agent:8080}" \
   -e AUTH_STORE="${AUTH_STORE:-/var/lib/cloud-platform/auth.json}" \
+  -e PLATFORM_ADMIN_PASSWORD="${PLATFORM_ADMIN_PASSWORD:-}" \
   -e FRONTEND_DIST="${CONTAINER_FRONTEND_DIST}" \
   -e PUBLIC_BASE_URL="${PUBLIC_BASE_URL}" \
   -v "${DATA_DIR}:/var/lib/cloud-platform" \

@@ -210,14 +210,24 @@ def frontend_cache_headers(full_path: str) -> dict[str, str]:
 
 
 def default_auth_store() -> dict[str, Any]:
-    return {
-        "users": {
-            "local-user": {"password": "", "role": "user", "name": "Local User"},
-            "admin": {"password": "admin", "role": "admin", "name": "Admin"},
-        },
-        "memberships": {},
-        "tokens": {},
+    """Start with no usable account unless one was configured on purpose.
+
+    Accounts and their project memberships live in this file and are added by
+    editing it -- there is no sign-up flow. A built-in admin/admin was never a
+    bootstrap step, only a password everybody already knows. Set
+    PLATFORM_ADMIN_PASSWORD to get an admin account on a fresh install.
+    """
+    users: dict[str, Any] = {
+        "local-user": {"password": "", "role": "user", "name": "Local User"},
     }
+    admin_password = os.getenv("PLATFORM_ADMIN_PASSWORD", "").strip()
+    if admin_password:
+        users["admin"] = {
+            "password": admin_password,
+            "role": "admin",
+            "name": "Admin",
+        }
+    return {"users": users, "memberships": {}, "tokens": {}}
 
 
 def load_auth_store() -> dict[str, Any]:
@@ -594,6 +604,42 @@ def list_projects(
     }
 
 
+# The catalog is deliberately public, so it carries only what the console
+# renders. Repository URLs and raw runtime errors are not part of that.
+PUBLIC_PROJECT_FIELDS = (
+    "name",
+    "services",
+    "frameworks",
+    "public_urls",
+    "service_count",
+    "running_count",
+    "attention_count",
+    "memory_total_mb",
+    "last_deployed_at",
+)
+PUBLIC_SERVICE_FIELDS = (
+    "service",
+    "name",
+    "framework",
+    "framework_label",
+    "frontend",
+    "host_port",
+    "status",
+    "last_deployed_at",
+)
+
+
+def public_project_view(project: dict[str, Any]) -> dict[str, Any]:
+    view = {key: project.get(key) for key in PUBLIC_PROJECT_FIELDS}
+    view["service_summaries"] = [
+        {key: service.get(key) for key in PUBLIC_SERVICE_FIELDS}
+        for service in project.get("service_summaries") or []
+    ]
+    # Say that something needs attention without saying what failed.
+    view["runtime_error"] = bool(project.get("runtime_error"))
+    return view
+
+
 @app.get("/api/catalog")
 def service_catalog(request: Request, response: Response) -> dict[str, Any]:
     data, cache_state, cache_ttl, generated_at = cached_read(
@@ -608,7 +654,7 @@ def service_catalog(request: Request, response: Response) -> dict[str, Any]:
         ttl=cache_ttl,
         generated_at=generated_at,
     )
-    projects = data.get("projects", [])
+    projects = [public_project_view(item) for item in data.get("projects", [])]
     services = []
     for project in projects:
         project_name = str(project.get("name") or "")

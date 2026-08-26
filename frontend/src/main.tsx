@@ -47,6 +47,7 @@ type FrameworkId =
   | "flask"
   | "django"
   | "spring-maven"
+  | "spring-gradle"
   | "go"
   | "existing";
 
@@ -236,6 +237,7 @@ const frameworkOptions: Array<{
   { id: "flask", label: "Flask", hint: "Python Flask 백엔드" },
   { id: "django", label: "Django", hint: "Python Django 백엔드" },
   { id: "spring-maven", label: "Spring Maven", hint: "Java Spring Boot Maven" },
+  { id: "spring-gradle", label: "Spring Gradle", hint: "Java Spring Boot Gradle" },
   { id: "go", label: "Go", hint: "Go 웹 서비스" },
   { id: "existing", label: "기존 Dockerfile", hint: "저장소의 Dockerfile 그대로 사용" }
 ];
@@ -316,6 +318,8 @@ function normalizeFramework(value: unknown): FrameworkId | "" {
     django: "django",
     spring: "spring-maven",
     "spring-maven": "spring-maven",
+    "spring-gradle": "spring-gradle",
+    gradle: "spring-gradle",
     go: "go",
     golang: "go",
     auto: "auto",

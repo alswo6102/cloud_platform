@@ -1560,6 +1560,10 @@ def load_session(
                 session["context"] = merged_context
             else:
                 session["context"] = client_context
+            # A brand-new session has no context_at, so the context stored one
+            # line above was immediately read as expired and thrown away. Record
+            # when it arrived; an existing session keeps the active task's age.
+            session.setdefault("context_at", now)
         session["updated_at"] = now
         context = session.get("context")
         if context and now - float(session.get("context_at", 0)) > ACTIVE_TASK_TTL_SECONDS:
@@ -2033,6 +2037,30 @@ def deploy_confirmations(
     return items
 
 
+def deploy_form_hint(
+    arguments: dict[str, Any] | None,
+    missing: list[dict[str, Any]] | None,
+    field_errors: dict[str, str] | None,
+) -> dict[str, Any]:
+    return {
+        "type": "form",
+        "form": "service.deploy",
+        "title": "새 서비스 배포",
+        "required": ["service", "repo_url", "framework"],
+        "optional": ["is_web", "host_port", "environment_names"],
+        "arguments": arguments or {},
+        "missing": missing or [],
+        "field_errors": field_errors or {},
+        "choices": {
+            # Read the presets instead of restating them. The two hand-written
+            # copies this replaces had already drifted and lost spring-gradle.
+            "framework": [item["id"] for item in preset_catalog()],
+            "is_web": [True, False],
+            "optional_mode": ["defaults", "custom"],
+        },
+    }
+
+
 def ui_hint_for_response(
     *,
     skill: str | None,
@@ -2050,62 +2078,8 @@ def ui_hint_for_response(
             "skill": skill,
             "title": "실행 전 승인",
         }
-    if skill == "service.deploy" and missing:
-        return {
-            "type": "form",
-            "form": "service.deploy",
-            "title": "새 서비스 배포",
-            "required": ["service", "repo_url", "framework"],
-            "optional": ["is_web", "host_port", "environment_names"],
-            "arguments": arguments or {},
-            "missing": missing,
-            "field_errors": field_errors or {},
-            "choices": {
-                "framework": [
-                    "static",
-                    "vite",
-                    "react",
-                    "nextjs",
-                    "express",
-                    "fastapi",
-                    "flask",
-                    "django",
-                    "spring-maven",
-                    "go",
-                    "existing",
-                ],
-                "is_web": [True, False],
-                "optional_mode": ["defaults", "custom"],
-            },
-        }
-    if skill == "service.deploy" and field_errors:
-        return {
-            "type": "form",
-            "form": "service.deploy",
-            "title": "새 서비스 배포",
-            "required": ["service", "repo_url", "framework"],
-            "optional": ["is_web", "host_port", "environment_names"],
-            "arguments": arguments or {},
-            "missing": missing or [],
-            "field_errors": field_errors,
-            "choices": {
-                "framework": [
-                    "static",
-                    "vite",
-                    "react",
-                    "nextjs",
-                    "express",
-                    "fastapi",
-                    "flask",
-                    "django",
-                    "spring-maven",
-                    "go",
-                    "existing",
-                ],
-                "is_web": [True, False],
-                "optional_mode": ["defaults", "custom"],
-            },
-        }
+    if skill == "service.deploy" and (missing or field_errors):
+        return deploy_form_hint(arguments, missing, field_errors)
     return None
 
 
@@ -2177,7 +2151,15 @@ def deterministic_read_request(
         project = namespace
     if not project:
         return None
-    project_item = next(item for item in projects if item["name"] == project)
+    project_item = next(
+        (item for item in projects if item["name"] == project),
+        None,
+    )
+    if project_item is None:
+        # Deterministic routing has no answer for a project that is not in the
+        # managed list. Hand the message on instead of raising StopIteration,
+        # which escaped as an empty 502.
+        return None
     service = exact_entity_from_text(
         message,
         project_item.get("services") or [],
@@ -2399,7 +2381,7 @@ def project_summary_catalog(http_request: Request):
 
 @app.post("/chat")
 def chat(request: ChatRequest, http_request: Request):
-    authenticated_namespace(http_request)
+    namespace = authenticated_namespace(http_request)
     session_context, session_history = load_session(
         request.session_id,
         request.context,
@@ -2408,6 +2390,21 @@ def chat(request: ChatRequest, http_request: Request):
 
     def respond(payload: dict[str, Any]) -> dict[str, Any]:
         return remember_response(request.session_id, request.message, payload)
+
+    def scoped_execute(
+        skill: str,
+        arguments: dict[str, Any],
+        *,
+        dry_run: bool,
+    ) -> dict[str, Any]:
+        # /execute and /preview scope every call to the caller's namespace.
+        # This path did not, so a namespace token could read another project's
+        # logs, status, and project list just by asking for them in chat.
+        scoped = namespace_scoped_arguments(skill, arguments, namespace)
+        result = execute_cli_skill(skill, scoped, dry_run=dry_run)
+        if dry_run:
+            return result
+        return namespace_scoped_result(skill, result, namespace)
 
     if not os.getenv("LLM_API_KEY"):
         request.context, proposed_response = handle_proposed_input(
@@ -2441,9 +2438,12 @@ def chat(request: ChatRequest, http_request: Request):
     no_project = None if os.getenv("LLM_API_KEY") else no_project_transition(request.message, request.context)
     if no_project:
         return respond(no_project)
-    framework_help = framework_context_help(request.message, request.context)
-    if framework_help and not os.getenv("LLM_API_KEY"):
-        return respond(framework_help)
+    if not os.getenv("LLM_API_KEY"):
+        # Building this answer clones the repository. With a planner configured
+        # the answer is discarded, so do not pay for it at all.
+        framework_help = framework_context_help(request.message, request.context)
+        if framework_help:
+            return respond(framework_help)
     documents = skill_documents()
     try:
         deterministic_read = (
@@ -2453,16 +2453,29 @@ def chat(request: ChatRequest, http_request: Request):
         if deterministic_read:
             skill, arguments = deterministic_read
             if skill == "service.logs" and not arguments.get("service"):
-                services = execute_cli_skill(
+                services = scoped_execute(
                     "project.list",
                     {},
                     dry_run=False,
                 )
                 project = next(
-                    item
-                    for item in services["projects"]
-                    if item["name"] == arguments["project"]
+                    (
+                        item
+                        for item in services["projects"]
+                        if item["name"] == arguments["project"]
+                    ),
+                    None,
                 )
+                if project is None:
+                    return respond({
+                        "mode": "local",
+                        "kind": "clarification",
+                        "message": (
+                            f"`{arguments['project']}` 프로젝트를 관리 목록에서 찾지 못했습니다. "
+                            "프로젝트 이름을 다시 알려주세요."
+                        ),
+                        "requires_approval": False,
+                    })
                 return respond({
                     "mode": "local",
                     "kind": "clarification",
@@ -2482,7 +2495,7 @@ def chat(request: ChatRequest, http_request: Request):
                     },
                     "requires_approval": False,
                 })
-            result = execute_cli_skill(skill, arguments, dry_run=False)
+            result = scoped_execute(skill, arguments, dry_run=False)
             final = naturalize_read_only_result(
                 skill,
                 result,
@@ -2524,7 +2537,7 @@ def chat(request: ChatRequest, http_request: Request):
             )
             current_missing = list(llm_context.get("missing") or [])
             try:
-                current_preview = execute_cli_skill(
+                current_preview = scoped_execute(
                     preferred_skill,
                     current_arguments,
                     dry_run=True,
@@ -2643,7 +2656,7 @@ def chat(request: ChatRequest, http_request: Request):
                         slot_arguments = None
                     if slot_arguments:
                         try:
-                            slot_preview = execute_cli_skill(
+                            slot_preview = scoped_execute(
                                 preferred_skill,
                                 slot_arguments,
                                 dry_run=True,
@@ -2826,7 +2839,7 @@ def chat(request: ChatRequest, http_request: Request):
                     {},
                 )
                 try:
-                    current_preview = execute_cli_skill(
+                    current_preview = scoped_execute(
                         preferred_skill,
                         verified_arguments,
                         dry_run=True,
@@ -2927,7 +2940,7 @@ def chat(request: ChatRequest, http_request: Request):
         if project_problem:
             return respond(project_problem)
         if skill in READ_ONLY_SKILLS:
-            result = execute_cli_skill(
+            result = scoped_execute(
                 skill,
                 arguments,
                 dry_run=False,
@@ -2948,7 +2961,7 @@ def chat(request: ChatRequest, http_request: Request):
                 "requires_approval": False,
             })
         try:
-            preview = execute_cli_skill(
+            preview = scoped_execute(
                 skill,
                 arguments,
                 dry_run=True,
@@ -3081,6 +3094,9 @@ def chat(request: ChatRequest, http_request: Request):
             ),
             "requires_approval": True,
         })
+    except HTTPException:
+        # A namespace denial is an answer, not a planner failure.
+        raise
     except (SkillError, KeyError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=error_detail(exc)) from exc
     except Exception as exc:

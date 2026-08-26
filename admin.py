@@ -221,10 +221,19 @@ def get_project_services(project_name: str) -> (dict, dict):
                 data = yaml.safe_load(f)
                 if data and 'services' in data:
                     for s_name, s_config in data['services'].items():
+                        labels = s_config.get('labels') or []
+                        # The platform's own project agent is not a service the
+                        # dashboard operates, and it has no source folder.
+                        if s_name == 'agent' or 'cloud.platform.role=agent' in labels:
+                            continue
                         build_info = s_config.get('build', {})
-                        context = build_info.get('context', '.') if isinstance(build_info, dict) else build_info
-                        folder = context.replace('./', '')
-                        is_web = "is_web_service=true" in s_config.get('labels', [])
+                        context = build_info.get('context', '') if isinstance(build_info, dict) else build_info
+                        folder = str(context or '').replace('./', '').strip('/')
+                        # An empty or '.' context used to resolve to the project
+                        # directory itself, which delete would then remove.
+                        if not folder or folder in {'.', '..'}:
+                            folder = s_name
+                        is_web = "is_web_service=true" in labels
                         service_metadata[s_name] = {'folder': folder, 'is_web': is_web}
             except yaml.YAMLError:
                 pass
@@ -727,7 +736,13 @@ if selected_project:
                             if service_name in compose_data['services']: del compose_data['services'][service_name]
                             with open(compose_file, 'w') as f:
                                 yaml.dump(compose_data, f, sort_keys=False)
-                            shutil.rmtree(project_path / meta['folder'])
+                            target = (project_path / meta['folder']).resolve()
+                            root = project_path.resolve()
+                            if target == root or root not in target.parents:
+                                raise RuntimeError(
+                                    f"서비스 디렉터리가 프로젝트 밖을 가리킵니다: {meta['folder']}"
+                                )
+                            shutil.rmtree(target)
                             st.session_state.last_action_message = (f"🗑️ Service '{service_name}' has been deleted.");
                             del st.session_state[f"confirm_delete_{service_name}"];
                             st.rerun()

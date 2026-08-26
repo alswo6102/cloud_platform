@@ -106,6 +106,9 @@ MODEL_COOLDOWN_LOCK = threading.Lock()
 REPOSITORY_ACCESS_CACHE: dict[str, float] = {}
 REPOSITORY_ACCESS_CACHE_LOCK = threading.Lock()
 REPOSITORY_ACCESS_CACHE_TTL = float(os.getenv("REPOSITORY_ACCESS_CACHE_TTL", "300"))
+REPOSITORY_INSPECT_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
+REPOSITORY_INSPECT_CACHE_LOCK = threading.Lock()
+REPOSITORY_INSPECT_CACHE_TTL = float(os.getenv("REPOSITORY_INSPECT_CACHE_TTL", "300"))
 
 
 class SkillError(RuntimeError):
@@ -813,8 +816,29 @@ def validate_github_repository_access(repo_url: str) -> None:
 
 
 def inspect_repository(repo_url: str) -> dict[str, Any]:
+    """Inspect a repository, reusing a recent answer for the same URL.
+
+    One deploy asks about the same repository several times -- the planner's own
+    lookup, the observations handed to it, and the check before approval. Each
+    of those used to clone the repository again.
+    """
     if not GITHUB_HTTPS_PATTERN.fullmatch(repo_url):
         raise invalid_repo_url_error()
+    now = time.monotonic()
+    with REPOSITORY_INSPECT_CACHE_LOCK:
+        cached = REPOSITORY_INSPECT_CACHE.get(repo_url)
+        if cached and cached[0] > now:
+            return deepcopy(cached[1])
+    result = clone_and_inspect_repository(repo_url)
+    with REPOSITORY_INSPECT_CACHE_LOCK:
+        REPOSITORY_INSPECT_CACHE[repo_url] = (
+            time.monotonic() + REPOSITORY_INSPECT_CACHE_TTL,
+            deepcopy(result),
+        )
+    return result
+
+
+def clone_and_inspect_repository(repo_url: str) -> dict[str, Any]:
     with tempfile.TemporaryDirectory(prefix="cloud-platform-inspect-") as temp_dir:
         root = Path(temp_dir) / "repository"
         git_clone(repo_url, root)
@@ -1665,8 +1689,9 @@ def service_deploy(
         if container_port is not None
         else DEFAULT_CONTAINER_PORT
     )
+    requested_environment_names = environment_names or []
     environment_names = []
-    for raw_name in environment_names or []:
+    for raw_name in requested_environment_names:
         name = str(raw_name).strip()
         if not name:
             continue
@@ -1912,10 +1937,16 @@ def service_redeploy(
     config = service_config(project, service)
     labels = labels_as_dict(config.get("labels"))
     current_metadata = load_service_metadata(project).get(service, {})
-    framework = (
+    recorded_framework = (
         current_metadata.get("framework")
         or labels.get("cloud.platform.framework")
-        or "existing"
+        or None
+    )
+    framework = recorded_framework or "existing"
+    regenerate_dockerfile = (
+        recorded_framework is not None
+        and recorded_framework != "existing"
+        and recorded_framework in FRAMEWORK_PRESETS
     )
     is_web = (
         bool(current_metadata["frontend"])
@@ -1937,9 +1968,19 @@ def service_redeploy(
         "project": project,
         "service": service,
         "repo_url": repo_url,
+        "framework": framework,
+        "dockerfile": (
+            f"regenerate the {framework} preset Dockerfile"
+            if regenerate_dockerfile
+            else "use repository Dockerfile"
+        ),
         "steps": [
             "clone the latest default branch into a temporary directory",
-            "validate the new root-level Dockerfile",
+            (
+                "regenerate the framework preset Dockerfile in the new clone"
+                if regenerate_dockerfile
+                else "validate the new root-level Dockerfile"
+            ),
             "atomically swap the service source directory",
             "build a new image and force-recreate only the target service",
             "verify the new container stays running",
@@ -1957,8 +1998,24 @@ def service_redeploy(
 
     try:
         git_clone(repo_url, fresh)
-        if not (fresh / "Dockerfile").is_file():
-            raise SkillError("Latest repository root does not contain a Dockerfile")
+        # The preset Dockerfile only ever existed in the server-side clone, so a
+        # fresh clone never carries it. Regenerating it here is what makes a
+        # preset-deployed service redeployable at all.
+        if regenerate_dockerfile:
+            (fresh / "Dockerfile").write_text(render_dockerfile(str(framework)))
+        elif not (fresh / "Dockerfile").is_file():
+            # Deployed before the framework was recorded: reuse the Dockerfile
+            # the previous deploy left in the server-side checkout.
+            previous = source / "Dockerfile"
+            if recorded_framework is None and previous.is_file():
+                (fresh / "Dockerfile").write_text(previous.read_text())
+            else:
+                raise SkillError(
+                    "저장소 루트에 Dockerfile이 없습니다.",
+                    code="dockerfile_missing",
+                    field="repo_url",
+                    hint="`기존 Dockerfile 사용`으로 배포된 서비스는 저장소 최상위에 Dockerfile이 있어야 합니다.",
+                )
         source.rename(backup)
         fresh.rename(source)
         compose_command(
@@ -2041,6 +2098,15 @@ def port_manage(
                 code="container_port_invalid",
                 field="container_port",
                 hint="컨테이너 포트는 1~65535 사이 숫자여야 합니다.",
+            )
+        if current_host is None:
+            # Without a published host port there is nothing to carry over, and
+            # the mapping would be written as the string "None:<port>".
+            raise SkillError(
+                "이 서비스에는 게시된 호스트 포트가 없어 컨테이너 포트만 바꿀 수 없습니다.",
+                code="host_port_not_published",
+                field="host_port",
+                hint='ports가 "9000:3000" 형태로 지정된 서비스에서만 사용할 수 있습니다.',
             )
         new_host, new_target = current_host, container_port
     else:
