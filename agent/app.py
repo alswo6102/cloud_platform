@@ -1977,6 +1977,33 @@ def naturalize_mutation_message(
     return {"message": fallback, "model": model_hint}
 
 
+# Presets that compile the repository on this host rather than serving files
+# it already contains.
+SOURCE_BUILD_FRAMEWORKS = {
+    "vite",
+    "react",
+    "nextjs",
+    "spring-maven",
+    "spring-gradle",
+    "go",
+}
+# Roughly what a frontend toolchain needs before it starts swapping.
+SOURCE_BUILD_MEMORY_MB = int(os.getenv("SOURCE_BUILD_MEMORY_MB", "2048"))
+
+
+def source_build_is_affordable() -> bool:
+    try:
+        health = execute_cli_skill("server.health", {}, dry_run=False)
+    except Exception:
+        # Unknown capacity is not a reason to warn; the CLI will still enforce.
+        return True
+    total = health.get("memory_total_mb")
+    try:
+        return float(total) >= SOURCE_BUILD_MEMORY_MB
+    except (TypeError, ValueError):
+        return True
+
+
 def deploy_confirmations(
     message: str,
     skill: str,
@@ -2014,6 +2041,25 @@ def deploy_confirmations(
 
     framework = str(arguments.get("framework") or "").strip()
     repo_url = str(arguments.get("repo_url") or "").strip()
+
+    # Compiling from source on this host does not finish. A frontend build wants
+    # gigabytes of RAM; the box has under one, so it swaps until the fifteen
+    # minute build timeout kills it -- fifteen minutes the user spent waiting
+    # for a failure that was certain from the start. Say so before the wait.
+    if framework in SOURCE_BUILD_FRAMEWORKS and not source_build_is_affordable():
+        items.append({
+            "field": "framework",
+            "label": "빌드 방식",
+            "question": (
+                f"`{framework}`는 서버에서 소스를 직접 빌드합니다. 이 서버는 "
+                "메모리가 부족해 프론트엔드 빌드가 시간 초과로 실패할 가능성이 "
+                "높습니다.\n"
+                "로컬에서 빌드한 결과물을 저장소에 올린 뒤 `static`으로 "
+                "배포하시는 편을 권합니다. 그래도 진행할까요?"
+            ),
+            "examples": ["static", framework],
+        })
+
     if repo_url and framework and framework != "existing":
         try:
             repository = execute_cli_skill(

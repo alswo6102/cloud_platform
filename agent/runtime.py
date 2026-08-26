@@ -1245,6 +1245,8 @@ def server_health() -> dict[str, Any]:
         "disk_percent": disk_percent,
         "disk_free_mb": round(disk.free / 1024 / 1024, 1),
         "memory_percent": memory.percent,
+        "memory_total_mb": round(memory.total / 1024 / 1024, 1),
+        "memory_available_mb": round(memory.available / 1024 / 1024, 1),
         "swap_used_mb": round(swap.used / 1024 / 1024, 1),
         "swap_percent": swap.percent,
         "performance_warnings": performance_warnings,
