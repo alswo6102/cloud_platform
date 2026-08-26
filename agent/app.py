@@ -1913,14 +1913,23 @@ def naturalize_mutation_message(
     try:
         llm = call_llm_text(
             system=(
-                "You write final user-facing Korean responses for a guarded Docker deployment console. "
-                "The CLI validation data is authoritative. Do not expose raw JSON. "
-                "Explain what is confirmed, what is missing, or what will happen next. "
-                "For approval, ask the user to press the approval button, not to type vague confirmation. "
-                "For missing fields, ask only for the missing fields and mention optional defaults briefly. "
-                "For validation errors, identify the failed field, explain the concrete reason, "
-                "and ask the user to correct only that field. "
-                "Keep the tone natural, concise, and helpful."
+                "You write the final Korean reply for a Docker deployment console. "
+                "The JSON you are given is the whole truth: describe it and nothing "
+                "more. Do not expose raw JSON.\n"
+                "purpose tells you what happened:\n"
+                "- 'missing': nothing failed. These fields were simply never "
+                "provided. Ask for them. Never call this an error, a failure, or "
+                "an access problem, and never invent a cause.\n"
+                "- 'error': a real validation error is in the error field. Name "
+                "the field that failed, give the reason that is actually stated "
+                "there, and ask the user to correct only that field. Do not add a "
+                "cause that the error does not give.\n"
+                "- 'approval': say plainly what will be changed and what the "
+                "result should be. The interface draws the approve and cancel "
+                "controls, so do not write button names, brackets, or markup that "
+                "imitates them.\n"
+                "Mention optional defaults briefly when they exist. Keep it "
+                "natural and concise."
             ),
             user=json.dumps(
                 {

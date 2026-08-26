@@ -266,6 +266,13 @@ async function api<T>(path: string, auth: AuthHeaders, init?: RequestInit): Prom
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
+    if (response.status === 401 && auth.token) {
+      // An expired or revoked token would otherwise leave the console acting as
+      // a visitor with no explanation, emptying the screen mid-task.
+      const expired = new Error("세션이 만료되었습니다. 다시 로그인해주세요.");
+      expired.name = "SessionExpired";
+      throw expired;
+    }
     throw new Error(formatApiError(data.detail) || `Request failed: ${response.status}`);
   }
   return data as T;
@@ -482,6 +489,15 @@ function App() {
   const selectedProject = page.kind === "project"
     ? projects.find((project) => project.name === page.project)
     : undefined;
+  // The workspace holds the AI conversation, so it must not be torn down just
+  // because a project refresh is in flight or came back without this project
+  // for a moment. Stay mounted on the route and fall back to a name-only
+  // project until the list has settled and genuinely lacks it.
+  const projectSettledMissing =
+    page.kind === "project" && projectsLoaded && !loading && !selectedProject;
+  const workspaceProject = page.kind === "project" && !projectSettledMissing
+    ? selectedProject ?? { name: page.project }
+    : undefined;
   const projectNames = useMemo(() => new Set(projects.map((project) => project.name)), [projects]);
 
   async function refreshPublicProjects(force = false) {
@@ -517,6 +533,10 @@ function App() {
       });
       setProjects(data.projects || []);
     } catch (err) {
+      if (err instanceof Error && err.name === "SessionExpired") {
+        clearStoredSession();
+        setSession(null);
+      }
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setProjectsLoaded(true);
@@ -646,10 +666,10 @@ function App() {
           }}
           onLoadPublicProjects={(force = false) => refreshPublicProjects(force)}
         />
-      ) : selectedProject ? (
+      ) : workspaceProject ? (
         <ProjectWorkspace
           auth={auth}
-          project={selectedProject}
+          project={workspaceProject}
           onBack={() => navigateHome()}
           onRefresh={refreshAll}
         />
