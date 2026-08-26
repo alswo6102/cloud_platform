@@ -531,6 +531,81 @@ def _console_is_not_behind():
     assert not missing, f"콘솔에서 고를 수 없는 프리셋: {sorted(missing)}"
 
 
+# --- The planner remembers what it looked up --------------------------------
+# A turn used to leave only prose behind, so the next turn began with the
+# model not knowing which tools it had already called.
+
+
+@check("a_turn_keeps_its_tool_calls_and_results")
+def _transcript_round_trips():
+    session_id = "review-session-0003"
+    app.SESSIONS.pop(session_id, None)
+    transcript = [
+        {"role": "user", "content": "demoa의 web 로그 보여줘"},
+        {
+            "role": "assistant",
+            "tool_calls": [
+                {
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {"name": "service-logs", "arguments": "{}"},
+                }
+            ],
+        },
+        {"role": "tool", "tool_call_id": "call_1", "content": '{"logs": "boom"}'},
+    ]
+    app.remember_response(
+        session_id,
+        "demoa의 web 로그 보여줘",
+        {"message": "에러가 한 건 있습니다.", "requires_approval": False},
+        transcript,
+    )
+    _, history = app.load_session(session_id, None)
+    roles = [item.get("role") for item in history]
+    assert roles == ["user", "assistant", "tool", "assistant"], roles
+    assert history[1]["tool_calls"][0]["id"] == "call_1", history[1]
+    assert "boom" in history[2]["content"], history[2]
+
+
+@check("trimming_never_orphans_a_tool_result")
+def _trim_keeps_pairs():
+    limit = app.SESSION_HISTORY_LIMIT
+    messages = []
+    while len(messages) < limit * 2:
+        messages += [
+            {"role": "user", "content": "q"},
+            {"role": "assistant", "tool_calls": [{"id": f"c{len(messages)}"}]},
+            {"role": "tool", "tool_call_id": f"c{len(messages)}", "content": "{}"},
+            {"role": "assistant", "content": "a"},
+        ]
+    kept = app.trim_transcript(messages)
+    assert len(kept) <= limit, len(kept)
+    assert kept[0]["role"] == "user", kept[0]
+    # Every tool result still has the call that produced it.
+    offered = set()
+    for item in kept:
+        for call in item.get("tool_calls") or []:
+            offered.add(call["id"])
+        if item.get("role") == "tool":
+            assert item["tool_call_id"] in offered, item
+
+
+@check("an_early_return_closes_every_open_tool_call")
+def _no_unanswered_calls_in_source():
+    source = (ROOT / "agent" / "runtime.py").read_text()
+    tree = ast.parse(source)
+    node = next(
+        n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "call_llm"
+    )
+    body = ast.get_source_segment(source, node) or ""
+    assert "def finish(" in body, "조기 반환이 열린 도구 호출을 닫지 않음"
+    # Every return that carries a decision has to go through finish().
+    for marker in ('"kind": "answer"', '"explanation": f"Selected'):
+        index = body.index(marker)
+        window = body[max(0, index - 400):index]
+        assert "finish(" in window or "transcript()" in window, marker
+
+
 # --- One transport, and prompts that live outside the code ------------------
 
 

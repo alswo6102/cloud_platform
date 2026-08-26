@@ -41,7 +41,9 @@ SESSION_TTL_SECONDS = int(os.getenv("SESSION_TTL_SECONDS", str(60 * 60 * 3)))
 # as long as the session, an abandoned deploy kept handing its repository URL
 # and service name to whatever the user asked next.
 ACTIVE_TASK_TTL_SECONDS = int(os.getenv("ACTIVE_TASK_TTL_SECONDS", str(15 * 60)))
-SESSION_HISTORY_LIMIT = 24
+# A turn is now several messages -- the question, the tool calls, their
+# results, the reply -- not two.
+SESSION_HISTORY_LIMIT = int(os.getenv("SESSION_HISTORY_LIMIT", "60"))
 SESSION_LOCK = threading.Lock()
 SESSION_STORE = Path(
     os.getenv("SESSION_STORE", "/var/log/skill-agent/sessions.json")
@@ -537,10 +539,25 @@ def persist_sessions_locked() -> None:
     temporary.replace(SESSION_STORE)
 
 
+def trim_transcript(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Drop whole exchanges from the front, never half of one.
+
+    A tool result whose call is no longer in the list is rejected by the API,
+    so the kept window has to start on a user message.
+    """
+    if len(messages) <= SESSION_HISTORY_LIMIT:
+        return list(messages)
+    start = len(messages) - SESSION_HISTORY_LIMIT
+    while start < len(messages) and messages[start].get("role") != "user":
+        start += 1
+    return list(messages[start:])
+
+
 def remember_response(
     session_id: str | None,
     user_message: str,
     response: dict[str, Any],
+    transcript: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     if not session_id:
         return response
@@ -550,11 +567,23 @@ def remember_response(
             session_id,
             {"context": None, "history": [], "updated_at": time.time()},
         )
-        history = session.setdefault("history", [])
-        history.append({"role": "user", "content": user_message})
-        if assistant_message:
-            history.append({"role": "assistant", "content": assistant_message})
-        session["history"] = history[-SESSION_HISTORY_LIMIT:]
+        if transcript is not None:
+            # What the planner actually did this turn, tool calls and results
+            # included, plus what the user was finally told.
+            history = list(transcript)
+            already_said = (
+                history
+                and history[-1].get("role") == "assistant"
+                and str(history[-1].get("content") or "").strip() == assistant_message
+            )
+            if assistant_message and not already_said:
+                history.append({"role": "assistant", "content": assistant_message})
+        else:
+            history = list(session.get("history") or [])
+            history.append({"role": "user", "content": user_message})
+            if assistant_message:
+                history.append({"role": "assistant", "content": assistant_message})
+        session["history"] = trim_transcript(history)
         if "context" in response:
             session["context"] = response.get("context")
         elif response.get("requires_approval"):
@@ -603,7 +632,7 @@ def remember_execution(
                 "content": f"{skill} 작업이 승인되어 실행과 검증을 완료했습니다.",
             }
         )
-        session["history"] = history[-SESSION_HISTORY_LIMIT:]
+        session["history"] = trim_transcript(history)
         session["updated_at"] = time.time()
         persist_sessions_locked()
 
@@ -979,8 +1008,13 @@ def chat(request: ChatRequest, http_request: Request):
     )
     request.context = session_context
 
-    def respond(payload: dict[str, Any]) -> dict[str, Any]:
-        return remember_response(request.session_id, request.message, payload)
+    def respond(
+        payload: dict[str, Any],
+        transcript: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        return remember_response(
+            request.session_id, request.message, payload, transcript
+        )
 
     def scoped_execute(
         skill: str,
@@ -1034,7 +1068,7 @@ def chat(request: ChatRequest, http_request: Request):
                 # the console values from an older request.
                 "context": request.context,
                 "requires_approval": False,
-            })
+            }, plan.get("transcript"))
 
         skill = plan["skill"]
         arguments = arguments_for_plan(
@@ -1059,7 +1093,7 @@ def chat(request: ChatRequest, http_request: Request):
                 "model": final.get("model"),
                 "result": final["result"],
                 "requires_approval": False,
-            })
+            }, plan.get("transcript"))
 
         try:
             preview = scoped_execute(skill, arguments, dry_run=True)
@@ -1099,7 +1133,7 @@ def chat(request: ChatRequest, http_request: Request):
                     field_errors=field_errors,
                 ),
                 "requires_approval": False,
-            })
+            }, plan.get("transcript"))
 
         if not preview.get("needs_input"):
             # A choice the user never made becomes a question rather than
@@ -1144,7 +1178,7 @@ def chat(request: ChatRequest, http_request: Request):
                     preview=preview,
                 ),
                 "requires_approval": False,
-            })
+            }, plan.get("transcript"))
 
         final = naturalize_mutation_message(
             purpose="approval",
@@ -1169,7 +1203,7 @@ def chat(request: ChatRequest, http_request: Request):
             ),
             "resume": request.context.get("resume") if request.context else None,
             "requires_approval": True,
-        })
+        }, plan.get("transcript"))
     except HTTPException:
         # A namespace denial is an answer, not a planner failure.
         raise

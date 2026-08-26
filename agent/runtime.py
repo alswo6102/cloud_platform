@@ -2508,12 +2508,22 @@ def call_llm(
             "content": load_prompt("planner") + context_instruction,
         },
     ]
-    for item in (history or [])[-16:]:
+    # Restore the previous turns exactly as they happened, tool calls and
+    # results included. Storing only the prose meant the planner started every
+    # turn not knowing what it had already looked up.
+    for item in history or []:
         role = item.get("role")
-        content = str(item.get("content", "")).strip()
-        if role in {"user", "assistant"} and content:
-            messages.append({"role": role, "content": content})
+        if role == "tool":
+            messages.append(item)
+        elif role == "user":
+            messages.append(item)
+        elif role == "assistant" and (item.get("content") or item.get("tool_calls")):
+            messages.append(item)
     messages.append({"role": "user", "content": message})
+
+    def transcript() -> list[dict[str, Any]]:
+        # Everything after the system prompt, which is rebuilt each turn.
+        return messages[1:]
 
     last_model = None
     for _ in range(LLM_MAX_STEPS):
@@ -2523,16 +2533,50 @@ def call_llm(
         # No tool call means the planner is answering. Content can be empty on
         # some models, in which case keep looping rather than returning silence.
         if not tool_calls:
+            messages.append(response_message)
             reply = str(response_message.get("content") or "").strip()
             if reply:
-                return {"kind": "answer", "message": reply, "model": last_model}
-            messages.append(response_message)
+                return {
+                    "kind": "answer",
+                    "message": reply,
+                    "model": last_model,
+                    "transcript": transcript(),
+                }
             continue
 
         messages.append(response_message)
+        answered: set[str] = set()
+
+        def call_id_of(call: dict[str, Any]) -> str:
+            return str(call.get("id") or (call.get("function") or {}).get("name", ""))
+
+        def finish(payload: dict[str, Any], note: dict[str, Any]) -> dict[str, Any]:
+            # Every tool call in an assistant message needs a result, or the
+            # next turn's request is rejected for referring to a call that was
+            # never answered. Returning early leaves some unanswered.
+            for call in tool_calls:
+                identifier = call_id_of(call)
+                if identifier in answered:
+                    continue
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": identifier,
+                        "content": json.dumps(
+                            note if identifier == handled else
+                            {"status": "not run; the turn ended first"},
+                            ensure_ascii=False,
+                            default=str,
+                        ),
+                    }
+                )
+                answered.add(identifier)
+            return {**payload, "transcript": transcript()}
+
         for tool_call in tool_calls:
             function = tool_call.get("function") or {}
             api_name = function.get("name", "")
+            handled = call_id_of(tool_call)
             raw_arguments = function.get("arguments") or "{}"
             try:
                 arguments = (
@@ -2548,11 +2592,14 @@ def call_llm(
             if api_name == "conversation-reply":
                 message_text = str(arguments.get("message", "")).strip()
                 if message_text:
-                    return {
-                        "kind": "answer",
-                        "message": message_text,
-                        "model": last_model,
-                    }
+                    return finish(
+                        {
+                            "kind": "answer",
+                            "message": message_text,
+                            "model": last_model,
+                        },
+                        {"status": "delivered to the user"},
+                    )
                 observation: dict[str, Any] = {
                     "error": "EmptyReply",
                     "detail": "conversation-reply needs a non-empty message.",
@@ -2567,12 +2614,15 @@ def call_llm(
                 elif skill not in READ_ONLY_SKILLS:
                     # Mutations never run here. Hand the choice back so the
                     # caller can dry-run it and ask the user to approve.
-                    return {
-                        "skill": skill,
-                        "arguments": arguments,
-                        "explanation": f"Selected `{skill}` with `{last_model}`.",
-                        "model": last_model,
-                    }
+                    return finish(
+                        {
+                            "skill": skill,
+                            "arguments": arguments,
+                            "explanation": f"Selected `{skill}` with `{last_model}`.",
+                            "model": last_model,
+                        },
+                        {"status": "handed to the preview and approval gate"},
+                    )
                 else:
                     try:
                         observation = execute_cli_skill(
@@ -2591,7 +2641,7 @@ def call_llm(
             messages.append(
                 {
                     "role": "tool",
-                    "tool_call_id": tool_call.get("id", api_name),
+                    "tool_call_id": handled,
                     "content": json.dumps(
                         observation,
                         ensure_ascii=False,
@@ -2599,6 +2649,7 @@ def call_llm(
                     ),
                 }
             )
+            answered.add(handled)
 
     raise SkillError(
         f"Planner did not reach an answer within {LLM_MAX_STEPS} steps"
