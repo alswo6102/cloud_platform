@@ -2045,19 +2045,19 @@ def deploy_confirmations(
     # gigabytes of RAM; the box has under one, so it swaps until the fifteen
     # minute build timeout kills it -- fifteen minutes the user spent waiting
     # for a failure that was certain from the start. Say so before the wait.
+    # Both checks below are about the same decision, so they become one
+    # question. Two entries for the same field drew the field twice in the form.
+    reasons: list[str] = []
+    options: list[str] = []
+
     if framework in SOURCE_BUILD_FRAMEWORKS and not source_build_is_affordable():
-        items.append({
-            "field": "framework",
-            "label": "빌드 방식",
-            "question": (
-                f"`{framework}`는 서버에서 소스를 직접 빌드합니다. 이 서버는 "
-                "메모리가 부족해 프론트엔드 빌드가 시간 초과로 실패할 가능성이 "
-                "높습니다.\n"
-                "로컬에서 빌드한 결과물을 저장소에 올린 뒤 `static`으로 "
-                "배포하시는 편을 권합니다. 그래도 진행할까요?"
-            ),
-            "examples": ["static", framework],
-        })
+        reasons.append(
+            f"`{framework}`는 서버에서 소스를 직접 빌드합니다. 이 서버는 메모리가 "
+            "부족해 프론트엔드 빌드가 시간 초과로 실패할 가능성이 높습니다. "
+            "로컬에서 빌드한 결과물을 저장소에 올린 뒤 `static`으로 배포하시는 "
+            "편을 권합니다."
+        )
+        options.append("static")
 
     if repo_url and framework and framework != "existing":
         try:
@@ -2069,16 +2069,21 @@ def deploy_confirmations(
         except Exception:
             repository = {}
         if repository.get("has_dockerfile"):
-            items.append({
-                "field": "framework",
-                "label": "빌드 방식",
-                "question": (
-                    "저장소에 이미 Dockerfile이 있습니다. 그대로 사용할까요"
-                    f"(`existing`), 아니면 `{framework}` 프리셋으로 새로 만들까요? "
-                    "프리셋을 고르면 저장소의 Dockerfile은 사용되지 않습니다."
-                ),
-                "examples": ["existing", framework],
-            })
+            reasons.append(
+                "저장소에 이미 Dockerfile이 있습니다. 그대로 사용하려면 "
+                "`existing`을 고르세요. 프리셋을 고르면 저장소의 Dockerfile은 "
+                "사용되지 않습니다."
+            )
+            options.append("existing")
+
+    if reasons:
+        options.append(framework)
+        items.append({
+            "field": "framework",
+            "label": "빌드 방식",
+            "question": "\n".join(reasons) + "\n어떻게 할까요?",
+            "examples": list(dict.fromkeys(options)),
+        })
     return items
 
 
