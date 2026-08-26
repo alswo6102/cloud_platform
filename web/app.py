@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import requests
-from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi import FastAPI, Header, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
@@ -28,9 +28,16 @@ AUTH_STORE = Path(os.getenv("AUTH_STORE", "/var/lib/cloud-platform/auth.json"))
 FRONTEND_DIST = Path(os.getenv("FRONTEND_DIST", "/var/www/cloud-platform-console"))
 REQUEST_TIMEOUT = float(os.getenv("WEB_REQUEST_TIMEOUT", "120"))
 PROJECT_AGENT_ENSURE_TTL = float(os.getenv("PROJECT_AGENT_ENSURE_TTL", "300"))
+PROJECT_SUMMARY_CACHE_TTL = float(os.getenv("WEB_PROJECT_SUMMARY_CACHE_TTL", "10"))
+CATALOG_CACHE_TTL = float(os.getenv("WEB_CATALOG_CACHE_TTL", "10"))
+SYSTEM_SUMMARY_CACHE_TTL = float(os.getenv("WEB_SYSTEM_SUMMARY_CACHE_TTL", "5"))
+SERVICE_STATUS_CACHE_TTL = float(os.getenv("WEB_SERVICE_STATUS_CACHE_TTL", "3"))
 AUTH_LOCK = threading.Lock()
 PROJECT_AGENT_ENSURE_LOCK = threading.Lock()
 PROJECT_AGENT_ENSURED_AT: dict[str, float] = {}
+READ_CACHE_LOCK = threading.Lock()
+READ_CACHE: dict[str, dict[str, Any]] = {}
+READ_INFLIGHT: dict[str, threading.Event] = {}
 
 Role = Literal["visitor", "user", "admin"]
 
@@ -70,6 +77,132 @@ class ExecuteRequest(BaseModel):
 class LoginRequest(BaseModel):
     user_id: str
     password: str = ""
+
+
+def request_bypasses_cache(request: Request) -> bool:
+    cache_control = request.headers.get("cache-control", "").lower()
+    pragma = request.headers.get("pragma", "").lower()
+    refresh = request.query_params.get("refresh", "").lower()
+    return (
+        "no-cache" in cache_control
+        or "max-age=0" in cache_control
+        or "no-cache" in pragma
+        or refresh in {"1", "true", "yes"}
+    )
+
+
+def cached_read(
+    key: str,
+    ttl: float,
+    producer: Any,
+    *,
+    bypass: bool = False,
+) -> tuple[dict[str, Any], str, float, float]:
+    if ttl <= 0:
+        return producer(), "MISS", 0, time.time()
+
+    now = time.monotonic()
+    stale_entry: dict[str, Any] | None = None
+    with READ_CACHE_LOCK:
+        entry = READ_CACHE.get(key)
+        if entry:
+            if entry["expires_at"] > now and not bypass:
+                return (
+                    entry["value"],
+                    "HIT",
+                    max(0.0, entry["expires_at"] - now),
+                    entry["generated_at"],
+                )
+            stale_entry = entry
+        if bypass:
+            event = threading.Event()
+            owner = True
+        else:
+            event = READ_INFLIGHT.get(key)
+            owner = event is None
+            if owner:
+                event = threading.Event()
+                READ_INFLIGHT[key] = event
+
+    if not owner:
+        assert event is not None
+        event.wait(timeout=REQUEST_TIMEOUT)
+        with READ_CACHE_LOCK:
+            entry = READ_CACHE.get(key)
+            if entry:
+                current = time.monotonic()
+                state = "HIT" if entry["expires_at"] > current else "STALE"
+                return (
+                    entry["value"],
+                    state,
+                    max(0.0, entry["expires_at"] - current),
+                    entry["generated_at"],
+                )
+        if stale_entry:
+            return stale_entry["value"], "STALE", 0, stale_entry["generated_at"]
+
+    try:
+        value = producer()
+    except Exception:
+        if owner and not bypass:
+            with READ_CACHE_LOCK:
+                READ_INFLIGHT.pop(key, None)
+                assert event is not None
+                event.set()
+        if stale_entry and not bypass:
+            return stale_entry["value"], "STALE", 0, stale_entry["generated_at"]
+        raise
+    generated_at = time.time()
+    expires_at = time.monotonic() + ttl
+    with READ_CACHE_LOCK:
+        READ_CACHE[key] = {
+            "value": value,
+            "generated_at": generated_at,
+            "expires_at": expires_at,
+        }
+        if owner and not bypass:
+            READ_INFLIGHT.pop(key, None)
+            assert event is not None
+            event.set()
+    return value, "MISS", ttl, generated_at
+
+
+def invalidate_read_cache(*prefixes: str) -> None:
+    with READ_CACHE_LOCK:
+        if not prefixes:
+            READ_CACHE.clear()
+            return
+        for key in list(READ_CACHE):
+            if any(key.startswith(prefix) for prefix in prefixes):
+                READ_CACHE.pop(key, None)
+
+
+def apply_api_cache_headers(
+    response: Response,
+    *,
+    state: str,
+    ttl: float,
+    generated_at: float,
+) -> None:
+    max_age = max(0, int(ttl))
+    response.headers["Cache-Control"] = f"private, max-age={max_age}"
+    response.headers["Vary"] = "X-User-Role, X-User-Id"
+    response.headers["X-Cloud-Cache"] = state
+    response.headers["X-Cloud-Cache-Ttl"] = str(max_age)
+    response.headers["X-Cloud-Generated-At"] = str(round(generated_at, 3))
+
+
+def frontend_cache_headers(full_path: str) -> dict[str, str]:
+    normalized = full_path.lstrip("/")
+    if normalized.startswith("assets/"):
+        return {
+            "Cache-Control": "public, max-age=31536000, immutable",
+            "X-Content-Type-Options": "nosniff",
+        }
+    return {
+        "Cache-Control": "no-cache, max-age=0, must-revalidate",
+        "X-Content-Type-Options": "nosniff",
+    }
 
 
 def default_auth_store() -> dict[str, Any]:
@@ -236,15 +369,15 @@ def project_agent_request(
 
 def ensure_project_agent(project: str, *, force: bool = False) -> None:
     now = time.monotonic()
-    if not force and wait_project_agent_ready(project, timeout=2.0):
-        with PROJECT_AGENT_ENSURE_LOCK:
-            PROJECT_AGENT_ENSURED_AT[project] = time.monotonic()
-        return
     if AUTO_ENSURE_PROJECT_AGENT and not force:
         with PROJECT_AGENT_ENSURE_LOCK:
             last = PROJECT_AGENT_ENSURED_AT.get(project, 0)
             if now - last < PROJECT_AGENT_ENSURE_TTL:
                 return
+    if not force and wait_project_agent_ready(project, timeout=2.0):
+        with PROJECT_AGENT_ENSURE_LOCK:
+            PROJECT_AGENT_ENSURED_AT[project] = time.monotonic()
+        return
     agent_request("POST", "/execute", json_body={
         "skill": "project.ensure_agent",
         "arguments": {"project": project},
@@ -266,13 +399,17 @@ def require_admin(role: Role) -> None:
 
 
 def project_names() -> set[str]:
-    data = agent_request("POST", "/execute", json_body={
-        "skill": "project.list",
-        "arguments": {},
-        "approved": True,
-    })
-    projects = data.get("result", {}).get("projects", [])
+    data, _, _, _ = cached_read(
+        "project-summaries",
+        PROJECT_SUMMARY_CACHE_TTL,
+        project_summary_catalog,
+    )
+    projects = data.get("projects", [])
     return {str(item.get("name")) for item in projects if item.get("name")}
+
+
+def project_summary_catalog() -> dict[str, Any]:
+    return agent_request("GET", "/project-summaries")
 
 
 def ensure_project_access(role: Role, user_id: str, project: str) -> None:
@@ -348,59 +485,102 @@ def me(
 
 @app.get("/api/projects")
 def list_projects(
+    request: Request,
+    response: Response,
     x_user_role: str | None = Header(default=None),
     x_user_id: str | None = Header(default=None),
 ) -> dict[str, Any]:
     user_id, role = authenticated_user(x_user_role, x_user_id)
     require_login(role)
-    data = agent_request("POST", "/execute", json_body={
-        "skill": "project.list",
-        "arguments": {},
-        "approved": True,
-    })
-    projects = visible_projects(role, user_id, data.get("result", {}).get("projects", []))
+    data, cache_state, cache_ttl, generated_at = cached_read(
+        "project-summaries",
+        PROJECT_SUMMARY_CACHE_TTL,
+        project_summary_catalog,
+        bypass=request_bypasses_cache(request),
+    )
+    apply_api_cache_headers(
+        response,
+        state=cache_state,
+        ttl=cache_ttl,
+        generated_at=generated_at,
+    )
+    projects = visible_projects(role, user_id, data.get("projects", []))
     return {
         "user": {"id": user_id, "role": role},
         "projects": projects,
+        "incomplete_projects": data.get("incomplete_projects", []),
         "membership_mode": "json-table",
     }
 
 
 @app.get("/api/catalog")
-def service_catalog() -> dict[str, Any]:
-    data = agent_request("POST", "/execute", json_body={
-        "skill": "project.list",
-        "arguments": {},
-        "approved": True,
-    })
-    projects = data.get("result", {}).get("projects", [])
+def service_catalog(request: Request, response: Response) -> dict[str, Any]:
+    data, cache_state, cache_ttl, generated_at = cached_read(
+        "project-summaries",
+        CATALOG_CACHE_TTL,
+        project_summary_catalog,
+        bypass=request_bypasses_cache(request),
+    )
+    apply_api_cache_headers(
+        response,
+        state=cache_state,
+        ttl=cache_ttl,
+        generated_at=generated_at,
+    )
+    projects = data.get("projects", [])
     services = []
     for project in projects:
         project_name = str(project.get("name") or "")
-        for service in project.get("services", []) or []:
+        summaries = project.get("service_summaries") or []
+        if not summaries:
+            summaries = [{"service": service} for service in project.get("services", []) or []]
+        for service in summaries:
+            service_name = str(service.get("service") or service.get("name") or "")
+            if not service_name:
+                continue
             services.append({
                 "project": project_name,
-                "service": str(service),
+                "service": service_name,
+                "framework": service.get("framework"),
+                "framework_label": service.get("framework_label"),
+                "frontend": service.get("frontend"),
+                "host_port": service.get("host_port"),
+                "status": service.get("status"),
+                "last_deployed_at": service.get("last_deployed_at"),
             })
     return {
         "projects": projects,
         "services": services,
-        "visibility": "names-only",
+        "visibility": "operational-summary",
     }
 
 
 @app.get("/api/system/summary")
 def system_summary(
+    request: Request,
+    response: Response,
     x_user_role: str | None = Header(default=None),
     x_user_id: str | None = Header(default=None),
 ) -> dict[str, Any]:
     _, role = authenticated_user(x_user_role, x_user_id)
     require_login(role)
-    return agent_request("POST", "/execute", json_body={
-        "skill": "server.health",
-        "arguments": {},
-        "approved": True,
-    })
+    data, cache_state, cache_ttl, generated_at = cached_read(
+        "system-summary",
+        SYSTEM_SUMMARY_CACHE_TTL,
+        lambda: agent_request("POST", "/execute", json_body={
+            "skill": "server.health",
+            "arguments": {},
+            "approved": True,
+        }),
+        bypass=request_bypasses_cache(request),
+    )
+    apply_api_cache_headers(
+        response,
+        state=cache_state,
+        ttl=cache_ttl,
+        generated_at=generated_at,
+    )
+    return data
 
 
 @app.get("/api/frameworks")
@@ -439,6 +619,7 @@ def create_project(
         "arguments": {"project": name},
         "approved": True,
     })
+    invalidate_read_cache()
     add_project_membership(name, user_id or "local-user", "owner")
     return result
 
@@ -482,10 +663,39 @@ def admin_chat(
     return agent_request("POST", "/chat", json_body=payload.model_dump())
 
 
+@app.post("/api/admin/execute")
+def admin_execute(
+    payload: ExecuteRequest,
+    x_user_role: str | None = Header(default=None),
+    x_user_id: str | None = Header(default=None),
+) -> dict[str, Any]:
+    _, role = authenticated_user(x_user_role, x_user_id)
+    require_admin(role)
+    result = agent_request("POST", "/execute", json_body={
+        "skill": payload.skill,
+        "arguments": payload.arguments,
+        "approved": payload.approved,
+        "session_id": payload.session_id,
+        "resume": payload.resume,
+    })
+    if payload.approved and payload.skill in {
+        "project.create",
+        "project.ensure_agent",
+        "service.deploy",
+        "service.redeploy",
+        "service.control",
+        "port.manage",
+    }:
+        invalidate_read_cache()
+    return result
+
+
 @app.post("/api/projects/{project}/execute")
 def project_execute(
     project: str,
     payload: ExecuteRequest,
+    request: Request,
+    response: Response,
     x_user_role: str | None = Header(default=None),
     x_user_id: str | None = Header(default=None),
 ) -> dict[str, Any]:
@@ -493,13 +703,38 @@ def project_execute(
     ensure_project_access(role, user_id, project)
     arguments = dict(payload.arguments)
     arguments["project"] = project
-    return project_agent_request(project, "POST", "/execute", json_body={
+    body = {
         "skill": payload.skill,
         "arguments": arguments,
         "approved": payload.approved,
         "session_id": payload.session_id,
         "resume": payload.resume,
-    })
+    }
+    if payload.skill == "service.status" and payload.approved:
+        service = str(arguments.get("service") or "")
+        data, cache_state, cache_ttl, generated_at = cached_read(
+            f"service-status:{project}:{service}",
+            SERVICE_STATUS_CACHE_TTL,
+            lambda: project_agent_request(project, "POST", "/execute", json_body=body),
+            bypass=request_bypasses_cache(request),
+        )
+        apply_api_cache_headers(
+            response,
+            state=cache_state,
+            ttl=cache_ttl,
+            generated_at=generated_at,
+        )
+        return data
+    result = project_agent_request(project, "POST", "/execute", json_body=body)
+    if payload.approved and payload.skill in {
+        "project.create",
+        "service.deploy",
+        "service.redeploy",
+        "service.control",
+        "port.manage",
+    }:
+        invalidate_read_cache()
+    return result
 
 
 @app.get("/{full_path:path}", include_in_schema=False)
@@ -517,8 +752,8 @@ def serve_frontend(full_path: str) -> FileResponse:
     requested = (FRONTEND_DIST / full_path).resolve()
     dist_root = FRONTEND_DIST.resolve()
     if requested.is_file() and dist_root in requested.parents:
-        return FileResponse(requested)
+        return FileResponse(requested, headers=frontend_cache_headers(full_path))
     index = FRONTEND_DIST / "index.html"
     if index.is_file():
-        return FileResponse(index)
+        return FileResponse(index, headers=frontend_cache_headers(""))
     raise HTTPException(status_code=404, detail="Frontend index.html not found.")

@@ -26,6 +26,7 @@ from runtime import (
     execute_cli_skill,
     fallback_plan,
     llm_status,
+    project_summaries,
     skill_documents,
 )
 
@@ -82,11 +83,13 @@ def authenticated_namespace(http_request: Request) -> str | None:
     # to the platform-api process only.
     if os.getenv("PLATFORM_API"):
         return None
+    raw_namespace_tokens = os.getenv("PLATFORM_NAMESPACE_TOKENS", "").strip()
     tokens = namespace_tokens()
     root_token = os.getenv("PLATFORM_ROOT_TOKEN", "").strip()
     auth_required = (
         os.getenv("PLATFORM_AUTH_REQUIRED", "").lower() in {"1", "true", "yes"}
         or bool(root_token)
+        or bool(raw_namespace_tokens)
     )
     if not auth_required:
         return None
@@ -374,6 +377,8 @@ FRAMEWORK_ALIASES = {
 def connect_existing_control_networks() -> None:
     if os.getenv("PLATFORM_API"):
         return
+    if os.getenv("ATTACH_PLATFORM_API_TO_CONTROL_NETWORKS", "1").lower() in {"0", "false", "no"}:
+        return
     try:
         attach_platform_api_to_existing_control_networks()
     except Exception:
@@ -449,8 +454,6 @@ DEPLOYMENT_GUIDE_PHRASES = {
 
 
 def preferred_skill_for(message: str, context: dict[str, Any] | None) -> str | None:
-    if os.getenv("LLM_API_KEY"):
-        return None
     text = message.lower()
     if GITHUB_URL_RE.search(message) and any(
         word in text for word in ("배포", "등록", "추가", "서비스", "저장소", "github")
@@ -475,10 +478,8 @@ def preferred_skill_for(message: str, context: dict[str, Any] | None) -> str | N
     ):
         return "project.create"
     if context and context.get("skill"):
-        missing = {item.get("field") for item in context.get("missing", [])}
         looks_like_slot_reply = (
-            bool(missing)
-            and not any(
+            not any(
                 word in text
                 for word in (
                     "목록",
@@ -835,6 +836,11 @@ def strict_arguments(
     if skill not in {"project.create", "service.deploy", "service.redeploy"}:
         return planner_arguments
     verified = {}
+    missing_fields = {
+        item.get("field")
+        for item in (context or {}).get("missing", [])
+    }
+    bare = slot_value_from_reply(message)
     if context and context.get("skill") == skill:
         verified.update(context.get("arguments") or {})
     if skill in {"service.deploy", "service.redeploy"}:
@@ -846,8 +852,16 @@ def strict_arguments(
         )
         if scoped_project:
             verified["project"] = str(scoped_project)
-    merge_planner_arguments(verified, skill, planner_arguments or {})
     explicit = explicit_arguments(message, skill)
+    planner_can_be_trusted = not (
+        skill == "service.deploy"
+        and bare
+        and len(missing_fields) > 1
+        and not GITHUB_URL_RE.search(message)
+        and not explicit
+    )
+    if planner_can_be_trusted:
+        merge_planner_arguments(verified, skill, planner_arguments or {})
     if skill in {"service.deploy", "service.redeploy"} and explicit.get("project"):
         resolution = execute_cli_skill(
             "entity.resolve",
@@ -902,15 +916,11 @@ def strict_arguments(
                 verified["project"] = mentioned[0]
         except (SkillError, KeyError, TypeError):
             pass
-    missing_fields = {
-        item.get("field")
-        for item in (context or {}).get("missing", [])
-    }
-    bare = slot_value_from_reply(message)
     if (
         skill == "service.deploy"
         and "service" in missing_fields
         and "service" not in verified
+        and len(missing_fields) == 1
         and bare
         and bare.lower() not in FRAMEWORK_ALIASES
     ):
@@ -1053,6 +1063,16 @@ def arguments_for_plan(
     context: dict[str, Any] | None,
     planner_arguments: dict[str, Any] | None,
 ) -> dict[str, Any]:
+    if skill in {
+        "project.create",
+        "service.deploy",
+        "service.redeploy",
+        "service.status",
+        "service.logs",
+        "service.control",
+        "port.manage",
+    }:
+        return strict_arguments(message, skill, context, planner_arguments or {})
     if os.getenv("LLM_API_KEY"):
         return remove_placeholder_arguments(
             planner_arguments_for_llm(skill, context, planner_arguments)
@@ -2268,6 +2288,12 @@ def catalog(http_request: Request):
     return scoped_command_catalog(namespace)
 
 
+@app.get("/project-summaries")
+def project_summary_catalog(http_request: Request):
+    namespace = authenticated_namespace(http_request)
+    return project_summaries(namespace)
+
+
 @app.post("/chat")
 def chat(request: ChatRequest):
     session_context, session_history = load_session(
@@ -2369,8 +2395,7 @@ def chat(request: ChatRequest):
             })
         preferred_skill = preferred_skill_for(request.message, request.context)
         cli_proposal = (
-            None if os.getenv("LLM_API_KEY")
-            else cli_proposal_for_input(
+            cli_proposal_for_input(
                 request.message,
                 preferred_skill,
                 request.context,
@@ -2380,8 +2405,7 @@ def chat(request: ChatRequest):
             return respond(cli_proposal)
         llm_context = dict(request.context or {})
         if (
-            not os.getenv("LLM_API_KEY")
-            and preferred_skill in {
+            preferred_skill in {
             "project.create",
             "service.deploy",
             "service.redeploy",

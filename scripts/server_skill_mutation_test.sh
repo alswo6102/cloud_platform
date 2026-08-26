@@ -40,6 +40,8 @@ def execute(plan):
         },
         timeout=600,
     )
+    if response.status_code >= 400:
+        print(response.text)
     response.raise_for_status()
     return response.json()["result"]
 

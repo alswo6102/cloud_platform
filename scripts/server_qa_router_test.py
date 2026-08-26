@@ -255,6 +255,8 @@ runtime.ensure_project_networks = lambda project, attach_platform_api: {
     "control_network": f"cp_{project}_control_net",
 }
 runtime.register_namespace_token = lambda project: True
+runtime.compose_command = lambda *args, **kwargs: None
+runtime.trigger_safe_docker_cleanup = lambda reason: None
 runtime.project_create("rea", dry_run=False)
 assert (PROJECTS / "rea" / "docker-compose.yml").is_file()
 print("OK incomplete_project_repair")

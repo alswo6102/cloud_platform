@@ -12,3 +12,9 @@ web/__pycache__/
 data/
 
 .codex_refs/
+
+# Playwright/QA 산출물
+output/
+
+# Impeccable 작업 기록 (도구 로컬 상태)
+.impeccable/

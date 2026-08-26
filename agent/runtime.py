@@ -44,6 +44,8 @@ SAFE_CLEANUP_SCRIPT = Path(
 )
 PORT_START = int(os.getenv("PORT_START", "9000"))
 PORT_END = int(os.getenv("PORT_END", "9100"))
+SERVICE_METADATA_DIR = ".cloud-platform"
+SERVICE_METADATA_FILE = "services.json"
 
 
 def project_agent_template_version() -> str:
@@ -205,6 +207,196 @@ def service_config(project: str, service: str) -> dict[str, Any]:
     services = load_compose(project)["services"]
     if service not in services:
         raise SkillError(f"Service not found: {project}/{service}")
+    return services[service]
+
+
+def service_metadata_path(project: str) -> Path:
+    return project_path(project) / SERVICE_METADATA_DIR / SERVICE_METADATA_FILE
+
+
+def load_service_metadata(project: str) -> dict[str, dict[str, Any]]:
+    path = service_metadata_path(project)
+    try:
+        data = json.loads(path.read_text())
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return {}
+    raw_services = data.get("services") if isinstance(data, dict) else {}
+    if not isinstance(raw_services, dict):
+        return {}
+    return {
+        str(name): value
+        for name, value in raw_services.items()
+        if isinstance(value, dict)
+    }
+
+
+def save_service_metadata(project: str, services: dict[str, dict[str, Any]]) -> None:
+    path = service_metadata_path(project)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "version": 1,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "services": services,
+    }
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=str))
+    temporary.replace(path)
+
+
+def labels_as_dict(labels: Any) -> dict[str, str]:
+    if isinstance(labels, dict):
+        return {str(key): str(value) for key, value in labels.items()}
+    result: dict[str, str] = {}
+    if isinstance(labels, list):
+        for item in labels:
+            if not isinstance(item, str):
+                continue
+            key, separator, value = item.partition("=")
+            if separator:
+                result[key] = value
+            else:
+                result[key] = "true"
+    return result
+
+
+def label_truthy(labels: dict[str, str], key: str) -> bool:
+    return labels.get(key, "").strip().lower() in {"1", "true", "yes"}
+
+
+def first_verified_port(verified: dict[str, Any] | None) -> dict[str, int] | None:
+    ports = verified.get("ports") if isinstance(verified, dict) else []
+    if not isinstance(ports, list):
+        return None
+    for port in ports:
+        if not isinstance(port, dict):
+            continue
+        host = port.get("host")
+        container = port.get("container")
+        if host is None or container is None:
+            continue
+        try:
+            return {"host": int(host), "container": int(container)}
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def service_source_path(project: str, service: str, config: dict[str, Any]) -> Path | None:
+    build = config.get("build")
+    context: Any = None
+    if isinstance(build, str):
+        context = build
+    elif isinstance(build, dict):
+        context = build.get("context")
+    if context is None:
+        candidate = project_path(project) / service
+    else:
+        candidate = (project_path(project) / str(context)).resolve()
+    root = project_path(project).resolve()
+    if candidate == root or root not in candidate.parents:
+        return None
+    return candidate if candidate.is_dir() else None
+
+
+def dependency_text(source: Path, names: tuple[str, ...]) -> str:
+    chunks: list[str] = []
+    for name in names:
+        path = source / name
+        if path.is_file():
+            try:
+                chunks.append(path.read_text(errors="replace").lower())
+            except OSError:
+                continue
+    return "\n".join(chunks)
+
+
+def infer_framework_from_source(
+    project: str,
+    service: str,
+    config: dict[str, Any],
+) -> str | None:
+    source = service_source_path(project, service, config)
+    if source is None:
+        return None
+
+    package_path = source / "package.json"
+    if package_path.is_file():
+        try:
+            package = json.loads(package_path.read_text())
+        except (json.JSONDecodeError, OSError):
+            package = {}
+        if not isinstance(package, dict):
+            package = {}
+        dependencies = {
+            **(package.get("dependencies") or {}),
+            **(package.get("devDependencies") or {}),
+        }
+        scripts = package.get("scripts") or {}
+        dependency_names = {str(name).lower() for name in dependencies}
+        script_values = " ".join(str(value).lower() for value in scripts.values())
+        if "next" in dependency_names or "next " in script_values:
+            return "nextjs"
+        if "vite" in dependency_names or "vite" in script_values or any(source.glob("vite.config.*")):
+            return "vite"
+        if "react-scripts" in dependency_names:
+            return "react"
+        if "@nestjs/core" in dependency_names or "express" in dependency_names:
+            return "express"
+        if "react" in dependency_names:
+            return "vite"
+        return "express"
+
+    python_text = dependency_text(source, ("requirements.txt", "pyproject.toml", "Pipfile"))
+    if (source / "manage.py").is_file() or "django" in python_text:
+        return "django"
+    if "fastapi" in python_text:
+        return "fastapi"
+    if "flask" in python_text:
+        return "flask"
+    if (source / "pom.xml").is_file():
+        return "spring-maven"
+    if (source / "build.gradle").is_file() or (source / "build.gradle.kts").is_file():
+        return "spring-gradle"
+    if (source / "go.mod").is_file():
+        return "go"
+    if any(source.glob("*.html")) or (source / "index.html").is_file():
+        return "static"
+    if (source / "Dockerfile").is_file():
+        return "existing"
+    return None
+
+
+def record_service_deploy_metadata(
+    project: str,
+    service: str,
+    *,
+    framework: str | None,
+    repo_url: str | None,
+    is_web: bool | None,
+    verified: dict[str, Any] | None,
+) -> dict[str, Any]:
+    services = load_service_metadata(project)
+    current = dict(services.get(service) or {})
+    port = first_verified_port(verified)
+    deployed_at = datetime.now(timezone.utc).isoformat()
+    next_metadata = {
+        **current,
+        "service": service,
+        "framework": framework or current.get("framework"),
+        "repo_url": repo_url or current.get("repo_url"),
+        "frontend": bool(is_web) if is_web is not None else bool(current.get("frontend")),
+        "deployed_at": deployed_at,
+        "last_deployed_at": deployed_at,
+    }
+    if port:
+        next_metadata["host_port"] = port["host"]
+        next_metadata["container_port"] = port["container"]
+    services[service] = {
+        key: value
+        for key, value in next_metadata.items()
+        if value not in (None, "")
+    }
+    save_service_metadata(project, services)
     return services[service]
 
 
@@ -524,7 +716,7 @@ def validate_github_repository_access(repo_url: str) -> None:
             ["git", "ls-remote", "--heads", repo_url],
             capture_output=True,
             text=True,
-            timeout=float(os.getenv("GIT_REPOSITORY_VALIDATE_TIMEOUT", "12")),
+            timeout=float(os.getenv("GIT_REPOSITORY_VALIDATE_TIMEOUT", "30")),
             env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
         )
     except subprocess.TimeoutExpired as exc:
@@ -669,7 +861,7 @@ def container_summary(container) -> dict[str, Any]:
     health = (container.attrs.get("State", {}).get("Health") or {}).get("Status")
     memory: dict[str, Any] | None = None
     try:
-        stats = container.stats(stream=False)
+        stats = container.client.api.stats(container.id, stream=False, one_shot=True)
         memory_stats = stats.get("memory_stats") or {}
         usage = int(memory_stats.get("usage") or 0)
         limit = int(memory_stats.get("limit") or 0)
@@ -923,6 +1115,15 @@ def server_health() -> dict[str, Any]:
         if health == "unhealthy":
             unhealthy.append(container.name)
     disk = shutil.disk_usage(PROJECTS_ROOT)
+    memory = psutil.virtual_memory()
+    swap = psutil.swap_memory()
+    disk_accounted = disk.used + disk.free
+    disk_percent = round((disk.used / disk_accounted) * 100, 1) if disk_accounted else 0
+    performance_warnings = []
+    if disk_percent >= 90:
+        performance_warnings.append("disk_low")
+    if swap.percent >= 20:
+        performance_warnings.append("swap_active")
     container_details = []
     for container in sorted(containers, key=lambda item: item.name):
         state = container.attrs.get("State", {})
@@ -954,8 +1155,12 @@ def server_health() -> dict[str, Any]:
         "unhealthy": unhealthy,
         "container_details": container_details,
         "projects": project_list(),
-        "disk_percent": round((disk.used / disk.total) * 100, 1),
-        "memory_percent": psutil.virtual_memory().percent,
+        "disk_percent": disk_percent,
+        "disk_free_mb": round(disk.free / 1024 / 1024, 1),
+        "memory_percent": memory.percent,
+        "swap_used_mb": round(swap.used / 1024 / 1024, 1),
+        "swap_percent": swap.percent,
+        "performance_warnings": performance_warnings,
     }
 
 
@@ -980,6 +1185,165 @@ def project_list() -> dict[str, Any]:
                 }
             )
     return {"projects": projects, "incomplete_projects": incomplete}
+
+
+def project_summaries(project: str | None = None) -> dict[str, Any]:
+    catalog = project_list()
+    projects = [
+        item
+        for item in catalog["projects"]
+        if project is None or str(item.get("name")) == project
+    ]
+    return {
+        "projects": [project_summary(str(item["name"]), item) for item in projects],
+        "incomplete_projects": [
+            item
+            for item in catalog["incomplete_projects"]
+            if project is None or str(item.get("name")) == project
+        ],
+    }
+
+
+def project_summary(project: str, catalog_item: dict[str, Any]) -> dict[str, Any]:
+    metadata_by_service = load_service_metadata(project)
+    try:
+        compose = load_compose(project)
+        compose_services = compose.get("services", {}) or {}
+    except Exception as exc:
+        return {
+            **catalog_item,
+            "service_summaries": [],
+            "frameworks": [],
+            "running_count": 0,
+            "service_count": len(catalog_item.get("services") or []),
+            "attention_count": len(catalog_item.get("services") or []),
+            "memory_total_mb": 0,
+            "public_urls": [],
+            "runtime_error": str(exc),
+        }
+
+    service_names = sorted(catalog_item.get("services") or [])
+    service_summaries = []
+    frameworks: list[str] = []
+    public_urls = []
+    running_count = 0
+    attention_count = 0
+    memory_total_mb = 0.0
+    last_deployed_at: str | None = None
+
+    for service in service_names:
+        config = compose_services.get(service, {}) or {}
+        labels = labels_as_dict(config.get("labels"))
+        metadata = metadata_by_service.get(service, {})
+        runtime_error = None
+        container_data = None
+        try:
+            container = find_container(project, service)
+            container_data = container_summary(container) if container else None
+        except Exception as exc:
+            runtime_error = str(exc)
+
+        status = str((container_data or {}).get("status") or "unknown")
+        health = (container_data or {}).get("health")
+        if status == "running":
+            running_count += 1
+        if status != "running" or health == "unhealthy" or runtime_error:
+            attention_count += 1
+
+        memory = (container_data or {}).get("memory") or {}
+        memory_mb = memory.get("usage_mb") if isinstance(memory, dict) else None
+        if isinstance(memory_mb, (int, float)):
+            memory_total_mb += float(memory_mb)
+
+        framework = (
+            metadata.get("framework")
+            or labels.get("cloud.platform.framework")
+            or infer_framework_from_source(project, service, config)
+        )
+        if framework and framework not in frameworks:
+            frameworks.append(str(framework))
+
+        deployed_at = (
+            metadata.get("last_deployed_at")
+            or metadata.get("deployed_at")
+            or labels.get("cloud.platform.deployed_at")
+        )
+        if deployed_at and (last_deployed_at is None or str(deployed_at) > last_deployed_at):
+            last_deployed_at = str(deployed_at)
+
+        configured_ports = config.get("ports", []) or []
+        verified_port = first_verified_port(container_data)
+        configured_host_port = next(
+            (
+                port
+                for port in (parse_published_port(value) for value in configured_ports)
+                if port is not None
+            ),
+            metadata.get("host_port"),
+        )
+        configured_container_port = next(
+            (
+                port
+                for port in (parse_target_port(value) for value in configured_ports)
+                if port is not None
+            ),
+            metadata.get("container_port"),
+        )
+        host_port = (
+            verified_port["host"]
+            if verified_port
+            else configured_host_port
+        )
+        container_port = (
+            verified_port["container"]
+            if verified_port
+            else configured_container_port
+        )
+        frontend = (
+            bool(metadata["frontend"])
+            if "frontend" in metadata
+            else label_truthy(labels, "is_web_service")
+        )
+        if frontend and host_port:
+            public_urls.append({"service": service, "host_port": host_port})
+
+        repo_url = metadata.get("repo_url") or labels.get("cloud.platform.repo_url")
+        service_summaries.append(
+            {
+                "name": service,
+                "service": service,
+                "framework": framework,
+                "framework_label": (
+                    FRAMEWORK_PRESETS.get(str(framework), {}).get("label")
+                    if framework
+                    else None
+                ),
+                "repo_url": repo_url,
+                "frontend": frontend,
+                "configured_ports": configured_ports,
+                "host_port": host_port,
+                "container_port": container_port,
+                "last_deployed_at": deployed_at,
+                "status": status,
+                "health": health,
+                "memory_mb": memory_mb,
+                "memory_limit_mb": memory.get("limit_mb") if isinstance(memory, dict) else None,
+                "memory_percent": memory.get("percent") if isinstance(memory, dict) else None,
+                "runtime_error": runtime_error,
+            }
+        )
+
+    return {
+        **catalog_item,
+        "service_summaries": service_summaries,
+        "frameworks": frameworks,
+        "running_count": running_count,
+        "service_count": len(service_names),
+        "attention_count": attention_count,
+        "memory_total_mb": round(memory_total_mb, 1),
+        "public_urls": public_urls,
+        "last_deployed_at": last_deployed_at,
+    }
 
 
 def missing_input(
@@ -1111,6 +1475,7 @@ def project_create(project: str | None, dry_run: bool) -> dict[str, Any]:
 
 def service_status(project: str, service: str | None = None) -> dict[str, Any]:
     data = load_compose(project)
+    metadata_by_service = load_service_metadata(project)
     if service:
         names = [service]
     else:
@@ -1123,12 +1488,22 @@ def service_status(project: str, service: str | None = None) -> dict[str, Any]:
     result = []
     for name in names:
         config = service_config(project, name)
+        labels = labels_as_dict(config.get("labels"))
+        metadata = metadata_by_service.get(name, {})
+        frontend = (
+            bool(metadata["frontend"])
+            if "frontend" in metadata
+            else label_truthy(labels, "is_web_service")
+        )
         container = find_container(project, name)
         result.append(
             {
                 "service": name,
                 "configured_ports": config.get("ports", []),
-                "frontend": "is_web_service=true" in config.get("labels", []),
+                "frontend": frontend,
+                "framework": metadata.get("framework") or labels.get("cloud.platform.framework"),
+                "repo_url": metadata.get("repo_url") or labels.get("cloud.platform.repo_url"),
+                "last_deployed_at": metadata.get("last_deployed_at") or metadata.get("deployed_at"),
                 "container": container_summary(container) if container else None,
             }
         )
@@ -1375,6 +1750,8 @@ def service_deploy(
         labels = [
             f"cloud.platform.project={project}",
             f"cloud.platform.service={service}",
+            f"cloud.platform.framework={framework}",
+            f"cloud.platform.repo_url={repo_url}",
         ]
         if is_web:
             labels.append("is_web_service=true")
@@ -1414,9 +1791,17 @@ def service_deploy(
                 raise SkillError(f"Port verification failed: expected {expected}, got {verified['ports']}")
         elif verified["ports"]:
             raise SkillError(f"Internal-only service unexpectedly published ports: {verified['ports']}")
+        metadata = record_service_deploy_metadata(
+            project,
+            service,
+            framework=framework,
+            repo_url=repo_url,
+            is_web=is_web,
+            verified=verified,
+        )
         backup.unlink(missing_ok=True)
         trigger_safe_docker_cleanup("service.deploy")
-        return {"dry_run": False, **plan, "verified": verified}
+        return {"dry_run": False, **plan, "verified": verified, "metadata": metadata}
     except Exception:
         try:
             compose_command(project, "rm", "-s", "-f", service)
@@ -1470,7 +1855,19 @@ def service_redeploy(
 
     project = str(project)
     service = str(service)
-    service_config(project, service)
+    config = service_config(project, service)
+    labels = labels_as_dict(config.get("labels"))
+    current_metadata = load_service_metadata(project).get(service, {})
+    framework = (
+        current_metadata.get("framework")
+        or labels.get("cloud.platform.framework")
+        or "existing"
+    )
+    is_web = (
+        bool(current_metadata["frontend"])
+        if "frontend" in current_metadata
+        else label_truthy(labels, "is_web_service")
+    )
     source = project_path(project) / service
     if not (source / ".git").is_dir():
         raise SkillError(f"Service source is not a Git checkout: {project}/{service}")
@@ -1520,9 +1917,17 @@ def service_redeploy(
             timeout=900,
         )
         verified = wait_stable(project, service)
+        metadata = record_service_deploy_metadata(
+            project,
+            service,
+            framework=str(framework) if framework else None,
+            repo_url=repo_url,
+            is_web=is_web,
+            verified=verified,
+        )
         shutil.rmtree(backup)
         trigger_safe_docker_cleanup("service.redeploy")
-        return {"dry_run": False, **plan, "verified": verified}
+        return {"dry_run": False, **plan, "verified": verified, "metadata": metadata}
     except Exception:
         if fresh.exists():
             shutil.rmtree(fresh)
