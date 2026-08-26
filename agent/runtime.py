@@ -872,6 +872,10 @@ def inspect_repository(repo_url: str) -> dict[str, Any]:
             evidence.append("go.mod detected")
         if (root / "Dockerfile").is_file():
             evidence.append("repository already contains a Dockerfile")
+            # A repository that ships its own Dockerfile has already decided how
+            # it builds. A generated preset would overwrite that decision, so
+            # offer to use what is there before offering to replace it.
+            candidates.insert(0, "existing")
         if (
             not candidates
             and not package_path.is_file()
@@ -2373,6 +2377,12 @@ def call_llm(
                 "arguments.\n"
                 "- If you are missing a value, leave the field out. The dry-run will "
                 "say what is needed, or you can simply ask the user.\n"
+                "- A new service's name is the user's to choose. Suggest one from "
+                "the repository if it helps, but ask them to confirm it and wait "
+                "for their answer before deploying under that name.\n"
+                "- When a repository already contains a Dockerfile, offer the "
+                "'existing' preset first and say why: a generated preset would "
+                "replace the build the repository already defines.\n"
                 "- Use only values the user actually gave you for the request you "
                 "are handling now. A value they supplied for an earlier request "
                 "belongs to that request: when they start a new one, leave the "
