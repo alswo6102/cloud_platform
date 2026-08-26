@@ -2270,6 +2270,45 @@ def execute_skill(skill: str, arguments: dict[str, Any], dry_run: bool) -> dict[
         raise
 
 
+PLATFORM_API_TIMEOUT = float(os.getenv("PLATFORM_API_TIMEOUT", "1000"))
+
+
+def call_platform_api_skill(
+    base: str,
+    skill: str,
+    arguments: dict[str, Any],
+    *,
+    dry_run: bool,
+    approved: bool,
+) -> dict[str, Any]:
+    """Ask the control plane to run one skill on this namespace's behalf."""
+    token = os.getenv("PLATFORM_TOKEN", "")
+    headers = {"Content-Type": "application/json"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    payload: dict[str, Any] = {"skill": skill, "arguments": arguments}
+    if not dry_run:
+        payload["approved"] = approved or skill in READ_ONLY_SKILLS
+    response = requests.post(
+        base + ("/preview" if dry_run else "/execute"),
+        headers=headers,
+        json=payload,
+        timeout=PLATFORM_API_TIMEOUT,
+    )
+    try:
+        data = response.json()
+    except ValueError:
+        data = {"detail": response.text}
+    if response.status_code >= 400:
+        raise SkillError.from_detail(
+            data.get("detail") if isinstance(data, dict) else data
+        )
+    key = "preview" if dry_run else "result"
+    if not isinstance(data, dict) or key not in data:
+        raise SkillError(f"Platform API response is missing {key}")
+    return data[key]
+
+
 def execute_cli_skill(
     skill: str,
     arguments: dict[str, Any],
@@ -2277,34 +2316,25 @@ def execute_cli_skill(
     dry_run: bool,
     approved: bool = False,
 ) -> dict[str, Any]:
-    command = [
-        "cloud-platform",
-        "preview" if dry_run else "execute",
-        skill,
-        "--arguments",
-        json.dumps(arguments, ensure_ascii=False),
-    ]
-    if not dry_run and approved:
-        command.append("--approve")
-    completed = subprocess.run(
-        command,
-        check=False,
-        capture_output=True,
-        text=True,
-        timeout=1000,
-    )
-    try:
-        payload = json.loads(completed.stdout or "{}")
-    except json.JSONDecodeError as exc:
-        raise SkillError(
-            completed.stderr.strip() or "CLI returned malformed JSON"
-        ) from exc
-    if completed.returncode != 0:
-        raise SkillError.from_detail(payload.get("detail", "CLI execution failed"))
-    key = "preview" if dry_run else "result"
-    if key not in payload:
-        raise SkillError(f"CLI response is missing {key}")
-    return payload[key]
+    """Run one skill from inside this process.
+
+    A project agent still reaches the control plane over HTTP; the control
+    plane runs the skill here. Both used to spawn the cloud-platform CLI, which
+    re-imported this module -- docker, psutil, requests, yaml -- once per call.
+    The planner makes up to LLM_MAX_STEPS of those in a single turn.
+    """
+    platform_api = os.getenv("PLATFORM_API", "").rstrip("/")
+    if platform_api:
+        return call_platform_api_skill(
+            platform_api, skill, arguments, dry_run=dry_run, approved=approved
+        )
+    if dry_run:
+        if skill in READ_ONLY_SKILLS:
+            raise SkillError("Read-only skills do not require preview")
+        return execute_skill(skill, arguments, dry_run=True)
+    if skill not in READ_ONLY_SKILLS and not approved:
+        raise SkillError("Mutation skills require approval")
+    return execute_skill(skill, arguments, dry_run=False)
 
 
 def tool_description_for_llm(document: dict[str, Any]) -> str:

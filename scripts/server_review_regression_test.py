@@ -606,6 +606,43 @@ def _no_unanswered_calls_in_source():
         assert "finish(" in window or "transcript()" in window, marker
 
 
+# --- Tools run in this process, and go through the namespace gate -----------
+
+
+@check("tool_execution_does_not_spawn_a_process")
+def _no_cli_subprocess():
+    source = (ROOT / "agent" / "runtime.py").read_text()
+    tree = ast.parse(source)
+    node = next(
+        n for n in tree.body
+        if isinstance(n, ast.FunctionDef) and n.name == "execute_cli_skill"
+    )
+    body = ast.get_source_segment(source, node) or ""
+    assert "subprocess" not in body, "도구 실행이 아직 프로세스를 띄움"
+    assert "execute_skill(" in body, "컨트롤 플레인에서 인프로세스로 실행하지 않음"
+    assert "call_platform_api_skill(" in body, "프로젝트 에이전트 경로가 없음"
+
+
+@check("only_project_free_skills_run_outside_the_namespace_gate")
+def _gate_covers_project_scoped_skills():
+    source = (ROOT / "agent" / "app.py").read_text()
+    tree = ast.parse(source)
+    gated = {"chat", "execute", "preview"}
+    outside = []
+    for node in tree.body:
+        if not isinstance(node, ast.FunctionDef) or node.name in gated:
+            continue
+        for call in ast.walk(node):
+            if (isinstance(call, ast.Call) and isinstance(call.func, ast.Name)
+                    and call.func.id == "execute_cli_skill" and call.args):
+                skill = getattr(call.args[0], "value", None)
+                outside.append((node.name, skill))
+    # repository.inspect takes a repository URL and no project, so scoping it
+    # would be a no-op. Anything else outside the gate is a leak.
+    for owner, skill in outside:
+        assert skill == "repository.inspect", f"{owner}가 {skill}을 게이트 밖에서 실행"
+
+
 # --- One transport, and prompts that live outside the code ------------------
 
 
