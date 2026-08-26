@@ -1990,7 +1990,17 @@ def deploy_confirmations(
     lowered = message.lower()
 
     service = str(arguments.get("service") or "").strip()
-    if service and service.lower() not in lowered:
+    # Match on a word boundary. A substring test counted "blog" as confirmed
+    # because the repository URL happened to contain "blogapp", which is the
+    # planner naming the service, not the user.
+    named = bool(
+        service
+        and re.search(
+            r"(?<![A-Za-z0-9_.-])" + re.escape(service.lower()) + r"(?![A-Za-z0-9_-])",
+            lowered,
+        )
+    )
+    if service and not named:
         items.append({
             "field": "service",
             "label": "서비스 이름",
