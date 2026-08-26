@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import os
 import json
+import hashlib
+import hmac
 import threading
 import time
 from pathlib import Path
@@ -279,6 +281,48 @@ def authenticated_user(
     return user_id, "user"
 
 
+def conversation_session_id(user_id: str, scope: str) -> str:
+    """Derive the agent conversation id from the caller, not from the client.
+
+    The client used to generate this value, so the agent had no idea who was
+    talking and no way to tell whose conversation it was handing back. Deriving
+    it here keeps each user's conversation separate, makes it survive a closed
+    drawer or a page reload, and leaves nothing for a caller to forge.
+    """
+    digest = hashlib.sha256(f"{user_id}\x00{scope}".encode("utf-8")).hexdigest()
+    return f"s-{digest[:32]}"
+
+
+def control_plane_headers() -> dict[str, str]:
+    token = os.getenv("PLATFORM_ROOT_TOKEN", "").strip()
+    if not token:
+        raise HTTPException(
+            status_code=500,
+            detail="PLATFORM_ROOT_TOKEN is not configured on the web layer",
+        )
+    return {"Authorization": f"Bearer {token}"}
+
+
+def project_agent_headers(project: str) -> dict[str, str]:
+    """Derive the inbound token the given project agent will accept.
+
+    Only the web layer and the control plane hold AGENT_INBOUND_SECRET, so one
+    project agent cannot compute another project agent's token.
+    """
+    secret = os.getenv("AGENT_INBOUND_SECRET", "").strip()
+    if not secret:
+        raise HTTPException(
+            status_code=500,
+            detail="AGENT_INBOUND_SECRET is not configured on the web layer",
+        )
+    token = hmac.new(
+        secret.encode("utf-8"),
+        project.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+    return {"Authorization": f"Bearer {token}"}
+
+
 def agent_request(
     method: str,
     path: str,
@@ -290,6 +334,7 @@ def agent_request(
             method,
             f"{SKILL_AGENT_URL}{path}",
             json=json_body,
+            headers=control_plane_headers(),
             timeout=REQUEST_TIMEOUT,
         )
     except requests.RequestException as exc:
@@ -333,6 +378,7 @@ def project_agent_request(
     json_body: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     url = f"{project_agent_url(project).rstrip('/')}{path}"
+    headers = project_agent_headers(project)
     if AUTO_ENSURE_PROJECT_AGENT:
         ensure_project_agent(project)
     try:
@@ -340,6 +386,7 @@ def project_agent_request(
             method,
             url,
             json=json_body,
+            headers=headers,
             timeout=REQUEST_TIMEOUT,
         )
     except requests.RequestException as first_exc:
@@ -350,6 +397,7 @@ def project_agent_request(
                 method,
                 url,
                 json=json_body,
+                headers=headers,
                 timeout=REQUEST_TIMEOUT,
             )
         except requests.RequestException as exc:
@@ -647,7 +695,7 @@ def project_chat(
         scoped_message = f"{project} 프로젝트에서: {scoped_message}"
     return project_agent_request(project, "POST", "/chat", json_body={
         "message": scoped_message,
-        "session_id": payload.session_id,
+        "session_id": conversation_session_id(user_id, project),
         "context": context,
     })
 
@@ -658,9 +706,11 @@ def admin_chat(
     x_user_role: str | None = Header(default=None),
     x_user_id: str | None = Header(default=None),
 ) -> dict[str, Any]:
-    _, role = authenticated_user(x_user_role, x_user_id)
+    user_id, role = authenticated_user(x_user_role, x_user_id)
     require_admin(role)
-    return agent_request("POST", "/chat", json_body=payload.model_dump())
+    body = payload.model_dump()
+    body["session_id"] = conversation_session_id(user_id, "admin")
+    return agent_request("POST", "/chat", json_body=body)
 
 
 @app.post("/api/admin/execute")
@@ -669,13 +719,13 @@ def admin_execute(
     x_user_role: str | None = Header(default=None),
     x_user_id: str | None = Header(default=None),
 ) -> dict[str, Any]:
-    _, role = authenticated_user(x_user_role, x_user_id)
+    user_id, role = authenticated_user(x_user_role, x_user_id)
     require_admin(role)
     result = agent_request("POST", "/execute", json_body={
         "skill": payload.skill,
         "arguments": payload.arguments,
         "approved": payload.approved,
-        "session_id": payload.session_id,
+        "session_id": conversation_session_id(user_id, "admin"),
         "resume": payload.resume,
     })
     if payload.approved and payload.skill in {
@@ -707,7 +757,7 @@ def project_execute(
         "skill": payload.skill,
         "arguments": arguments,
         "approved": payload.approved,
-        "session_id": payload.session_id,
+        "session_id": conversation_session_id(user_id, project),
         "resume": payload.resume,
     }
     if payload.skill == "service.status" and payload.approved:

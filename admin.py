@@ -346,10 +346,14 @@ def start_service(project_name: str, project_path: Path, service_name: str) -> N
 
 def skill_agent_request(path: str, payload: dict | None = None) -> dict:
     url = f"{SKILL_AGENT_URL}{path}"
+    root_token = os.getenv("PLATFORM_ROOT_TOKEN", "").strip()
+    if not root_token:
+        raise RuntimeError("PLATFORM_ROOT_TOKEN is not configured for the dashboard.")
+    headers = {"Authorization": f"Bearer {root_token}"}
     if payload is None:
-        response = requests.get(url, timeout=10)
+        response = requests.get(url, headers=headers, timeout=10)
     else:
-        response = requests.post(url, json=payload, timeout=320)
+        response = requests.post(url, json=payload, headers=headers, timeout=320)
     if response.ok:
         return response.json()
     try:

@@ -18,3 +18,4 @@ output/
 
 # Impeccable 작업 기록 (도구 로컬 상태)
 .impeccable/
+frontend/tsconfig.tsbuildinfo

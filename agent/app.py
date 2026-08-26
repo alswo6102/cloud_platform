@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import re
+import hmac
 import json
 import threading
 import time
@@ -32,7 +33,8 @@ from runtime import (
 
 app = FastAPI(title="Cloud Platform Skill Agent", version="0.1.0")
 PROJECTS_ROOT = Path(os.getenv("PROJECTS_ROOT", "/srv/projects"))
-SESSION_TTL_SECONDS = 60 * 60 * 12
+# Conversation memory is working state for one sitting, not a record to keep.
+SESSION_TTL_SECONDS = int(os.getenv("SESSION_TTL_SECONDS", str(60 * 60 * 3)))
 SESSION_HISTORY_LIMIT = 24
 SESSION_LOCK = threading.Lock()
 SESSION_STORE = Path(
@@ -76,32 +78,42 @@ def namespace_tokens() -> dict[str, str]:
     return tokens
 
 
-def authenticated_namespace(http_request: Request) -> str | None:
-    # A process with PLATFORM_API configured is an agent/client plane. It
-    # receives dashboard or project-agent requests and then calls platform-api
-    # with its own token through the CLI. Inbound namespace enforcement belongs
-    # to the platform-api process only.
-    if os.getenv("PLATFORM_API"):
-        return None
-    raw_namespace_tokens = os.getenv("PLATFORM_NAMESPACE_TOKENS", "").strip()
-    tokens = namespace_tokens()
-    root_token = os.getenv("PLATFORM_ROOT_TOKEN", "").strip()
-    auth_required = (
-        os.getenv("PLATFORM_AUTH_REQUIRED", "").lower() in {"1", "true", "yes"}
-        or bool(root_token)
-        or bool(raw_namespace_tokens)
-    )
-    if not auth_required:
-        return None
-    if not tokens and not root_token:
-        return None
+def bearer_token(http_request: Request) -> str:
     header = http_request.headers.get("Authorization", "")
     if not header.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Bearer token is required")
-    token = header.removeprefix("Bearer ").strip()
-    if root_token and token == root_token:
+    return header.removeprefix("Bearer ").strip()
+
+
+def authenticated_namespace(http_request: Request) -> str | None:
+    # A process with PLATFORM_API configured is a project agent. It holds only
+    # its own namespace token and reaches the control plane through the CLI, so
+    # namespace scoping is enforced there rather than here. What this process
+    # must still do is refuse callers other than the web layer: otherwise any
+    # peer that can reach it makes this agent act with its own namespace token.
+    if os.getenv("PLATFORM_API"):
+        expected = os.getenv("AGENT_INBOUND_TOKEN", "").strip()
+        if not expected:
+            raise HTTPException(
+                status_code=500,
+                detail="AGENT_INBOUND_TOKEN is not configured for this project agent",
+            )
+        if not hmac.compare_digest(bearer_token(http_request), expected):
+            raise HTTPException(status_code=401, detail="Unauthorized caller")
         return None
-    namespace = tokens.get(token)
+
+    # Control plane. Refuse to run wide open: a missing root token used to mean
+    # "no enforcement", which silently disabled every namespace check below.
+    root_token = os.getenv("PLATFORM_ROOT_TOKEN", "").strip()
+    if not root_token:
+        raise HTTPException(
+            status_code=500,
+            detail="PLATFORM_ROOT_TOKEN is not configured on the control plane",
+        )
+    token = bearer_token(http_request)
+    if hmac.compare_digest(token, root_token):
+        return None
+    namespace = namespace_tokens().get(token)
     if not namespace:
         raise HTTPException(status_code=403, detail="Invalid namespace token")
     return namespace
@@ -2295,7 +2307,8 @@ def project_summary_catalog(http_request: Request):
 
 
 @app.post("/chat")
-def chat(request: ChatRequest):
+def chat(request: ChatRequest, http_request: Request):
+    authenticated_namespace(http_request)
     session_context, session_history = load_session(
         request.session_id,
         request.context,

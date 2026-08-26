@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import hashlib
+import hmac
 import os
 import re
 import secrets
@@ -39,6 +40,9 @@ NAMESPACE_TOKEN_STORE = Path(
     os.getenv("NAMESPACE_TOKEN_STORE", "/var/log/skill-agent/namespace_tokens.json")
 )
 CONTROL_PLANE_NETWORK = os.getenv("CONTROL_PLANE_NETWORK", "cloud-platform-internal")
+# The control plane listens on the same port everywhere in this repo. Project
+# agents reach it as http://platform-api:<port> over their own control network.
+PLATFORM_API_PORT = int(os.getenv("PLATFORM_API_PORT", "8080"))
 SAFE_CLEANUP_SCRIPT = Path(
     os.getenv("SAFE_DOCKER_CLEANUP_SCRIPT", "/app/scripts/server_safe_docker_cleanup.sh")
 )
@@ -495,6 +499,59 @@ def ensure_namespace_token(project: str) -> tuple[str, bool]:
     return token, True
 
 
+def project_agent_state_volume(project: str) -> str:
+    validate_name(project, "project")
+    return f"cp_{project}_agent_state"
+
+
+def project_compose_scaffold(project: str, networks: dict[str, str]) -> dict[str, Any]:
+    """Top-level networks and volumes every managed project compose declares.
+
+    project.create and project.ensure_agent both write the agent service, so
+    they must agree on what that service may reference. Keeping the scaffold in
+    one place stops a new project from being created without the agent state
+    volume its service definition mounts.
+    """
+    state_volume = project_agent_state_volume(project)
+    return {
+        "networks": {
+            "app-net": {
+                "name": networks["app_network"],
+                "external": True,
+            },
+            "control-net": {
+                "name": networks["control_network"],
+                "external": True,
+            },
+            "control-plane": {
+                "name": CONTROL_PLANE_NETWORK,
+                "external": True,
+            },
+        },
+        "volumes": {
+            state_volume: {"name": state_volume},
+        },
+    }
+
+
+def agent_inbound_token(project: str) -> str:
+    """Derive the inbound token a project agent will require of its callers.
+
+    Only the web layer and the control plane hold AGENT_INBOUND_SECRET, so a
+    project agent can verify the token it was handed but cannot derive another
+    project's token and drive that project's agent on its behalf.
+    """
+    validate_name(project, "project")
+    secret = os.getenv("AGENT_INBOUND_SECRET", "").strip()
+    if not secret:
+        return ""
+    return hmac.new(
+        secret.encode("utf-8"),
+        project.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+
+
 def project_agent_service_definition(project: str, token: str) -> dict[str, Any]:
     validate_name(project, "project")
     template_version = project_agent_template_version()
@@ -502,10 +559,13 @@ def project_agent_service_definition(project: str, token: str) -> dict[str, Any]
         "PROJECTS_ROOT": str(PROJECTS_ROOT),
         "PLATFORM_NAMESPACE": project,
         "PLATFORM_TOKEN": token,
-        "PLATFORM_API": "http://platform-api:5000",
+        "PLATFORM_API": f"http://platform-api:{PLATFORM_API_PORT}",
         "SESSION_STORE": f"/var/log/skill-agent/{project}-sessions.json",
         "PROJECT_AGENT_TEMPLATE_VERSION": template_version,
     }
+    inbound_token = agent_inbound_token(project)
+    if inbound_token:
+        environment["AGENT_INBOUND_TOKEN"] = inbound_token
     for key in (
         "LLM_API_KEY",
         "LLM_API_URL",
@@ -521,10 +581,9 @@ def project_agent_service_definition(project: str, token: str) -> dict[str, Any]
         "command": "uvicorn app:app --host 0.0.0.0 --port 8080",
         "restart": "unless-stopped",
         "environment": environment,
+        # Deliberately not on app-net: deployed service containers run
+        # user-supplied code and must not be able to reach the agent.
         "networks": {
-            "app-net": {
-                "aliases": ["project-agent", f"{project}-agent"],
-            },
             "control-net": {
                 "aliases": ["project-agent", f"{project}-agent"],
             },
@@ -532,6 +591,9 @@ def project_agent_service_definition(project: str, token: str) -> dict[str, Any]
                 "aliases": [f"project-agent-{project}"],
             },
         },
+        # Conversation state must survive the force-recreate that any source
+        # change triggers through PROJECT_AGENT_TEMPLATE_VERSION.
+        "volumes": [f"{project_agent_state_volume(project)}:/var/log/skill-agent"],
         "labels": [
             f"cloud.platform.project={project}",
             "cloud.platform.role=agent",
@@ -547,20 +609,13 @@ def ensure_project_agent(project: str, dry_run: bool = False) -> dict[str, Any]:
     data = load_compose(project)
     networks = ensure_project_networks(project, attach_platform_api=True)
     token, token_created = ensure_namespace_token(project)
-    data.setdefault("services", {})
-    data.setdefault("networks", {})
-    data["networks"]["app-net"] = {
-        "name": networks["app_network"],
-        "external": True,
-    }
-    data["networks"]["control-net"] = {
-        "name": networks["control_network"],
-        "external": True,
-    }
-    data["networks"]["control-plane"] = {
-        "name": CONTROL_PLANE_NETWORK,
-        "external": True,
-    }
+    if not isinstance(data.get("services"), dict):
+        data["services"] = {}
+    scaffold = project_compose_scaffold(project, networks)
+    for section in ("networks", "volumes"):
+        if not isinstance(data.get(section), dict):
+            data[section] = {}
+        data[section].update(scaffold[section])
     desired = project_agent_service_definition(project, token)
     current_agent = data["services"].get("agent")
     changed = current_agent != desired
@@ -572,7 +627,8 @@ def ensure_project_agent(project: str, dry_run: bool = False) -> dict[str, Any]:
         "project": project,
         "agent_service": "agent",
         "dns": f"project-agent-{project}",
-        "networks": ["app-net", "control-net", "control-plane"],
+        "networks": ["control-net", "control-plane"],
+        "state_volume": project_agent_state_volume(project),
         "token_created": token_created,
         "changed": changed,
         "template_version": template_version,
@@ -1407,8 +1463,8 @@ def project_create(project: str | None, dry_run: bool) -> dict[str, Any]:
             "control_network": project_network_name(project, "control"),
             "agent_template_version": project_agent_template_version(),
             "model": (
-                "services join app-net; a future project-agent joins app-net and "
-                "control-net; platform-api joins control-net only"
+                "services join app-net only; the project agent joins control-net "
+                "and control-plane, never app-net; platform-api joins control-net"
             ),
         },
         "steps": [
@@ -1436,20 +1492,7 @@ def project_create(project: str | None, dry_run: bool) -> dict[str, Any]:
                     "services": {
                         "agent": project_agent_service_definition(project, token),
                     },
-                    "networks": {
-                        "app-net": {
-                            "name": networks["app_network"],
-                            "external": True,
-                        },
-                        "control-net": {
-                            "name": networks["control_network"],
-                            "external": True,
-                        },
-                        "control-plane": {
-                            "name": CONTROL_PLANE_NETWORK,
-                            "external": True,
-                        },
-                    },
+                    **project_compose_scaffold(project, networks),
                 },
                 sort_keys=False,
             )
@@ -2363,7 +2406,7 @@ def call_llm(
                     "tools": tools,
                     "tool_choice": "required",
                 },
-                timeout=float(os.getenv("LLM_REQUEST_TIMEOUT", "10")),
+                timeout=float(os.getenv("LLM_REQUEST_TIMEOUT", "60")),
             )
             if response.status_code != 429:
                 response.raise_for_status()
@@ -2475,7 +2518,7 @@ def call_llm_text(
                     {"role": "user", "content": user},
                 ],
             },
-            timeout=float(os.getenv("LLM_RESPONSE_TIMEOUT", os.getenv("LLM_REQUEST_TIMEOUT", "10"))),
+            timeout=float(os.getenv("LLM_RESPONSE_TIMEOUT", os.getenv("LLM_REQUEST_TIMEOUT", "60"))),
         )
         if response.status_code == 429:
             cooldown = rate_limit_cooldown(response)
