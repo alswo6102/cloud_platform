@@ -2993,6 +2993,10 @@ def chat(request: ChatRequest, http_request: Request):
             if unconfirmed:
                 preview = dict(preview)
                 preview["needs_input"] = unconfirmed
+                preview.setdefault(
+                    "message",
+                    "\n".join(str(item["question"]) for item in unconfirmed),
+                )
         if preview.get("needs_input"):
             details = preview.get("project_guidance")
             message = preview["message"]
