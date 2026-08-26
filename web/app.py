@@ -4,6 +4,7 @@ import os
 import json
 import hashlib
 import hmac
+import secrets
 import threading
 import time
 from pathlib import Path
@@ -30,6 +31,7 @@ AUTH_STORE = Path(os.getenv("AUTH_STORE", "/var/lib/cloud-platform/auth.json"))
 FRONTEND_DIST = Path(os.getenv("FRONTEND_DIST", "/var/www/cloud-platform-console"))
 REQUEST_TIMEOUT = float(os.getenv("WEB_REQUEST_TIMEOUT", "120"))
 PROJECT_AGENT_ENSURE_TTL = float(os.getenv("PROJECT_AGENT_ENSURE_TTL", "300"))
+SESSION_TOKEN_TTL = float(os.getenv("SESSION_TOKEN_TTL", str(60 * 60 * 12)))
 PROJECT_SUMMARY_CACHE_TTL = float(os.getenv("WEB_PROJECT_SUMMARY_CACHE_TTL", "10"))
 CATALOG_CACHE_TTL = float(os.getenv("WEB_CATALOG_CACHE_TTL", "10"))
 SYSTEM_SUMMARY_CACHE_TTL = float(os.getenv("WEB_SYSTEM_SUMMARY_CACHE_TTL", "5"))
@@ -188,7 +190,7 @@ def apply_api_cache_headers(
 ) -> None:
     max_age = max(0, int(ttl))
     response.headers["Cache-Control"] = f"private, max-age={max_age}"
-    response.headers["Vary"] = "X-User-Role, X-User-Id"
+    response.headers["Vary"] = "Authorization"
     response.headers["X-Cloud-Cache"] = state
     response.headers["X-Cloud-Cache-Ttl"] = str(max_age)
     response.headers["X-Cloud-Generated-At"] = str(round(generated_at, 3))
@@ -214,6 +216,7 @@ def default_auth_store() -> dict[str, Any]:
             "admin": {"password": "admin", "role": "admin", "name": "Admin"},
         },
         "memberships": {},
+        "tokens": {},
     }
 
 
@@ -224,6 +227,7 @@ def load_auth_store() -> dict[str, Any]:
             if isinstance(data, dict):
                 data.setdefault("users", {})
                 data.setdefault("memberships", {})
+                data.setdefault("tokens", {})
                 return data
         except (FileNotFoundError, json.JSONDecodeError, OSError):
             pass
@@ -246,39 +250,55 @@ def save_auth_store_unlocked(data: dict[str, Any]) -> None:
     temporary.replace(AUTH_STORE)
 
 
-def current_role(x_user_role: str | None) -> Role:
-    role = (x_user_role or "visitor").strip().lower()
-    if role not in {"visitor", "user", "admin"}:
-        return "visitor"
-    return role  # type: ignore[return-value]
+def issue_session_token(user_id: str) -> str:
+    """Record a session server-side and hand back only its opaque key.
 
-
-def current_user(x_user_id: str | None) -> str:
-    return (x_user_id or "local-user").strip() or "local-user"
-
-
-def authenticated_user(
-    x_user_role: str | None,
-    x_user_id: str | None,
-) -> tuple[str, Role]:
-    role = current_role(x_user_role)
-    if role == "visitor":
-        return "", role
-    user_id = current_user(x_user_id)
+    Roles used to arrive in a request header, so anyone could claim to be an
+    admin. Now the caller presents a token it cannot forge and the role is read
+    from this store, never from the request.
+    """
+    token = secrets.token_urlsafe(32)
+    now = time.time()
     store = load_auth_store()
+    tokens = store.setdefault("tokens", {})
+    for existing, entry in list(tokens.items()):
+        if float(entry.get("expires_at", 0)) <= now:
+            tokens.pop(existing, None)
+    tokens[token] = {
+        "user_id": user_id,
+        "issued_at": now,
+        "expires_at": now + SESSION_TOKEN_TTL,
+    }
+    save_auth_store(store)
+    return token
+
+
+def revoke_session_token(token: str) -> None:
+    store = load_auth_store()
+    if store.setdefault("tokens", {}).pop(token, None) is not None:
+        save_auth_store(store)
+
+
+def authenticated_user(authorization: str | None) -> tuple[str, Role]:
+    if not authorization or not authorization.startswith("Bearer "):
+        return "", "visitor"
+    token = authorization.removeprefix("Bearer ").strip()
+    if not token:
+        return "", "visitor"
+    store = load_auth_store()
+    entry = store.get("tokens", {}).get(token)
+    if not isinstance(entry, dict):
+        return "", "visitor"
+    if float(entry.get("expires_at", 0)) <= time.time():
+        return "", "visitor"
+    user_id = str(entry.get("user_id") or "")
     user = store.get("users", {}).get(user_id)
     if not user:
-        store.setdefault("users", {})[user_id] = {
-            "password": "",
-            "role": "user",
-            "name": user_id,
-        }
-        save_auth_store(store)
-        return user_id, "user"
-    stored_role = str(user.get("role", role)).lower()
-    if stored_role == "admin":
-        return user_id, "admin"
-    return user_id, "user"
+        return "", "visitor"
+    # Read the role from the account, so a change takes effect immediately
+    # rather than being frozen into the token.
+    role: Role = "admin" if str(user.get("role", "")).lower() == "admin" else "user"
+    return user_id, role
 
 
 def conversation_session_id(user_id: str, scope: str) -> str:
@@ -422,10 +442,10 @@ def ensure_project_agent(project: str, *, force: bool = False) -> None:
             last = PROJECT_AGENT_ENSURED_AT.get(project, 0)
             if now - last < PROJECT_AGENT_ENSURE_TTL:
                 return
-    if not force and wait_project_agent_ready(project, timeout=2.0):
-        with PROJECT_AGENT_ENSURE_LOCK:
-            PROJECT_AGENT_ENSURED_AT[project] = time.monotonic()
-        return
+    # Reachable is not the same as current. Skipping the ensure whenever the
+    # agent answered left project agents running whatever image they started
+    # with, so a deployed change never reached them. The ensure itself compares
+    # the desired service definition and only recreates when it differs.
     agent_request("POST", "/execute", json_body={
         "skill": "project.ensure_agent",
         "arguments": {"project": project},
@@ -508,26 +528,40 @@ def health() -> dict[str, Any]:
 def login(payload: LoginRequest) -> dict[str, Any]:
     store = load_auth_store()
     user = store.get("users", {}).get(payload.user_id)
-    if not user or str(user.get("password", "")) != payload.password:
+    stored_password = str(user.get("password", "")) if user else ""
+    # Accounts without a password were created implicitly by the old
+    # header-trusting code. They are not sign-in credentials: allowing an empty
+    # password would let anyone assume those identities.
+    if not user or not stored_password:
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+    if not secrets.compare_digest(stored_password, payload.password):
         raise HTTPException(status_code=401, detail="Invalid credentials")
     return {
         "id": payload.user_id,
         "role": user.get("role", "user"),
         "name": user.get("name", payload.user_id),
-        "auth_mode": "json-table",
+        "token": issue_session_token(payload.user_id),
+        "expires_in": int(SESSION_TOKEN_TTL),
+        "auth_mode": "bearer-token",
     }
+
+
+@app.post("/api/logout")
+def logout(authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    if authorization and authorization.startswith("Bearer "):
+        revoke_session_token(authorization.removeprefix("Bearer ").strip())
+    return {"status": "ok"}
 
 
 @app.get("/api/me")
 def me(
-    x_user_role: str | None = Header(default=None),
-    x_user_id: str | None = Header(default=None),
+    authorization: str | None = Header(default=None),
 ) -> dict[str, Any]:
-    user_id, role = authenticated_user(x_user_role, x_user_id)
+    user_id, role = authenticated_user(authorization)
     return {
         "id": user_id if role != "visitor" else None,
         "role": role,
-        "auth_mode": "json-table-development-header",
+        "auth_mode": "bearer-token",
     }
 
 
@@ -535,10 +569,9 @@ def me(
 def list_projects(
     request: Request,
     response: Response,
-    x_user_role: str | None = Header(default=None),
-    x_user_id: str | None = Header(default=None),
+    authorization: str | None = Header(default=None),
 ) -> dict[str, Any]:
-    user_id, role = authenticated_user(x_user_role, x_user_id)
+    user_id, role = authenticated_user(authorization)
     require_login(role)
     data, cache_state, cache_ttl, generated_at = cached_read(
         "project-summaries",
@@ -607,10 +640,9 @@ def service_catalog(request: Request, response: Response) -> dict[str, Any]:
 def system_summary(
     request: Request,
     response: Response,
-    x_user_role: str | None = Header(default=None),
-    x_user_id: str | None = Header(default=None),
+    authorization: str | None = Header(default=None),
 ) -> dict[str, Any]:
-    _, role = authenticated_user(x_user_role, x_user_id)
+    _, role = authenticated_user(authorization)
     require_login(role)
     data, cache_state, cache_ttl, generated_at = cached_read(
         "system-summary",
@@ -644,10 +676,9 @@ def commands() -> dict[str, Any]:
 @app.post("/api/projects")
 def create_project(
     payload: dict[str, Any],
-    x_user_role: str | None = Header(default=None),
-    x_user_id: str | None = Header(default=None),
+    authorization: str | None = Header(default=None),
 ) -> dict[str, Any]:
-    user_id, role = authenticated_user(x_user_role, x_user_id)
+    user_id, role = authenticated_user(authorization)
     require_login(role)
     name = str(payload.get("name") or "").strip()
     if not name:
@@ -677,10 +708,9 @@ def project_chat(
     project: str,
     payload: ChatRequest,
     request: Request,
-    x_user_role: str | None = Header(default=None),
-    x_user_id: str | None = Header(default=None),
+    authorization: str | None = Header(default=None),
 ) -> dict[str, Any]:
-    user_id, role = authenticated_user(x_user_role, x_user_id)
+    user_id, role = authenticated_user(authorization)
     ensure_project_access(role, user_id, project)
     context = dict(payload.context or {})
     context.setdefault("arguments", {})
@@ -703,10 +733,9 @@ def project_chat(
 @app.post("/api/admin/chat")
 def admin_chat(
     payload: ChatRequest,
-    x_user_role: str | None = Header(default=None),
-    x_user_id: str | None = Header(default=None),
+    authorization: str | None = Header(default=None),
 ) -> dict[str, Any]:
-    user_id, role = authenticated_user(x_user_role, x_user_id)
+    user_id, role = authenticated_user(authorization)
     require_admin(role)
     body = payload.model_dump()
     body["session_id"] = conversation_session_id(user_id, "admin")
@@ -716,10 +745,9 @@ def admin_chat(
 @app.post("/api/admin/execute")
 def admin_execute(
     payload: ExecuteRequest,
-    x_user_role: str | None = Header(default=None),
-    x_user_id: str | None = Header(default=None),
+    authorization: str | None = Header(default=None),
 ) -> dict[str, Any]:
-    user_id, role = authenticated_user(x_user_role, x_user_id)
+    user_id, role = authenticated_user(authorization)
     require_admin(role)
     result = agent_request("POST", "/execute", json_body={
         "skill": payload.skill,
@@ -746,10 +774,9 @@ def project_execute(
     payload: ExecuteRequest,
     request: Request,
     response: Response,
-    x_user_role: str | None = Header(default=None),
-    x_user_id: str | None = Header(default=None),
+    authorization: str | None = Header(default=None),
 ) -> dict[str, Any]:
-    user_id, role = authenticated_user(x_user_role, x_user_id)
+    user_id, role = authenticated_user(authorization)
     ensure_project_access(role, user_id, project)
     arguments = dict(payload.arguments)
     arguments["project"] = project

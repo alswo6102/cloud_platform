@@ -151,11 +151,13 @@ type AuthSession = {
   id: string;
   role: Role;
   name?: string;
+  token: string;
 } | null;
 
 type AuthHeaders = {
   role: Role;
   userId: string;
+  token: string;
 };
 
 type ChatMessage = {
@@ -240,15 +242,18 @@ const frameworkOptions: Array<{
 
 const visitorAuth: AuthHeaders = {
   role: "visitor",
-  userId: ""
+  userId: "",
+  token: ""
 };
 
 const SESSION_STORAGE_KEY = "cloud-platform-console-session";
 
+// The role travelled in a header the browser wrote, so the server had only the
+// caller's word for it. It now sends the token issued at login and the server
+// looks the role up itself.
 const authHeaders = (auth: AuthHeaders) => ({
   "Content-Type": "application/json",
-  "X-User-Role": auth.role,
-  "X-User-Id": auth.userId
+  ...(auth.token ? { Authorization: `Bearer ${auth.token}` } : {})
 });
 
 async function api<T>(path: string, auth: AuthHeaders, init?: RequestInit): Promise<T> {
@@ -326,10 +331,15 @@ function loadStoredSession(): AuthSession {
     const data = JSON.parse(raw);
     if (!isRecord(data) || typeof data.id !== "string") return null;
     if (data.role !== "user" && data.role !== "admin") return null;
+    // Sessions saved before tokens existed carry no credential; treat them as
+    // signed out so the user logs in again rather than silently acting as a
+    // visitor on every request.
+    if (typeof data.token !== "string" || !data.token) return null;
     return {
       id: data.id,
       role: data.role,
-      name: typeof data.name === "string" ? data.name : undefined
+      name: typeof data.name === "string" ? data.name : undefined,
+      token: data.token
     };
   } catch {
     return null;
@@ -344,13 +354,6 @@ function clearStoredSession() {
   window.localStorage.removeItem(SESSION_STORAGE_KEY);
 }
 
-function newSessionId() {
-  if (globalThis.crypto && typeof globalThis.crypto.randomUUID === "function") {
-    return globalThis.crypto.randomUUID();
-  }
-  const randomPart = Math.random().toString(36).slice(2);
-  return `session-${Date.now().toString(36)}-${randomPart}`;
-}
 
 function labelSkill(skill?: string) {
   const labels: Record<string, string> = {
@@ -472,7 +475,7 @@ function App() {
   const [loading, setLoading] = useState(() => Boolean(loadStoredSession()));
   const [projectsLoaded, setProjectsLoaded] = useState(false);
   const auth = useMemo<AuthHeaders>(
-    () => session ? { role: session.role, userId: session.id } : visitorAuth,
+    () => session ? { role: session.role, userId: session.id, token: session.token } : visitorAuth,
     [session]
   );
   const role = auth.role;
@@ -785,10 +788,12 @@ function LoginPanel({
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.detail || "로그인에 실패했습니다.");
+      if (!data.token) throw new Error("서버가 세션 토큰을 발급하지 않았습니다.");
       onLogin({
         id: String(data.id),
         role: String(data.role || "user") as Role,
-        name: data.name ? String(data.name) : undefined
+        name: data.name ? String(data.name) : undefined,
+        token: String(data.token)
       });
     } catch (err) {
       setMessage(err instanceof Error ? err.message : String(err));
@@ -1826,7 +1831,6 @@ function AgentPanel({
 }) {
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [sessionId] = useState(() => newSessionId());
   const [context, setContext] = useState<Record<string, unknown>>({});
   const [busy, setBusy] = useState(false);
   const [showDeployGuide, setShowDeployGuide] = useState(false);
@@ -1950,7 +1954,6 @@ function AgentPanel({
           skill: approval.skill,
           arguments: approval.arguments,
           approved: true,
-          session_id: sessionId,
           resume: approval.resume
         })
       });
@@ -1972,7 +1975,7 @@ function AgentPanel({
     try {
       const data = await api<AgentResponse>(`/api/projects/${project}/chat`, auth, {
         method: "POST",
-        body: JSON.stringify({ message: text, session_id: sessionId, context })
+        body: JSON.stringify({ message: text, context })
       });
       if (data.context && typeof data.context === "object") {
         setContext(data.context as Record<string, unknown>);
@@ -2516,7 +2519,6 @@ function ApprovalCard({
 function AdminConsole({ auth }: { auth: AuthHeaders }) {
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [sessionId] = useState(() => newSessionId());
   const [context, setContext] = useState<Record<string, unknown>>({});
   const [busy, setBusy] = useState(false);
   const approvalCardRef = useRef<HTMLDivElement | null>(null);
@@ -2598,7 +2600,6 @@ function AdminConsole({ auth }: { auth: AuthHeaders }) {
           skill: approval.skill,
           arguments: approval.arguments,
           approved: true,
-          session_id: sessionId,
           resume: approval.resume
         })
       });
@@ -2620,7 +2621,7 @@ function AdminConsole({ auth }: { auth: AuthHeaders }) {
     try {
       const data = await api<AgentResponse>("/api/admin/chat", auth, {
         method: "POST",
-        body: JSON.stringify({ message: text, session_id: sessionId, context })
+        body: JSON.stringify({ message: text, context })
       });
       if (data.context && typeof data.context === "object") {
         setContext(data.context as Record<string, unknown>);
