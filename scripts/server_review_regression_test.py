@@ -35,6 +35,7 @@ os.environ.pop("PLATFORM_NAMESPACE", None)
 os.environ.pop("LLM_API_KEY", None)
 
 import app  # noqa: E402
+import planner  # noqa: E402
 import runtime  # noqa: E402
 
 PASSED: list[str] = []
@@ -291,7 +292,8 @@ def _no_keyword_router_returns():
     ]
     back = [name for name in gone if hasattr(app, name)]
     assert not back, f"룰베이스 구현이 되살아남: {back}"
-    assert not hasattr(runtime, "fallback_plan"), "키워드 플래너가 되살아남"
+    assert not hasattr(planner, "fallback_plan"), "키워드 플래너가 되살아남"
+    assert not hasattr(runtime, "call_llm"), "플래너가 런타임에 다시 섞임"
     source = (ROOT / "agent" / "app.py").read_text()
     assert "LLM_API_KEY" not in source, "LLM 유무로 갈라지는 분기가 다시 생김"
 
@@ -592,7 +594,7 @@ def _trim_keeps_pairs():
 
 @check("an_early_return_closes_every_open_tool_call")
 def _no_unanswered_calls_in_source():
-    source = (ROOT / "agent" / "runtime.py").read_text()
+    source = (ROOT / "agent" / "planner.py").read_text()
     tree = ast.parse(source)
     node = next(
         n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "call_llm"
@@ -604,6 +606,35 @@ def _no_unanswered_calls_in_source():
         index = body.index(marker)
         window = body[max(0, index - 400):index]
         assert "finish(" in window or "transcript()" in window, marker
+
+
+# --- Modules depend in one direction ----------------------------------------
+
+
+@check("module_dependencies_point_one_way")
+def _no_cycles():
+    layers = ["app", "planner", "authz", "runtime"]
+    allowed = {
+        # A module may only import from ones below it.
+        "app": {"authz", "planner", "runtime"},
+        "planner": {"runtime"},
+        "authz": set(),
+        "runtime": set(),
+        "cli": {"runtime"},
+    }
+    for module, permitted in allowed.items():
+        tree = ast.parse((ROOT / "agent" / f"{module}.py").read_text())
+        imported = {
+            node.module
+            for node in ast.walk(tree)
+            if isinstance(node, ast.ImportFrom) and node.module in set(layers) | {"cli"}
+        }
+        illegal = imported - permitted
+        assert not illegal, f"{module}.py가 {sorted(illegal)}을 임포트함"
+    # The planner must not be able to reach Docker directly.
+    planner_source = (ROOT / "agent" / "planner.py").read_text()
+    for forbidden in ("import docker", "subprocess", "compose_command"):
+        assert forbidden not in planner_source, f"planner가 {forbidden}에 닿음"
 
 
 # --- Tools run in this process, and go through the namespace gate -----------
@@ -648,7 +679,7 @@ def _gate_covers_project_scoped_skills():
 
 @check("one_transport_serves_both_llm_roles")
 def _single_transport():
-    source = (ROOT / "agent" / "runtime.py").read_text()
+    source = (ROOT / "agent" / "planner.py").read_text()
     posts = source.count("chat/completions")
     assert posts == 1, f"전송 구현이 {posts}벌"
     cooldowns = source.count("MODEL_COOLDOWNS[model]")
@@ -667,9 +698,13 @@ def _single_transport():
 @check("prompts_are_files_not_string_literals")
 def _prompts_load():
     for name in ("planner", "read_only_reply", "mutation_reply"):
-        text = runtime.load_prompt(name)
+        text = planner.load_prompt(name)
         assert len(text) > 80, f"{name} 프롬프트가 비어 있음"
-    for path in (ROOT / "agent" / "app.py", ROOT / "agent" / "runtime.py"):
+    for path in (
+        ROOT / "agent" / "app.py",
+        ROOT / "agent" / "runtime.py",
+        ROOT / "agent" / "planner.py",
+    ):
         source = path.read_text()
         assert "You operate a small Docker deployment" not in source, path.name
         assert "You are the final response writer" not in source, path.name
