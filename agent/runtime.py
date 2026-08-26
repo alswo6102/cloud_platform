@@ -2098,14 +2098,31 @@ READ_ONLY_SKILLS = {
 }
 
 
+def required_argument(arguments: dict[str, Any], field: str, skill: str) -> Any:
+    """Read a required argument, or say which one is missing.
+
+    A bare KeyError here surfaced as the single word "'service'", which told
+    neither the planner nor the user anything. Named errors let the planner ask
+    for the value or look it up and retry.
+    """
+    value = arguments.get(field)
+    if value is None or (isinstance(value, str) and not value.strip()):
+        raise SkillError(
+            f"{skill} requires '{field}'.",
+            code="missing_field",
+            field=field,
+        )
+    return value
+
+
 def execute_skill(skill: str, arguments: dict[str, Any], dry_run: bool) -> dict[str, Any]:
     try:
         if skill == "help.search":
             result = help_search(str(arguments.get("query", "")))
         elif skill == "entity.resolve":
             result = entity_resolve(
-                str(arguments["entity"]),
-                str(arguments["query"]),
+                str(required_argument(arguments, "entity", skill)),
+                str(required_argument(arguments, "query", skill)),
                 arguments.get("project"),
             )
         elif skill == "framework.list":
@@ -2117,18 +2134,18 @@ def execute_skill(skill: str, arguments: dict[str, Any], dry_run: bool) -> dict[
         elif skill == "project.list":
             result = project_list()
         elif skill == "repository.inspect":
-            result = inspect_repository(arguments["repo_url"])
+            result = inspect_repository(required_argument(arguments, "repo_url", skill))
         elif skill == "project.create":
             result = project_create(arguments.get("project"), dry_run)
         elif skill == "project.ensure_agent":
-            result = ensure_project_agent(arguments["project"], dry_run)
+            result = ensure_project_agent(required_argument(arguments, "project", skill), dry_run)
         elif skill == "service.deploy":
             result = service_deploy(
                 arguments.get("project"),
                 arguments.get("service"),
                 arguments.get("repo_url"),
-                int(arguments["container_port"]) if arguments.get("container_port") is not None else None,
-                int(arguments["host_port"]) if arguments.get("host_port") is not None else None,
+                int(required_argument(arguments, "container_port", skill)) if arguments.get("container_port") is not None else None,
+                int(required_argument(arguments, "host_port", skill)) if arguments.get("host_port") is not None else None,
                 bool(arguments.get("is_web", True)),
                 arguments.get("framework"),
                 arguments.get("environment_names"),
@@ -2141,20 +2158,20 @@ def execute_skill(skill: str, arguments: dict[str, Any], dry_run: bool) -> dict[
                 dry_run,
             )
         elif skill == "service.status":
-            result = service_status(arguments["project"], arguments.get("service"))
+            result = service_status(required_argument(arguments, "project", skill), arguments.get("service"))
         elif skill == "service.logs":
-            result = service_logs(arguments["project"], arguments["service"], int(arguments.get("lines", 40)))
+            result = service_logs(required_argument(arguments, "project", skill), required_argument(arguments, "service", skill), int(arguments.get("lines", 40)))
         elif skill == "service.control":
             result = service_control(
-                arguments["project"], arguments["service"], arguments["action"], dry_run
+                required_argument(arguments, "project", skill), required_argument(arguments, "service", skill), required_argument(arguments, "action", skill), dry_run
             )
         elif skill == "port.suggest":
             result = port_manage("", None, "suggest", None, None, dry_run)
         elif skill == "port.manage":
             result = port_manage(
-                arguments["project"],
+                required_argument(arguments, "project", skill),
                 arguments.get("service"),
-                arguments["operation"],
+                required_argument(arguments, "operation", skill),
                 arguments.get("host_port"),
                 arguments.get("container_port"),
                 dry_run,
