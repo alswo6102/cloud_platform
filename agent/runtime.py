@@ -35,6 +35,13 @@ from deployment_presets import (
 PROJECTS_ROOT = Path(os.getenv("PROJECTS_ROOT", "/srv/projects"))
 SKILLS_ROOT = Path(os.getenv("SKILLS_ROOT", "/app/skills"))
 DOCS_ROOT = Path(os.getenv("DOCS_ROOT", "/app/docs"))
+# Prompts are text, not code. Keep them where they can be read and edited
+# without opening a Python file.
+PROMPTS_ROOT = Path(
+    os.getenv("PROMPTS_ROOT", str(Path(__file__).resolve().parent / "prompts"))
+)
+PROMPT_CACHE: dict[str, str] = {}
+PROMPT_CACHE_LOCK = threading.Lock()
 AUDIT_LOG = Path(os.getenv("AUDIT_LOG", "/var/log/skill-agent/audit.jsonl"))
 NAMESPACE_TOKEN_STORE = Path(
     os.getenv("NAMESPACE_TOKEN_STORE", "/var/log/skill-agent/namespace_tokens.json")
@@ -2350,21 +2357,92 @@ def tool_description_for_llm(document: dict[str, Any]) -> str:
     return json.dumps(payload, ensure_ascii=False, default=str)
 
 
+def load_prompt(name: str) -> str:
+    with PROMPT_CACHE_LOCK:
+        cached = PROMPT_CACHE.get(name)
+    if cached is not None:
+        return cached
+    text = (PROMPTS_ROOT / f"{name}.md").read_text(encoding="utf-8").strip()
+    with PROMPT_CACHE_LOCK:
+        PROMPT_CACHE[name] = text
+    return text
+
+
+def llm_not_configured() -> SkillError:
+    return SkillError(
+        "플래너가 구성되지 않았습니다.",
+        code="llm_not_configured",
+        hint="LLM_API_KEY, LLM_API_URL, LLM_MODELS를 설정하세요.",
+    )
+
+
+def llm_chat_completion(
+    messages: list[dict[str, Any]],
+    *,
+    tools: list[dict[str, Any]] | None = None,
+    timeout: float | None = None,
+) -> tuple[dict[str, Any], str]:
+    """Send one chat completion, moving down the model list on rate limits.
+
+    The planner loop and the response writer both used to carry their own copy
+    of this. Two copies meant a timeout knob that existed on one path only, and
+    a retry or a usage log would have had to be added twice.
+    """
+    api_key = os.getenv("LLM_API_KEY", "")
+    api_url = os.getenv("LLM_API_URL", "")
+    models = llm_models()
+    if not api_key or not api_url or not models:
+        raise llm_not_configured()
+    if timeout is None:
+        timeout = float(os.getenv("LLM_REQUEST_TIMEOUT", "60"))
+
+    attempted: list[str] = []
+    for model in models:
+        now = time.monotonic()
+        with MODEL_COOLDOWN_LOCK:
+            cooldown_until = MODEL_COOLDOWNS.get(model, 0)
+        if cooldown_until > now:
+            continue
+        attempted.append(model)
+        payload: dict[str, Any] = {
+            "model": model,
+            "temperature": 0,
+            "messages": messages,
+        }
+        if tools:
+            payload["tools"] = tools
+            payload["tool_choice"] = "auto"
+        response = requests.post(
+            api_url.rstrip("/") + "/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json=payload,
+            timeout=timeout,
+        )
+        if response.status_code == 429:
+            with MODEL_COOLDOWN_LOCK:
+                MODEL_COOLDOWNS[model] = time.monotonic() + rate_limit_cooldown(response)
+            continue
+        response.raise_for_status()
+        return response.json()["choices"][0]["message"], model
+
+    cooling = llm_status()["cooldowns"]
+    raise SkillError(
+        "All configured LLM models are rate-limited or cooling down. "
+        f"Attempted: {attempted or 'none'}; cooldowns: {cooling}"
+    )
+
+
 def call_llm(
     message: str,
     skills: list[dict[str, Any]],
     context: dict[str, Any] | None = None,
     history: list[dict[str, str]] | None = None,
 ) -> dict[str, Any]:
-    api_key = os.getenv("LLM_API_KEY", "")
-    api_url = os.getenv("LLM_API_URL", "")
-    models = llm_models()
-    if not api_key or not api_url or not models:
-        raise SkillError(
-            "플래너가 구성되지 않았습니다.",
-            code="llm_not_configured",
-            hint="LLM_API_KEY, LLM_API_URL, LLM_MODELS를 설정하세요.",
-        )
+    if not llm_status()["configured"]:
+        raise llm_not_configured()
     tool_names: dict[str, str] = {}
     tools = []
     for item in skills:
@@ -2427,38 +2505,7 @@ def call_llm(
     messages = [
         {
             "role": "system",
-            "content": (
-                "You operate a small Docker deployment platform through the tools "
-                "given to you. Each tool description carries its own contract: when "
-                "it applies, what it needs, and what its fields mean. Read them and "
-                "decide.\n\n"
-                "How to work:\n"
-                "- Anything about the platform's current state -- services, status, "
-                "logs, ports, health, public URLs -- comes from a tool call, never "
-                "from memory or inference.\n"
-                "- Look things up before you answer. Chain lookups when one answer "
-                "raises the next question.\n"
-                "- If a tool returns an error, read it and try again with corrected "
-                "arguments.\n"
-                "- If you are missing a value, leave the field out. The dry-run will "
-                "say what is needed, or you can simply ask the user.\n"
-                "- A new service's name is the user's to choose. Suggest one from "
-                "the repository if it helps, but ask them to confirm it and wait "
-                "for their answer before deploying under that name.\n"
-                "- When a repository already contains a Dockerfile, offer the "
-                "'existing' preset first and say why: a generated preset would "
-                "replace the build the repository already defines.\n"
-                "- Use only values the user actually gave you for the request you "
-                "are handling now. A value they supplied for an earlier request "
-                "belongs to that request: when they start a new one, leave the "
-                "field out and let them supply it again, even if the old value is "
-                "still visible in this conversation. A close match from a lookup "
-                "is a suggestion to confirm, not a fact.\n"
-                "- Changes to the system are previewed and approved by the user "
-                "before anything runs, so never say an operation is done.\n"
-                "- Answer in Korean, in prose, as briefly as the question allows."
-                + context_instruction
-            ),
+            "content": load_prompt("planner") + context_instruction,
         },
     ]
     for item in (history or [])[-16:]:
@@ -2468,45 +2515,9 @@ def call_llm(
             messages.append({"role": role, "content": content})
     messages.append({"role": "user", "content": message})
 
-    def post_with_fallback() -> tuple[dict[str, Any], str]:
-        attempted = []
-        for model in models:
-            now = time.monotonic()
-            with MODEL_COOLDOWN_LOCK:
-                cooldown_until = MODEL_COOLDOWNS.get(model, 0)
-            if cooldown_until > now:
-                continue
-            attempted.append(model)
-            response = requests.post(
-                api_url.rstrip("/") + "/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {api_key}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "model": model,
-                    "temperature": 0,
-                    "messages": messages,
-                    "tools": tools,
-                    "tool_choice": "auto",
-                },
-                timeout=float(os.getenv("LLM_REQUEST_TIMEOUT", "60")),
-            )
-            if response.status_code != 429:
-                response.raise_for_status()
-                return response.json()["choices"][0]["message"], model
-            cooldown = rate_limit_cooldown(response)
-            with MODEL_COOLDOWN_LOCK:
-                MODEL_COOLDOWNS[model] = time.monotonic() + cooldown
-        cooling = llm_status()["cooldowns"]
-        raise SkillError(
-            "All configured LLM models are rate-limited or cooling down. "
-            f"Attempted: {attempted or 'none'}; cooldowns: {cooling}"
-        )
-
     last_model = None
     for _ in range(LLM_MAX_STEPS):
-        response_message, last_model = post_with_fallback()
+        response_message, last_model = llm_chat_completion(messages, tools=tools)
         tool_calls = response_message.get("tool_calls") or []
 
         # No tool call means the planner is answering. Content can be empty on
@@ -2598,50 +2609,18 @@ def call_llm_text(
     *,
     system: str,
     user: str,
-) -> dict[str, Any] | None:
-    api_key = os.getenv("LLM_API_KEY", "")
-    api_url = os.getenv("LLM_API_URL", "")
-    models = llm_models()
-    if not api_key or not api_url or not models:
-        return None
-
-    attempted = []
-    for model in models:
-        now = time.monotonic()
-        with MODEL_COOLDOWN_LOCK:
-            cooldown_until = MODEL_COOLDOWNS.get(model, 0)
-        if cooldown_until > now:
-            continue
-        attempted.append(model)
-        response = requests.post(
-            api_url.rstrip("/") + "/chat/completions",
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": model,
-                "temperature": 0,
-                "messages": [
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": user},
-                ],
-            },
-            timeout=float(os.getenv("LLM_RESPONSE_TIMEOUT", os.getenv("LLM_REQUEST_TIMEOUT", "60"))),
-        )
-        if response.status_code == 429:
-            cooldown = rate_limit_cooldown(response)
-            with MODEL_COOLDOWN_LOCK:
-                MODEL_COOLDOWNS[model] = time.monotonic() + cooldown
-            continue
-        response.raise_for_status()
-        message = response.json()["choices"][0]["message"]
-        return {
-            "message": str(message.get("content", "")).strip(),
-            "model": model,
-        }
-    cooling = llm_status()["cooldowns"]
-    raise SkillError(
-        "All configured LLM models are rate-limited or cooling down. "
-        f"Attempted: {attempted or 'none'}; cooldowns: {cooling}"
+) -> dict[str, Any]:
+    """Write one reply. No tools, one round trip, the same transport."""
+    message, model = llm_chat_completion(
+        [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+        timeout=float(
+            os.getenv("LLM_RESPONSE_TIMEOUT", os.getenv("LLM_REQUEST_TIMEOUT", "60"))
+        ),
     )
+    return {
+        "message": str(message.get("content", "")).strip(),
+        "model": model,
+    }

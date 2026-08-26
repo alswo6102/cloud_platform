@@ -17,6 +17,7 @@ from deployment_presets import preset_catalog
 
 from runtime import (
     READ_ONLY_SKILLS,
+    load_prompt,
     SkillError,
     attach_platform_api_to_existing_control_networks,
     call_llm,
@@ -473,15 +474,6 @@ def arguments_for_plan(
     )
 
 
-def project_state(name: str) -> str:
-    path = PROJECTS_ROOT / name
-    if not path.exists():
-        return "missing"
-    if not (path / "docker-compose.yml").is_file():
-        return "incomplete"
-    return "valid"
-
-
 def load_session(
     session_id: str | None,
     client_context: dict[str, Any] | None,
@@ -685,14 +677,7 @@ def naturalize_read_only_result(
     enriched = enrich_read_only_result(skill, result, context)
     try:
         llm = call_llm_text(
-            system=(
-                "You are the final response writer for a Docker deployment console. "
-                "The CLI result is authoritative. Answer in natural Korean. "
-                "Do not expose raw JSON. Do not invent facts. "
-                "If a service has public_urls, show the first URL as a 바로가기. "
-                "If public_urls is empty and frontend is false, explain that it is internal-only. "
-                "Keep it concise and user-friendly."
-            ),
+            system=load_prompt("read_only_reply"),
             user=json.dumps(
                 {
                     "user_message": user_message,
@@ -741,25 +726,7 @@ def naturalize_mutation_message(
         fallback = "실행 계획을 준비했습니다. 아래 내용을 확인하고 승인해주세요."
     try:
         llm = call_llm_text(
-            system=(
-                "You write the final Korean reply for a Docker deployment console. "
-                "The JSON you are given is the whole truth: describe it and nothing "
-                "more. Do not expose raw JSON.\n"
-                "purpose tells you what happened:\n"
-                "- 'missing': nothing failed. These fields were simply never "
-                "provided. Ask for them. Never call this an error, a failure, or "
-                "an access problem, and never invent a cause.\n"
-                "- 'error': a real validation error is in the error field. Name "
-                "the field that failed, give the reason that is actually stated "
-                "there, and ask the user to correct only that field. Do not add a "
-                "cause that the error does not give.\n"
-                "- 'approval': say plainly what will be changed and what the "
-                "result should be. The interface draws the approve and cancel "
-                "controls, so do not write button names, brackets, or markup that "
-                "imitates them.\n"
-                "Mention optional defaults briefly when they exist. Keep it "
-                "natural and concise."
-            ),
+            system=load_prompt("mutation_reply"),
             user=json.dumps(
                 {
                     "purpose": purpose,
@@ -934,44 +901,6 @@ def ui_hint_for_response(
     if skill == "service.deploy" and (missing or field_errors):
         return deploy_form_hint(arguments, missing, field_errors)
     return None
-
-
-def collect_cli_observations(
-    skill: str | None,
-    arguments: dict[str, Any],
-    missing: list[dict[str, Any]],
-) -> dict[str, Any]:
-    observations: dict[str, Any] = {}
-    if skill in {"project.create", "service.deploy", "service.redeploy"}:
-        try:
-            observations["projects"] = execute_cli_skill(
-                "project.list",
-                {},
-                dry_run=False,
-            )
-        except SkillError as exc:
-            observations["projects"] = {"error": str(exc)}
-    missing_fields = {item.get("field") for item in missing}
-    if skill == "service.deploy" and "framework" in missing_fields:
-        try:
-            observations["frameworks"] = execute_cli_skill(
-                "framework.list",
-                {},
-                dry_run=False,
-            )
-        except SkillError as exc:
-            observations["frameworks"] = {"error": str(exc)}
-        repo_url = arguments.get("repo_url")
-        if repo_url:
-            try:
-                observations["repository"] = execute_cli_skill(
-                    "repository.inspect",
-                    {"repo_url": repo_url},
-                    dry_run=False,
-                )
-            except SkillError as exc:
-                observations["repository"] = {"error": str(exc)}
-    return observations
 
 
 class ChatRequest(BaseModel):

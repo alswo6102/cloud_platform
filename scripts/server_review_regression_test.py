@@ -531,6 +531,39 @@ def _console_is_not_behind():
     assert not missing, f"콘솔에서 고를 수 없는 프리셋: {sorted(missing)}"
 
 
+# --- One transport, and prompts that live outside the code ------------------
+
+
+@check("one_transport_serves_both_llm_roles")
+def _single_transport():
+    source = (ROOT / "agent" / "runtime.py").read_text()
+    posts = source.count("chat/completions")
+    assert posts == 1, f"전송 구현이 {posts}벌"
+    cooldowns = source.count("MODEL_COOLDOWNS[model]")
+    assert cooldowns == 1, f"쿨다운 기록이 {cooldowns}곳"
+    # Both roles have to go through it.
+    tree = ast.parse(source)
+    for name in ("call_llm", "call_llm_text"):
+        node = next(
+            n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == name
+        )
+        body = ast.get_source_segment(source, node) or ""
+        assert "llm_chat_completion(" in body, f"{name}이 공용 클라이언트를 쓰지 않음"
+        assert "requests.post" not in body, f"{name}이 직접 POST함"
+
+
+@check("prompts_are_files_not_string_literals")
+def _prompts_load():
+    for name in ("planner", "read_only_reply", "mutation_reply"):
+        text = runtime.load_prompt(name)
+        assert len(text) > 80, f"{name} 프롬프트가 비어 있음"
+    for path in (ROOT / "agent" / "app.py", ROOT / "agent" / "runtime.py"):
+        source = path.read_text()
+        assert "You operate a small Docker deployment" not in source, path.name
+        assert "You are the final response writer" not in source, path.name
+        assert "You write the final Korean reply" not in source, path.name
+
+
 print()
 print(f"RESULT: {len(PASSED)} passed / {len(FAILED)} failed")
 if FAILED:
