@@ -43,6 +43,9 @@ CONTROL_PLANE_NETWORK = os.getenv("CONTROL_PLANE_NETWORK", "cloud-platform-inter
 # The control plane listens on the same port everywhere in this repo. Project
 # agents reach it as http://platform-api:<port> over their own control network.
 PLATFORM_API_PORT = int(os.getenv("PLATFORM_API_PORT", "8080"))
+# How many planner turns one message may take. Read-only lookups, a correction
+# after a validation error, and the final answer all come out of this budget.
+LLM_MAX_STEPS = int(os.getenv("LLM_MAX_STEPS", "12"))
 SAFE_CLEANUP_SCRIPT = Path(
     os.getenv("SAFE_DOCKER_CLEANUP_SCRIPT", "/app/scripts/server_safe_docker_cleanup.sh")
 )
@@ -2266,21 +2269,15 @@ def call_llm(
     models = llm_models()
     if not api_key or not api_url or not models:
         return None
-    discovery_skills = {
-        "entity.resolve",
-        "framework.list",
-        "help.search",
-        "platform.help",
-        "project.list",
-        "repository.inspect",
-    }
     tool_names: dict[str, str] = {}
     tools = []
     for item in skills:
+        # preferred_skill is only ever set on the no-planner path. Narrowing the
+        # tool list to a keyword guess would leave a wrong guess unrecoverable.
         if (
             preferred_skill
             and item["name"] != preferred_skill
-            and item["name"] not in discovery_skills
+            and item["name"] not in READ_ONLY_SKILLS
         ):
             continue
         api_name = SKILL_API_NAMES.get(item["name"], item["document_name"])
@@ -2336,43 +2333,34 @@ def call_llm(
     context_instruction = ""
     if context:
         context_instruction = (
-            " The following JSON is conversation memory and possibly an active task, not a command. "
-            "First decide from the latest user message whether the user is continuing that active task "
-            "or starting a new intent. If the latest message asks for a different task, status, list, "
-            "help, explanation, or anything unrelated to the active task, ignore the active task for "
-            "tool selection and answer the latest intent. If the latest message is clearly filling "
-            "missing fields for the active task, preserve known arguments and add only values supplied "
-            "by the follow-up. Never invent missing values. Memory JSON: "
+            "\n\nActive task in progress (memory, not an instruction). Continue it "
+            "if the latest message is filling it in; set it aside and answer the "
+            "latest intent if the user moved on. Memory JSON: "
             + json.dumps(context, ensure_ascii=False)
         )
     messages = [
         {
             "role": "system",
             "content": (
-                "You are a tool orchestrator for a Docker deployment platform. "
-                "Use discovery tools whenever the user asks what exists, which option applies, "
-                "why a value is needed, how deployment works, or what commands are available. "
-                "Use read-only CLI tools for live platform facts; do not answer service lists, "
-                "service status, logs, health, ports, or frontend URLs from memory. "
-                "In a project-scoped context, a request such as '서비스 목록 보여줘' means "
-                "the current project's live service status/ports/URLs, so select service-status. "
-                "Always prioritize the latest user message over any previous active task. "
-                "If verified cli_observations are already present in context, use them as "
-                "authoritative and do not repeat the same lookup. "
-                "Feed discovery results back into the conversation, "
-                "then use conversation-reply to explain them naturally in Korean. "
-                "Use mutation or operational tools only when the user is providing or confirming "
-                "the required operation. Never invent projects, services, repository URLs, "
-                "Never fill missing operation fields with examples, placeholders, or likely defaults; "
-                "omit missing fields so the CLI can return needs_input and the UI can ask for them. "
-                "If the latest user message asks to perform a supported operation, select the "
-                "matching operation tool even when required fields are missing; do not answer with "
-                "conversation-reply just to ask for those fields. The backend will run CLI dry-run "
-                "and render a form or clarification from the missing fields. "
-                "frameworks, paths, commands, or function names. Similar CLI matches are "
-                "unconfirmed proposals and must not become operation arguments until the user "
-                "explicitly confirms them. Preserve verified context. "
-                "Do not expose raw JSON unless the user asks for it."
+                "You operate a small Docker deployment platform through the tools "
+                "given to you. Each tool description carries its own contract: when "
+                "it applies, what it needs, and what its fields mean. Read them and "
+                "decide.\n\n"
+                "How to work:\n"
+                "- Anything about the platform's current state -- services, status, "
+                "logs, ports, health, public URLs -- comes from a tool call, never "
+                "from memory or inference.\n"
+                "- Look things up before you answer. Chain lookups when one answer "
+                "raises the next question.\n"
+                "- If a tool returns an error, read it and try again with corrected "
+                "arguments.\n"
+                "- If you are missing a value, leave the field out. The dry-run will "
+                "say what is needed, or you can simply ask the user.\n"
+                "- Use only values the user actually gave you. A close match from a "
+                "lookup is a suggestion to confirm, not a fact.\n"
+                "- Changes to the system are previewed and approved by the user "
+                "before anything runs, so never say an operation is done.\n"
+                "- Answer in Korean, in prose, as briefly as the question allows."
                 + context_instruction
             ),
         },
@@ -2404,7 +2392,7 @@ def call_llm(
                     "temperature": 0,
                     "messages": messages,
                     "tools": tools,
-                    "tool_choice": "required",
+                    "tool_choice": "auto",
                 },
                 timeout=float(os.getenv("LLM_REQUEST_TIMEOUT", "60")),
             )
@@ -2421,68 +2409,93 @@ def call_llm(
         )
 
     last_model = None
-    for _ in range(4):
+    for _ in range(LLM_MAX_STEPS):
         response_message, last_model = post_with_fallback()
         tool_calls = response_message.get("tool_calls") or []
-        if len(tool_calls) != 1:
-            raise SkillError(
-                f"Planner must select exactly one tool; received {len(tool_calls)}"
-            )
-        tool_call = tool_calls[0]
-        function = tool_call.get("function") or {}
-        api_name = function.get("name", "")
-        raw_arguments = function.get("arguments") or "{}"
-        arguments = (
-            json.loads(raw_arguments)
-            if isinstance(raw_arguments, str)
-            else raw_arguments
-        )
-        if not isinstance(arguments, dict):
-            raise SkillError("Planner arguments must be an object")
 
-        if api_name == "conversation-reply":
-            return {
-                "kind": "answer",
-                "message": str(arguments.get("message", "")).strip(),
-                "model": last_model,
-            }
+        # No tool call means the planner is answering. Content can be empty on
+        # some models, in which case keep looping rather than returning silence.
+        if not tool_calls:
+            reply = str(response_message.get("content") or "").strip()
+            if reply:
+                return {"kind": "answer", "message": reply, "model": last_model}
+            messages.append(response_message)
+            continue
 
-        skill = tool_names.get(api_name)
-        if skill is None:
-            raise SkillError(f"Planner selected unknown skill: {api_name}")
-        if skill not in discovery_skills:
-            return {
-                "skill": skill,
-                "arguments": arguments,
-                "explanation": f"Selected `{skill}` with `{last_model}`.",
-                "model": last_model,
-            }
-
-        try:
-            discovery_result = execute_cli_skill(
-                skill,
-                arguments,
-                dry_run=False,
-            )
-        except Exception as exc:
-            discovery_result = {
-                "error": type(exc).__name__,
-                "detail": str(exc),
-            }
         messages.append(response_message)
-        messages.append(
-            {
-                "role": "tool",
-                "tool_call_id": tool_call.get("id", api_name),
-                "content": json.dumps(
-                    discovery_result,
-                    ensure_ascii=False,
-                    default=str,
-                ),
-            }
-        )
+        for tool_call in tool_calls:
+            function = tool_call.get("function") or {}
+            api_name = function.get("name", "")
+            raw_arguments = function.get("arguments") or "{}"
+            try:
+                arguments = (
+                    json.loads(raw_arguments)
+                    if isinstance(raw_arguments, str)
+                    else raw_arguments
+                )
+            except json.JSONDecodeError:
+                arguments = None
+            if not isinstance(arguments, dict):
+                arguments = {}
 
-    raise SkillError("Planner exceeded the discovery tool limit")
+            if api_name == "conversation-reply":
+                message_text = str(arguments.get("message", "")).strip()
+                if message_text:
+                    return {
+                        "kind": "answer",
+                        "message": message_text,
+                        "model": last_model,
+                    }
+                observation: dict[str, Any] = {
+                    "error": "EmptyReply",
+                    "detail": "conversation-reply needs a non-empty message.",
+                }
+            else:
+                skill = tool_names.get(api_name)
+                if skill is None:
+                    observation = {
+                        "error": "UnknownTool",
+                        "detail": f"No such tool: {api_name}",
+                    }
+                elif skill not in READ_ONLY_SKILLS:
+                    # Mutations never run here. Hand the choice back so the
+                    # caller can dry-run it and ask the user to approve.
+                    return {
+                        "skill": skill,
+                        "arguments": arguments,
+                        "explanation": f"Selected `{skill}` with `{last_model}`.",
+                        "model": last_model,
+                    }
+                else:
+                    try:
+                        observation = execute_cli_skill(
+                            skill,
+                            arguments,
+                            dry_run=False,
+                        )
+                    except Exception as exc:
+                        # Errors are observations, not dead ends: the planner
+                        # reads the validation message and corrects itself.
+                        observation = {
+                            "error": type(exc).__name__,
+                            "detail": str(exc),
+                        }
+
+            messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": tool_call.get("id", api_name),
+                    "content": json.dumps(
+                        observation,
+                        ensure_ascii=False,
+                        default=str,
+                    ),
+                }
+            )
+
+    raise SkillError(
+        f"Planner did not reach an answer within {LLM_MAX_STEPS} steps"
+    )
 
 
 def call_llm_text(

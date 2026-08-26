@@ -466,6 +466,11 @@ DEPLOYMENT_GUIDE_PHRASES = {
 
 
 def preferred_skill_for(message: str, context: dict[str, Any] | None) -> str | None:
+    # Keyword routing is the no-planner fallback. When a planner is available it
+    # decides, and narrowing its tool list to one guess here means a wrong guess
+    # leaves it no way to reach the right skill.
+    if os.getenv("LLM_API_KEY"):
+        return None
     text = message.lower()
     if GITHUB_URL_RE.search(message) and any(
         word in text for word in ("배포", "등록", "추가", "서비스", "저장소", "github")
@@ -1075,16 +1080,10 @@ def arguments_for_plan(
     context: dict[str, Any] | None,
     planner_arguments: dict[str, Any] | None,
 ) -> dict[str, Any]:
-    if skill in {
-        "project.create",
-        "service.deploy",
-        "service.redeploy",
-        "service.status",
-        "service.logs",
-        "service.control",
-        "port.manage",
-    }:
-        return strict_arguments(message, skill, context, planner_arguments or {})
+    # With a planner configured, its arguments are the answer. Re-deriving them
+    # from the raw message with regexes threw away what the model understood.
+    # Safety is the namespace token, the JSON schema, and the approval gate --
+    # none of which depend on reparsing the user's words here.
     if os.getenv("LLM_API_KEY"):
         return remove_placeholder_arguments(
             planner_arguments_for_llm(skill, context, planner_arguments)
@@ -1595,8 +1594,10 @@ def remember_response(
                 "arguments": response.get("arguments", {}),
                 "missing": response.get("missing", []),
             }
-        elif response.get("skill") in READ_ONLY_SKILLS or response.get("kind") in {"help", "guide"}:
-            session["context"] = None
+        # A read-only question asked in the middle of a task is a detour, not an
+        # abandonment: looking up the service list while filling in a deploy
+        # used to discard everything already collected. Keep the active task and
+        # let the next turn continue it.
         session["updated_at"] = time.time()
         persist_sessions_locked()
     response["session_id"] = session_id
@@ -2408,7 +2409,8 @@ def chat(request: ChatRequest, http_request: Request):
             })
         preferred_skill = preferred_skill_for(request.message, request.context)
         cli_proposal = (
-            cli_proposal_for_input(
+            None if os.getenv("LLM_API_KEY")
+            else cli_proposal_for_input(
                 request.message,
                 preferred_skill,
                 request.context,
@@ -2691,13 +2693,25 @@ def chat(request: ChatRequest, http_request: Request):
                         evidence=repository_observation.get("evidence", []),
                     )
                 )
-        plan = call_llm(
-            request.message,
-            documents,
-            llm_context or None,
-            preferred_skill,
-            session_history,
-        ) or fallback_plan(request.message)
+        try:
+            plan = call_llm(
+                request.message,
+                documents,
+                llm_context or None,
+                preferred_skill,
+                session_history,
+            )
+        except Exception as exc:
+            # A planner timeout, a rate limit, or a malformed reply used to end
+            # the turn as an HTTP error, which also meant the turn never made it
+            # into the history. Degrade to keyword routing instead.
+            planner_error = str(exc)
+            plan = None
+        else:
+            planner_error = None
+        if plan is None:
+            plan = fallback_plan(request.message)
+            plan["planner_error"] = planner_error
         if plan.get("kind") == "answer":
             if preferred_skill in {
                 "project.create",
