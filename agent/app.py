@@ -2840,16 +2840,11 @@ def chat(request: ChatRequest, http_request: Request):
                 "kind": "clarification" if request.context else "help",
                 "message": plan["message"],
                 "model": plan.get("model"),
-                "arguments": (
-                    request.context.get("arguments", {})
-                    if request.context
-                    else {}
-                ),
-                "missing": (
-                    request.context.get("missing", [])
-                    if request.context
-                    else []
-                ),
+                # The stored task stays on the server for the next turn, but it
+                # is not what this reply is about. Echoing its arguments handed
+                # the console values from an older request -- a repository URL
+                # the user had already replaced -- alongside an answer that did
+                # not mention them.
                 "context": request.context,
                 "requires_approval": False,
             })
