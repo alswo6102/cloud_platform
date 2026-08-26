@@ -2354,25 +2354,20 @@ def call_llm(
     message: str,
     skills: list[dict[str, Any]],
     context: dict[str, Any] | None = None,
-    preferred_skill: str | None = None,
     history: list[dict[str, str]] | None = None,
-) -> dict[str, Any] | None:
+) -> dict[str, Any]:
     api_key = os.getenv("LLM_API_KEY", "")
     api_url = os.getenv("LLM_API_URL", "")
     models = llm_models()
     if not api_key or not api_url or not models:
-        return None
+        raise SkillError(
+            "플래너가 구성되지 않았습니다.",
+            code="llm_not_configured",
+            hint="LLM_API_KEY, LLM_API_URL, LLM_MODELS를 설정하세요.",
+        )
     tool_names: dict[str, str] = {}
     tools = []
     for item in skills:
-        # preferred_skill is only ever set on the no-planner path. Narrowing the
-        # tool list to a keyword guess would leave a wrong guess unrecoverable.
-        if (
-            preferred_skill
-            and item["name"] != preferred_skill
-            and item["name"] not in READ_ONLY_SKILLS
-        ):
-            continue
         api_name = SKILL_API_NAMES.get(item["name"], item["document_name"])
         tool_names[api_name] = item["name"]
         parameters = deepcopy(item["schema"])
@@ -2421,8 +2416,6 @@ def call_llm(
             },
         }
     )
-    if not tools:
-        raise SkillError(f"Preferred skill is not available: {preferred_skill}")
     context_instruction = ""
     if context:
         context_instruction = (
@@ -2652,47 +2645,3 @@ def call_llm_text(
         "All configured LLM models are rate-limited or cooling down. "
         f"Attempted: {attempted or 'none'}; cooldowns: {cooling}"
     )
-
-
-def fallback_plan(message: str) -> dict[str, Any]:
-    lowered = message.lower()
-    project_match = re.search(r"(?:project|프로젝트)\s*[:=]?\s*([a-zA-Z0-9_.-]+)", message)
-    service_match = re.search(r"(?:service|서비스)\s*[:=]?\s*([a-zA-Z0-9_.-]+)", message)
-    known_projects = project_list()["projects"]
-    project = project_match.group(1) if project_match else None
-    if project is None:
-        project = next((item["name"] for item in known_projects if item["name"].lower() in lowered), None)
-    service = service_match.group(1) if service_match else None
-    if project and service is None:
-        services = next((item["services"] for item in known_projects if item["name"] == project), [])
-        service = next((item for item in services if item.lower() in lowered), None)
-
-    port_match = re.search(r"\b(9\d{3})\b", message)
-    if ("포트" in message or "port" in lowered) and ("추천" in message or "suggest" in lowered):
-        return {"skill": "port.suggest", "arguments": {}, "explanation": "Find the next available port."}
-    if ("포트" in message or "port" in lowered) and port_match and project and service:
-        return {
-            "skill": "port.manage",
-            "arguments": {
-                "project": project,
-                "service": service,
-                "operation": "change_host",
-                "host_port": int(port_match.group(1)),
-            },
-            "explanation": "Change the published host port.",
-        }
-    if ("로그" in message or "log" in lowered) and project and service:
-        return {"skill": "service.logs", "arguments": {"project": project, "service": service, "lines": 40}, "explanation": "Read recent logs."}
-    for keyword, action in (("재시작", "restart"), ("restart", "restart"), ("중지", "stop"), ("stop", "stop"), ("시작", "start"), ("start", "start")):
-        if keyword in lowered and project and service:
-            return {"skill": "service.control", "arguments": {"project": project, "service": service, "action": action}, "explanation": f"{action.title()} the service."}
-    if ("상태" in message or "status" in lowered) and project:
-        arguments = {"project": project}
-        if service:
-            arguments["service"] = service
-        return {"skill": "service.status", "arguments": arguments, "explanation": "Inspect service status."}
-    if "qa" in lowered or "점검" in message or "검사" in message:
-        return {"skill": "qa.run", "arguments": {}, "explanation": "Run compact deterministic checks."}
-    if "프로젝트" in message or "project" in lowered:
-        return {"skill": "project.list", "arguments": {}, "explanation": "List projects and services."}
-    return {"skill": "help.search", "arguments": {"query": message}, "explanation": "Search deployment help."}

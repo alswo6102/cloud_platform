@@ -266,17 +266,78 @@ def _first_turn_context_survives():
 # --- Deterministic routing hands off instead of raising ----------------------
 
 
-@check("missing_project_does_not_raise_past_the_handlers")
-def _unknown_project_returns_none():
+@check("the_rule_based_parallel_path_stays_deleted")
+def _no_keyword_router_returns():
     write_project(
         "knownqa", "version: '3.8'\nservices:\n  web:\n    image: example/web\n"
     )
-    (PROJECTS / "brokenqa").mkdir(exist_ok=True)  # no compose: never in the list
-    os.environ["PLATFORM_NAMESPACE"] = "brokenqa"
-    try:
-        assert app.deterministic_read_request("상태 확인해줘") is None
-    finally:
-        os.environ.pop("PLATFORM_NAMESPACE", None)
+    # These were a second implementation of what the planner does. They were
+    # only ever reachable with no LLM configured, and that mode is gone.
+    gone = [
+        "preferred_skill_for",
+        "ambiguity_for",
+        "strict_arguments",
+        "explicit_arguments",
+        "deterministic_read_request",
+        "cli_proposal_for_input",
+        "handle_proposed_input",
+        "framework_context_help",
+        "project_problem_response",
+        "no_project_transition",
+        "render_read_only_result",
+        "confirmed_information",
+        "FRAMEWORK_ALIASES",
+        "HELP_MESSAGE",
+    ]
+    back = [name for name in gone if hasattr(app, name)]
+    assert not back, f"룰베이스 구현이 되살아남: {back}"
+    assert not hasattr(runtime, "fallback_plan"), "키워드 플래너가 되살아남"
+    source = (ROOT / "agent" / "app.py").read_text()
+    assert "LLM_API_KEY" not in source, "LLM 유무로 갈라지는 분기가 다시 생김"
+
+
+@check("session_carries_the_task_and_clears_it_after_execution")
+def _agent_owned_session():
+    session_id = "review-session-0002"
+    app.SESSIONS.pop(session_id, None)
+    context = {
+        "skill": "service.deploy",
+        "arguments": {"project": "demoa", "service": "frontend"},
+        "missing": [{"field": "repo_url"}],
+    }
+    app.remember_response(
+        session_id,
+        "demoa에 frontend 서비스 만들래",
+        {"message": "저장소 URL이 필요합니다.", "context": context, "requires_approval": False},
+    )
+    loaded, history = app.load_session(session_id, None)
+    assert loaded == context, loaded
+    assert history[-2]["role"] == "user" and history[-1]["role"] == "assistant", history
+    app.remember_execution(session_id, "service.deploy", None)
+    loaded, history = app.load_session(session_id, None)
+    assert loaded is None, loaded
+
+
+@check("entity_resolution_still_answers_from_live_data")
+def _entity_resolve():
+    write_project(
+        "demoa", "version: '3.8'\nservices:\n  web:\n    image: example/web\n"
+    )
+    assert runtime.entity_resolve("project", "demoa")["status"] == "exact"
+    close = runtime.entity_resolve("project", "demo-a")
+    assert close["status"] == "single" and close["match"] == "demoa", close
+    assert runtime.entity_resolve("project", "nothing-like-this")["status"] == "none"
+
+
+@check("every_preset_renders_a_dockerfile_on_port_3000")
+def _framework_templates():
+    from deployment_presets import FRAMEWORK_PRESETS, render_dockerfile
+
+    for framework in FRAMEWORK_PRESETS:
+        if framework == "existing":
+            continue
+        dockerfile = render_dockerfile(framework)
+        assert "EXPOSE 3000" in dockerfile, framework
 
 
 # --- The deploy form offers every preset the platform supports ---------------

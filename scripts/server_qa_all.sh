@@ -48,14 +48,6 @@ check_secrets() {
         ':!scripts/server_qa_all.sh'
 }
 
-check_router() {
-    docker run --rm \
-        -v "$ROOT_DIR:/workspace" \
-        -w /workspace \
-        cloud-platform-skill-agent:latest \
-        python scripts/server_qa_router_test.py
-}
-
 check_llm_fallback() {
     docker run --rm \
         -v "$ROOT_DIR:/workspace" \
@@ -176,7 +168,6 @@ printf '%s\n' '─────────────────────�
 run_check syntax "Python syntax" check_python
 run_check schemas "Skill schemas" check_schemas
 run_check secrets "Secret exclusion" check_secrets
-run_check router "Intent, clarification, and framework funnel" check_router
 run_check fallback "LLM rate-limit fallback" check_llm_fallback
 run_check regressions "Reviewed defects stay fixed" check_review_regressions
 run_check dashboard "Dashboard health" check_dashboard
