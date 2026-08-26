@@ -9,6 +9,9 @@ A_PROJECT="nsqa_a"
 B_PROJECT="nsqa_b"
 A_TOKEN="nsqa-token-a"
 B_TOKEN="nsqa-token-b"
+# Without this the control plane refuses every caller with a 500, which would
+# make the cross-project denial below pass for the wrong reason.
+ROOT_TOKEN="nsqa-root-token"
 TOKEN_JSON="{\"${A_TOKEN}\":\"${A_PROJECT}\",\"${B_TOKEN}\":\"${B_PROJECT}\"}"
 
 PASS=0
@@ -117,6 +120,7 @@ setup_fixture() {
         --network-alias platform-api \
         -e PROJECTS_ROOT=/srv/projects \
         -e "PLATFORM_NAMESPACE_TOKENS=${TOKEN_JSON}" \
+        -e "PLATFORM_ROOT_TOKEN=${ROOT_TOKEN}" \
         -v /var/run/docker.sock:/var/run/docker.sock \
         -v "$PROJECTS_ROOT:/srv/projects" \
         "$IMAGE" \
@@ -177,6 +181,47 @@ check_agent_cannot_control_other_project() {
     fi
 }
 
+check_agent_cannot_read_other_project_over_chat() {
+    # /execute has always been scoped. The conversation path is the one that
+    # used to answer questions about a project the caller does not own.
+    docker exec -i "${A_PROJECT}-agent-1" python - <<'PY'
+import os
+
+import requests
+
+response = requests.post(
+    "http://platform-api:5000/chat",
+    json={"message": "nsqa_b의 frontend 로그 40줄 보여줘"},
+    headers={"Authorization": "Bearer " + os.environ["PLATFORM_TOKEN"]},
+    timeout=60,
+)
+if response.status_code == 403:
+    raise SystemExit(0)
+raise SystemExit(
+    f"cross-project chat was not refused: {response.status_code} {response.text[:400]}"
+)
+PY
+}
+
+check_agent_can_read_own_project_over_chat() {
+    docker exec -i "${A_PROJECT}-agent-1" python - <<'PY'
+import os
+
+import requests
+
+response = requests.post(
+    "http://platform-api:5000/chat",
+    json={"message": "서비스 목록 보여줘"},
+    headers={"Authorization": "Bearer " + os.environ["PLATFORM_TOKEN"]},
+    timeout=60,
+)
+response.raise_for_status()
+body = response.json()
+names = [item["name"] for item in (body.get("result") or {}).get("projects", [])]
+assert names == ["nsqa_a"], names
+PY
+}
+
 check_internal_service_dns() {
     docker exec -i "${A_PROJECT}-agent-1" python - <<'PY'
 import requests
@@ -214,6 +259,10 @@ run_check ready "Project agent reaches platform-api and own services" wait_ready
 run_check scoped_list "Project CLI sees only its own namespace" check_agent_cli_uses_platform_api
 run_check own_control "Project CLI can control its own service through platform-api" check_agent_can_control_own_service
 run_check cross_denied "Project CLI cannot control another project" check_agent_cannot_control_other_project
+run_check chat_scope_own "Project chat sees only its own namespace" \
+    check_agent_can_read_own_project_over_chat
+run_check chat_scope_denied "Project chat cannot read another project" \
+    check_agent_cannot_read_other_project_over_chat
 run_check service_dns "Project services are reachable on their app network" check_internal_service_dns
 run_check api_hidden "Regular service cannot see platform-api" check_regular_service_cannot_see_platform_api
 run_check network_split "Project app networks are separated" check_project_network_separation

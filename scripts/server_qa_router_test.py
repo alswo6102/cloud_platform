@@ -14,9 +14,28 @@ PROJECTS = Path("/tmp/cloud-platform-router-projects")
 shutil.rmtree(PROJECTS, ignore_errors=True)
 PROJECTS.mkdir(parents=True)
 os.environ["PROJECTS_ROOT"] = str(PROJECTS)
+os.environ["PLATFORM_ROOT_TOKEN"] = "router-root-token"
+
+from fastapi import Request
 
 import app
 import runtime
+
+
+def root_request() -> Request:
+    """A request carrying the control-plane token.
+
+    chat() authenticates its caller, so every call here has to present a
+    credential the way the web layer does.
+    """
+    return Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/chat",
+            "headers": [(b"authorization", b"Bearer router-root-token")],
+        }
+    )
 
 (PROJECTS / "demoa").mkdir()
 (PROJECTS / "demoa" / "docker-compose.yml").write_text(
@@ -41,7 +60,7 @@ ambiguous = app.ambiguity_for("서비스 다시 해줘", None)
 assert ambiguous and len(ambiguous["choices"]) == 2, ambiguous
 print("OK ambiguous_request_clarification")
 
-guide = app.chat(app.ChatRequest(message="배포 절차 알려줘"))
+guide = app.chat(app.ChatRequest(message="배포 절차 알려줘"), root_request())
 assert guide["kind"] == "guide" and "프레임워크 프리셋" in guide["message"], guide
 print("OK local_deployment_guide")
 
@@ -100,7 +119,8 @@ project_chat = app.chat(
     app.ChatRequest(
         message="horse_race로 할래",
         context=transition["context"],
-    )
+    ),
+    root_request(),
 )
 assert project_chat["skill"] == "project.create", project_chat
 assert project_chat["arguments"] == {"project": "horse_race"}, project_chat
@@ -111,7 +131,8 @@ project_chat_with_session = app.chat(
         session_id="router-session-001",
         message="horse_race로 만들어줘",
         context=transition["context"],
-    )
+    ),
+    root_request(),
 )
 assert project_chat_with_session["arguments"] == {"project": "horse_race"}, project_chat_with_session
 assert project_chat_with_session["requires_approval"] is True, project_chat_with_session

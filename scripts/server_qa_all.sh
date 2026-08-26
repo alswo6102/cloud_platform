@@ -81,17 +81,36 @@ assert len(f["frameworks"])>=10, len(f["frameworks"])
 '
 }
 
+# The agent authenticates every caller, so the checks below have to present
+# the control-plane token the way the web layer does.
+root_token() {
+    docker exec cloud-platform-skill-agent printenv PLATFORM_ROOT_TOKEN 2>/dev/null
+}
+
 check_runtime_qa() {
-    docker exec cloud-platform-dashboard python -c '
+    local token
+    token="$(root_token)"
+    [[ -n "$token" ]] || { echo "PLATFORM_ROOT_TOKEN is not set on the agent"; return 1; }
+    docker exec -e QA_ROOT_TOKEN="$token" cloud-platform-dashboard python -c '
+import os
 import requests
 r=requests.post(
     "http://cloud-platform-skill-agent:8080/execute",
     json={"skill":"qa.run","arguments":{},"approved":False},
+    headers={"Authorization": "Bearer " + os.environ["QA_ROOT_TOKEN"]},
     timeout=20,
 )
 r.raise_for_status()
 assert r.json()["result"]["passed"], r.text
 '
+}
+
+check_review_regressions() {
+    docker run --rm \
+        -v "$ROOT_DIR:/workspace" \
+        -w /workspace \
+        cloud-platform-skill-agent:latest \
+        python scripts/server_review_regression_test.py
 }
 
 check_cli() {
@@ -159,6 +178,7 @@ run_check schemas "Skill schemas" check_schemas
 run_check secrets "Secret exclusion" check_secrets
 run_check router "Intent, clarification, and framework funnel" check_router
 run_check fallback "LLM rate-limit fallback" check_llm_fallback
+run_check regressions "Reviewed defects stay fixed" check_review_regressions
 run_check dashboard "Dashboard health" check_dashboard
 run_check agent "Agent, skill catalog, and presets" check_agent
 run_check runtime "Runtime deterministic QA" check_runtime_qa
