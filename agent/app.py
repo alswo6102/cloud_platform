@@ -4,6 +4,7 @@ import os
 import re
 import hmac
 import json
+import psutil
 import threading
 import time
 from copy import deepcopy
@@ -1992,15 +1993,13 @@ SOURCE_BUILD_MEMORY_MB = int(os.getenv("SOURCE_BUILD_MEMORY_MB", "2048"))
 
 
 def source_build_is_affordable() -> bool:
+    # Read the host's memory directly. server.health would answer this too, but
+    # it is root-plane only: a project agent asking gets a 403, which this would
+    # read as "capacity unknown" and never warn anyone.
     try:
-        health = execute_cli_skill("server.health", {}, dry_run=False)
+        return psutil.virtual_memory().total / 1024 / 1024 >= SOURCE_BUILD_MEMORY_MB
     except Exception:
-        # Unknown capacity is not a reason to warn; the CLI will still enforce.
-        return True
-    total = health.get("memory_total_mb")
-    try:
-        return float(total) >= SOURCE_BUILD_MEMORY_MB
-    except (TypeError, ValueError):
+        # Unknown capacity is not a reason to warn.
         return True
 
 
