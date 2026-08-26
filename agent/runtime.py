@@ -1861,6 +1861,10 @@ def service_deploy(
             backup.replace(compose_path(project))
         if destination.exists():
             shutil.rmtree(destination)
+        # A build that ran out of disk leaves its layers behind, so the next
+        # attempt starts with even less room than this one had. Reclaim before
+        # surfacing the failure, not only when the deploy succeeds.
+        trigger_safe_docker_cleanup("service.deploy failed")
         raise
 
 
