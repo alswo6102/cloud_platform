@@ -35,6 +35,10 @@ app = FastAPI(title="Cloud Platform Skill Agent", version="0.1.0")
 PROJECTS_ROOT = Path(os.getenv("PROJECTS_ROOT", "/srv/projects"))
 # Conversation memory is working state for one sitting, not a record to keep.
 SESSION_TTL_SECONDS = int(os.getenv("SESSION_TTL_SECONDS", str(60 * 60 * 3)))
+# A half-finished task expires long before the conversation does. Left to live
+# as long as the session, an abandoned deploy kept handing its repository URL
+# and service name to whatever the user asked next.
+ACTIVE_TASK_TTL_SECONDS = int(os.getenv("ACTIVE_TASK_TTL_SECONDS", str(15 * 60)))
 SESSION_HISTORY_LIMIT = 24
 SESSION_LOCK = threading.Lock()
 SESSION_STORE = Path(
@@ -1002,7 +1006,18 @@ def planner_arguments_for_llm(
     arguments: dict[str, Any] = {}
     context_arguments = (context or {}).get("arguments")
     if isinstance(context_arguments, dict) and (context or {}).get("skill") == skill:
-        arguments.update(context_arguments)
+        # Only carry the stored task forward while it is still the same task.
+        # An abandoned deploy used to leak its repository URL into the next
+        # one: the user named a new service and the old repo came along with
+        # it, ready to be approved. A different subject means a different task.
+        planner = planner_arguments if isinstance(planner_arguments, dict) else {}
+        same_task = all(
+            not (planner.get(field) and context_arguments.get(field))
+            or str(planner[field]) == str(context_arguments[field])
+            for field in ("service", "project")
+        )
+        if same_task:
+            arguments.update(context_arguments)
     if isinstance(planner_arguments, dict):
         for key, value in planner_arguments.items():
             if value is not None:
@@ -1547,6 +1562,10 @@ def load_session(
                 session["context"] = client_context
         session["updated_at"] = now
         context = session.get("context")
+        if context and now - float(session.get("context_at", 0)) > ACTIVE_TASK_TTL_SECONDS:
+            session["context"] = None
+            session.pop("context_at", None)
+            context = None
         history = list(session.get("history") or [])
     return context, history
 
@@ -1598,6 +1617,7 @@ def remember_response(
         # abandonment: looking up the service list while filling in a deploy
         # used to discard everything already collected. Keep the active task and
         # let the next turn continue it.
+        session["context_at"] = time.time()
         session["updated_at"] = time.time()
         persist_sessions_locked()
     response["session_id"] = session_id
@@ -1617,6 +1637,7 @@ def remember_execution(
             {"context": None, "history": [], "updated_at": time.time()},
         )
         session["context"] = resume
+        session["context_at"] = time.time()
         history = session.setdefault("history", [])
         history.append(
             {
