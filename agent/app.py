@@ -2711,16 +2711,27 @@ def chat(request: ChatRequest, http_request: Request):
                 session_history,
             )
         except Exception as exc:
-            # A planner timeout, a rate limit, or a malformed reply used to end
-            # the turn as an HTTP error, which also meant the turn never made it
-            # into the history. Degrade to keyword routing instead.
             planner_error = str(exc)
             plan = None
         else:
             planner_error = None
+        if plan is None and planner_error and os.getenv("LLM_API_KEY"):
+            # Keyword routing cannot answer what the planner was asked. It used
+            # to guess -- and because the web layer prefixes every message with
+            # "<project> 프로젝트에서:", the guess was almost always project.list,
+            # which reads like a confident answer to a question nobody asked.
+            # Say the request could not be handled instead of inventing a reply.
+            return respond({
+                "mode": "degraded",
+                "kind": "clarification",
+                "message": (
+                    "지금은 요청을 처리하지 못했습니다. 잠시 후 다시 말씀해 주세요.\n\n"
+                    f"(원인: {planner_error})"
+                ),
+                "requires_approval": False,
+            })
         if plan is None:
             plan = fallback_plan(request.message)
-            plan["planner_error"] = planner_error
         if plan.get("kind") == "answer":
             if preferred_skill in {
                 "project.create",
