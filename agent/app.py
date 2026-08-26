@@ -1973,6 +1973,56 @@ def naturalize_mutation_message(
     return {"message": fallback, "model": model_hint}
 
 
+def deploy_confirmations(
+    message: str,
+    skill: str,
+    arguments: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Choices the planner made for the user that the user should make.
+
+    This is not a second guess at what the user meant -- the planner's reading
+    stands. It only checks whether a value in a deploy plan was ever the user's
+    to begin with, and turns the ones that were not into questions.
+    """
+    if skill != "service.deploy":
+        return []
+    items: list[dict[str, Any]] = []
+    lowered = message.lower()
+
+    service = str(arguments.get("service") or "").strip()
+    if service and service.lower() not in lowered:
+        items.append({
+            "field": "service",
+            "label": "서비스 이름",
+            "question": f"서비스 이름을 `{service}`로 할까요? 다른 이름을 원하시면 알려주세요.",
+            "examples": [service],
+        })
+
+    framework = str(arguments.get("framework") or "").strip()
+    repo_url = str(arguments.get("repo_url") or "").strip()
+    if repo_url and framework and framework != "existing":
+        try:
+            repository = execute_cli_skill(
+                "repository.inspect",
+                {"repo_url": repo_url},
+                dry_run=False,
+            )
+        except Exception:
+            repository = {}
+        if repository.get("has_dockerfile"):
+            items.append({
+                "field": "framework",
+                "label": "빌드 방식",
+                "question": (
+                    "저장소에 이미 Dockerfile이 있습니다. 그대로 사용할까요"
+                    f"(`existing`), 아니면 `{framework}` 프리셋으로 새로 만들까요? "
+                    "프리셋을 고르면 저장소의 Dockerfile은 사용되지 않습니다."
+                ),
+                "examples": ["existing", framework],
+            })
+    return items
+
+
 def ui_hint_for_response(
     *,
     skill: str | None,
@@ -2934,6 +2984,15 @@ def chat(request: ChatRequest, http_request: Request):
                 ),
                 "requires_approval": False,
             })
+        if not preview.get("needs_input"):
+            # The planner is told to confirm a name it chose and to prefer a
+            # repository's own Dockerfile, and it does not reliably do either.
+            # Decide it here instead: a choice the user never made becomes a
+            # question rather than something waiting behind an approve button.
+            unconfirmed = deploy_confirmations(request.message, skill, arguments)
+            if unconfirmed:
+                preview = dict(preview)
+                preview["needs_input"] = unconfirmed
         if preview.get("needs_input"):
             details = preview.get("project_guidance")
             message = preview["message"]
