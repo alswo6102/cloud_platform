@@ -646,6 +646,29 @@ def _no_unanswered_calls_in_source():
         ), f"line {node.lineno}: 열린 도구 호출을 남긴 채 반환한다"
 
 
+# --- A project agent notices when the agent's code changed -------------------
+# The version stamped into each project's compose file is what tells the
+# platform to rebuild that project's agent. It was a hand-written list of five
+# files, and the refactor moved the planner, the permission registry and the
+# prompts out of them.
+
+
+@check("every_agent_source_changes_the_template_version")
+def _template_version_covers_the_whole_agent():
+    baseline = runtime.project_agent_template_version()
+    assert len(baseline) == 16, baseline
+    for relative in ("planner.py", "authz.py", "skill_registry.py", "prompts/planner.md"):
+        path = ROOT / "agent" / relative
+        original = path.read_bytes()
+        path.write_bytes(original + b"\n")
+        try:
+            changed = runtime.project_agent_template_version()
+        finally:
+            path.write_bytes(original)
+        assert changed != baseline, f"{relative} 변경이 버전에 반영되지 않음"
+    assert runtime.project_agent_template_version() == baseline
+
+
 # --- Permissions come from the skill documents ------------------------------
 
 

@@ -60,18 +60,24 @@ def project_agent_template_version() -> str:
     if explicit and os.getenv("PLATFORM_NAMESPACE", "").strip():
         return explicit
     root = Path(__file__).resolve().parent
+    # Every file that decides how a project agent behaves, found rather than
+    # listed. A list goes stale the moment the agent gains a module: the
+    # planner, the permission registry and the prompts all moved out of app.py,
+    # and a hand-written list would have kept reporting the same version while
+    # the code under it changed, leaving every project agent on old code.
+    sources = sorted(
+        path
+        for path in root.rglob("*.py")
+        if "__pycache__" not in path.parts
+    )
+    sources += sorted((root / "prompts").glob("*.md"))
+    presets = root / "deployment_presets.py"
+    if not presets.exists():
+        sources.append(root.parent / "deployment_presets.py")
+
     digest = hashlib.sha256()
-    for relative in (
-        "app.py",
-        "cli.py",
-        "cli_contracts.py",
-        "runtime.py",
-        "deployment_presets.py",
-    ):
-        path = root / relative
-        if not path.exists() and relative == "deployment_presets.py":
-            path = root.parent / relative
-        digest.update(relative.encode())
+    for path in sources:
+        digest.update(str(path.relative_to(root) if root in path.parents else path.name).encode())
         try:
             digest.update(path.read_bytes())
         except OSError:
