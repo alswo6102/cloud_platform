@@ -668,6 +668,44 @@ def _existing_uses_the_dockerfiles_port():
     assert runtime.dockerfile_exposed_ports(root / "Missing") == []
 
 
+@check("a_silent_port_guess_becomes_a_question")
+def _existing_without_expose_is_asked():
+    base = {
+        "project": "qa",
+        "service": "hello",
+        "repo_url": "https://github.com/crccheck/docker-hello-world",
+        "framework": "existing",
+        "is_web": True,
+    }
+    original = app.execute_cli_skill
+    try:
+        app.execute_cli_skill = lambda *a, **k: {
+            "has_dockerfile": True, "dockerfile_ports": []
+        }
+        silent = app.deploy_confirmations("hello 배포해줘", "service.deploy", base)
+        assert {item["field"] for item in silent} == {"container_port"}, silent
+
+        # Answering the port does not name the service, so the service question
+        # still stands -- what must not come back is the port question.
+        answered = app.deploy_confirmations(
+            "8000번이야", "service.deploy", base, frozenset({"container_port"})
+        )
+        assert "container_port" not in {item["field"] for item in answered}, answered
+
+        given = app.deploy_confirmations(
+            "hello 배포해줘", "service.deploy", {**base, "container_port": 8000}
+        )
+        assert given == [], given
+
+        app.execute_cli_skill = lambda *a, **k: {
+            "has_dockerfile": True, "dockerfile_ports": [80]
+        }
+        declared = app.deploy_confirmations("hello 배포해줘", "service.deploy", base)
+        assert declared == [], declared
+    finally:
+        app.execute_cli_skill = original
+
+
 # --- A question the user answered is not asked again ------------------------
 # Answering "static" does not repeat the service name, and answering the
 # service name does not repeat the framework, so judging each turn on its own

@@ -726,6 +726,40 @@ def deploy_confirmations(
     # for a failure that was certain from the start. Say so before the wait.
     # Both checks below are about the same decision, so they become one
     # question. Two entries for the same field drew the field twice in the form.
+    repository: dict[str, Any] = {}
+    if repo_url:
+        try:
+            repository = execute_cli_skill(
+                "repository.inspect",
+                {"repo_url": repo_url},
+                dry_run=False,
+            )
+        except Exception:
+            repository = {}
+
+    # `existing` runs the repository's own image, and only that image knows
+    # which port it listens on. When its Dockerfile declares one the deploy
+    # reads it; when it does not -- commented out, or taken from an environment
+    # variable -- the default is a guess, and a wrong guess publishes a URL
+    # that answers nothing while docker calls the container healthy.
+    if (
+        "container_port" not in asked
+        and framework == "existing"
+        and repository.get("has_dockerfile")
+        and not repository.get("dockerfile_ports")
+        and arguments.get("container_port") is None
+    ):
+        items.append({
+            "field": "container_port",
+            "label": "컨테이너 포트",
+            "question": (
+                "저장소의 Dockerfile이 포트를 선언하지 않습니다. 이미지가 실제로 "
+                "듣는 포트를 알려주세요. 틀리면 컨테이너는 떠 있는데 주소는 "
+                "응답하지 않습니다."
+            ),
+            "examples": ["3000", "8000", "80"],
+        })
+
     reasons: list[str] = []
     options: list[str] = []
     ask_framework = "framework" not in asked
@@ -740,14 +774,6 @@ def deploy_confirmations(
         options.append("static")
 
     if ask_framework and repo_url and framework and framework != "existing":
-        try:
-            repository = execute_cli_skill(
-                "repository.inspect",
-                {"repo_url": repo_url},
-                dry_run=False,
-            )
-        except Exception:
-            repository = {}
         if repository.get("has_dockerfile"):
             reasons.append(
                 "저장소에 이미 Dockerfile이 있습니다. 그대로 사용하려면 "
