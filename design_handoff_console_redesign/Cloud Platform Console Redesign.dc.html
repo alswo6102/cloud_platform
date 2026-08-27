@@ -1,0 +1,1124 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet data-dc-atomics><meta name="design_doc_mode" content="canvas">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.css">
+<style>
+body{margin:0;background:#eceef0;font-family:Pretendard,"Noto Sans KR",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;-webkit-font-smoothing:antialiased}
+.dv-turn{padding:40px 44px 32px;border-bottom:1px solid rgba(0,0,0,.08);scroll-margin-top:16px}
+.dv-thd{display:flex;align-items:baseline;gap:10px;margin:0 0 20px}
+.dv-tid{font:600 10px ui-monospace,Menlo,monospace;padding:3px 7px;background:#12181f;color:#fff;border-radius:4px;text-decoration:none}
+.dv-tname{font:600 13px/1.2 Pretendard,system-ui,sans-serif;color:#12181f}
+.dv-opts{display:flex;flex-wrap:wrap;gap:32px;align-items:flex-start}
+.dv-opt{flex:none;display:flex;flex-direction:column;gap:9px;scroll-margin-top:16px}
+.dv-oid{font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:rgba(0,0,0,.08);color:#12181f;border-radius:5px;text-decoration:none}
+.dv-olabel{display:block;font:400 11.5px/1.5 Pretendard,system-ui,sans-serif;color:rgba(0,0,0,.55);max-width:640px}
+.dv-olabel .dv-oid{display:inline-block;margin-right:7px}
+.dv-olabel b{font-weight:600;color:rgba(0,0,0,.78)}
+.dv-card{max-width:100%;background:#fff;border:1px solid rgba(0,0,0,.1);border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,.06);overflow:hidden}
+.dv-opt:target .dv-oid{background:#2563eb;color:#fff}
+.dv-next{margin:22px 0 0;font:12px/1.6 Pretendard,system-ui,sans-serif;color:rgba(0,0,0,.5)}
+a{color:#2563eb}a:hover{color:#1d4ed8}
+@keyframes cur{0%,49%{opacity:1}50%,100%{opacity:0}}
+@keyframes spin{to{transform:rotate(360deg)}}
+</style></helmet>
+
+<section class="dv-turn" id="t2">
+<div class="dv-thd"><a class="dv-tid" href="#t2">2</a><span class="dv-tname">재디자인 — 위계 재정립 + 대화형 AI 패널</span></div>
+<div class="dv-opts">
+
+<div class="dv-opt" id="2a">
+<div class="dv-olabel"><a class="dv-oid" href="#2a">2a</a>토큰 세트 — 타이포 스케일, 색 역할, 간격, 상태 표현, 버튼 위계. 파랑은 "주 동작 1개"에만 남기고 나머지는 중성색으로 내렸다.</div>
+<div class="dv-card" style="width:980px;padding:34px 36px;background:#fdfdfd">
+
+  <div style="font:600 11px/1 ui-monospace,Menlo,monospace;letter-spacing:.08em;color:#8a929c;text-transform:uppercase">Design tokens</div>
+  <div style="font:600 25px/1.25 Pretendard,sans-serif;color:#0f1419;margin-top:8px;letter-spacing:-.01em">차분하고 정밀한 인프라 콘솔</div>
+  <div style="height:1px;background:#e4e7ea;margin:26px 0"></div>
+
+  <div style="display:grid;grid-template-columns:132px 1fr;gap:12px 28px;align-items:baseline">
+    <div style="font:600 11px/1.4 ui-monospace,monospace;color:#8a929c;padding-top:4px">TYPE</div>
+    <div style="display:flex;flex-direction:column;gap:11px">
+      <div style="display:flex;align-items:baseline;gap:16px"><span style="font:600 32px/1.1 Pretendard,sans-serif;color:#0f1419;letter-spacing:-.02em">프로젝트 이름</span><span style="font:11px ui-monospace,monospace;color:#949daa">display / 32 · 600 · -2%</span></div>
+      <div style="display:flex;align-items:baseline;gap:16px"><span style="font:600 21px/1.2 Pretendard,sans-serif;color:#0f1419;letter-spacing:-.01em">섹션 제목</span><span style="font:11px ui-monospace,monospace;color:#949daa">title / 21 · 600</span></div>
+      <div style="display:flex;align-items:baseline;gap:16px"><span style="font:600 15px/1.35 Pretendard,sans-serif;color:#1c242d">행 제목 · 서비스명</span><span style="font:11px ui-monospace,monospace;color:#949daa">strong / 15 · 600</span></div>
+      <div style="display:flex;align-items:baseline;gap:16px"><span style="font:400 14px/1.55 Pretendard,sans-serif;color:#33404d">본문 · 대화 메시지</span><span style="font:11px ui-monospace,monospace;color:#949daa">body / 14 · 400 · 1.55</span></div>
+      <div style="display:flex;align-items:baseline;gap:16px"><span style="font:500 12.5px/1.4 Pretendard,sans-serif;color:#6b7785">보조 · 라벨 · 메타</span><span style="font:11px ui-monospace,monospace;color:#949daa">meta / 12.5 · 500</span></div>
+      <div style="display:flex;align-items:baseline;gap:16px"><span style="font:600 10.5px/1 ui-monospace,monospace;letter-spacing:.08em;color:#8a929c;text-transform:uppercase">EYEBROW / 열 머리</span><span style="font:11px ui-monospace,monospace;color:#949daa">micro / 10.5 · mono · +8%</span></div>
+      <div style="display:flex;align-items:baseline;gap:16px"><span style="font:500 13px/1 ui-monospace,monospace;color:#1c242d;font-variant-numeric:tabular-nums">9000→3000 · 9.3MB · 59.1%</span><span style="font:11px ui-monospace,monospace;color:#949daa">숫자·포트·URL은 항상 mono + tabular</span></div>
+    </div>
+  </div>
+
+  <div style="height:1px;background:#e4e7ea;margin:26px 0"></div>
+
+  <div style="display:grid;grid-template-columns:132px 1fr;gap:28px">
+    <div style="font:600 11px/1.4 ui-monospace,monospace;color:#8a929c;padding-top:4px">COLOR<br><span style="font-weight:400;color:#b0b7c0">역할 기반</span></div>
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:14px">
+      <div><div style="height:46px;border-radius:6px;background:#0f1419;border:1px solid rgba(0,0,0,.08)"></div><div style="font:600 11.5px/1.5 Pretendard,sans-serif;color:#1c242d;margin-top:7px">ink</div><div style="font:10.5px ui-monospace,monospace;color:#949daa">#0F1419 · 제목</div></div>
+      <div><div style="height:46px;border-radius:6px;background:#33404d"></div><div style="font:600 11.5px/1.5 Pretendard,sans-serif;color:#1c242d;margin-top:7px">text</div><div style="font:10.5px ui-monospace,monospace;color:#949daa">#33404D · 본문</div></div>
+      <div><div style="height:46px;border-radius:6px;background:#6b7785"></div><div style="font:600 11.5px/1.5 Pretendard,sans-serif;color:#1c242d;margin-top:7px">muted</div><div style="font:10.5px ui-monospace,monospace;color:#949daa">#6B7785 · 보조</div></div>
+      <div><div style="height:46px;border-radius:6px;background:#e2e6ea;border:1px solid #d3d8de"></div><div style="font:600 11.5px/1.5 Pretendard,sans-serif;color:#1c242d;margin-top:7px">line</div><div style="font:10.5px ui-monospace,monospace;color:#949daa">#E2E6EA</div></div>
+      <div><div style="height:46px;border-radius:6px;background:#f6f7f8;border:1px solid #e2e6ea"></div><div style="font:600 11.5px/1.5 Pretendard,sans-serif;color:#1c242d;margin-top:7px">bg</div><div style="font:10.5px ui-monospace,monospace;color:#949daa">#F6F7F8</div></div>
+      <div><div style="height:46px;border-radius:6px;background:#2563eb"></div><div style="font:600 11.5px/1.5 Pretendard,sans-serif;color:#1c242d;margin-top:7px">accent</div><div style="font:10.5px ui-monospace,monospace;color:#949daa">#2563EB · 주 동작 1개</div></div>
+      <div><div style="height:46px;border-radius:6px;background:#ecfdf3;border:1px solid #b7e4c7"></div><div style="font:600 11.5px/1.5 Pretendard,sans-serif;color:#1c242d;margin-top:7px">ok</div><div style="font:10.5px ui-monospace,monospace;color:#949daa">#067647 on #ECFDF3</div></div>
+      <div><div style="height:46px;border-radius:6px;background:#fffbeb;border:1px solid #f3dfa2"></div><div style="font:600 11.5px/1.5 Pretendard,sans-serif;color:#1c242d;margin-top:7px">warn</div><div style="font:10.5px ui-monospace,monospace;color:#949daa">#B45309 on #FFFBEB</div></div>
+      <div><div style="height:46px;border-radius:6px;background:#fef3f2;border:1px solid #f3c4c0"></div><div style="font:600 11.5px/1.5 Pretendard,sans-serif;color:#1c242d;margin-top:7px">danger</div><div style="font:10.5px ui-monospace,monospace;color:#949daa">#B42318 on #FEF3F2</div></div>
+      <div><div style="height:46px;border-radius:6px;background:#f4f2fb;border:1px solid #ddd7f0"></div><div style="font:600 11.5px/1.5 Pretendard,sans-serif;color:#1c242d;margin-top:7px">agent</div><div style="font:10.5px ui-monospace,monospace;color:#949daa">#5B4BB8 · AI 범위 표시만</div></div>
+    </div>
+  </div>
+
+  <div style="height:1px;background:#e4e7ea;margin:26px 0"></div>
+
+  <div style="display:grid;grid-template-columns:132px 1fr;gap:28px">
+    <div style="font:600 11px/1.4 ui-monospace,monospace;color:#8a929c;padding-top:4px">SPACE<br><span style="font-weight:400;color:#b0b7c0">4px 기반</span></div>
+    <div style="display:flex;align-items:flex-end;gap:18px">
+      <div style="text-align:center"><div style="width:4px;height:4px;background:#2563eb;margin:0 auto"></div><div style="font:10.5px ui-monospace,monospace;color:#949daa;margin-top:8px">4</div></div>
+      <div style="text-align:center"><div style="width:8px;height:8px;background:#2563eb;margin:0 auto"></div><div style="font:10.5px ui-monospace,monospace;color:#949daa;margin-top:8px">8</div></div>
+      <div style="text-align:center"><div style="width:12px;height:12px;background:#2563eb;margin:0 auto"></div><div style="font:10.5px ui-monospace,monospace;color:#949daa;margin-top:8px">12</div></div>
+      <div style="text-align:center"><div style="width:16px;height:16px;background:#2563eb;margin:0 auto"></div><div style="font:10.5px ui-monospace,monospace;color:#949daa;margin-top:8px">16</div></div>
+      <div style="text-align:center"><div style="width:24px;height:24px;background:#2563eb;margin:0 auto"></div><div style="font:10.5px ui-monospace,monospace;color:#949daa;margin-top:8px">24</div></div>
+      <div style="text-align:center"><div style="width:32px;height:32px;background:#2563eb;margin:0 auto"></div><div style="font:10.5px ui-monospace,monospace;color:#949daa;margin-top:8px">32</div></div>
+      <div style="text-align:center"><div style="width:48px;height:48px;background:#2563eb;margin:0 auto"></div><div style="font:10.5px ui-monospace,monospace;color:#949daa;margin-top:8px">48</div></div>
+      <div style="margin-left:14px;font:12.5px/1.6 Pretendard,sans-serif;color:#6b7785;max-width:340px">라운드는 <b style="color:#1c242d">4 / 6 / 8</b> 세 값만. 12px 이상 큰 라운드는 쓰지 않는다. 그림자는 <b style="color:#1c242d">0 1px 2px rgba(15,20,25,.05)</b> 하나.</div>
+    </div>
+  </div>
+
+  <div style="height:1px;background:#e4e7ea;margin:26px 0"></div>
+
+  <div style="display:grid;grid-template-columns:132px 1fr;gap:28px">
+    <div style="font:600 11px/1.4 ui-monospace,monospace;color:#8a929c;padding-top:4px">BUTTON<br><span style="font-weight:400;color:#b0b7c0">위험도 = 무게</span></div>
+    <div>
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <button style="height:32px;padding:0 13px;border:1px solid #2563eb;border-radius:6px;background:#2563eb;color:#fff;font:600 12.5px Pretendard,sans-serif;cursor:pointer">새 서비스 배포</button>
+        <button style="height:32px;padding:0 13px;border:1px solid #cdd4dc;border-radius:6px;background:#fff;color:#1c242d;font:600 12.5px Pretendard,sans-serif;cursor:pointer">재시작</button>
+        <button style="height:32px;padding:0 11px;border:1px solid transparent;border-radius:6px;background:transparent;color:#4b5565;font:600 12.5px Pretendard,sans-serif;cursor:pointer">로그</button>
+        <button style="height:32px;padding:0 13px;border:1px solid #e6c9c5;border-radius:6px;background:#fff;color:#b42318;font:600 12.5px Pretendard,sans-serif;cursor:pointer">재배포</button>
+        <button style="height:32px;width:32px;padding:0;border:1px solid #cdd4dc;border-radius:6px;background:#fff;color:#6b7785;font:600 13px Pretendard,sans-serif;cursor:pointer">···</button>
+        <button style="height:32px;padding:0 13px;border:1px solid #e2e6ea;border-radius:6px;background:#f1f3f5;color:#a3aab4;font:600 12.5px Pretendard,sans-serif" disabled="disabled">시작</button>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:10px;margin-top:10px;font:10.5px/1.4 ui-monospace,monospace;color:#949daa">
+        <div>primary<br>화면당 1개</div><div>secondary<br>가역적</div><div>quiet<br>안전·조회</div><div>danger<br>파괴적·확인 필수</div><div>overflow<br>나머지 전부</div><div>disabled<br>상태상 불가</div>
+      </div>
+      <div style="margin-top:16px;padding:12px 14px;border:1px solid #e2e6ea;border-left:2px solid #2563eb;border-radius:0 6px 6px 0;background:#fafbfc;font:12.5px/1.6 Pretendard,sans-serif;color:#4b5565">
+        로그(안전) &lt; 재시작 &lt; 중지 &lt; 재배포(파괴적) — 시각적 무게가 이 순서를 따른다. <b style="color:#1c242d">실행 중인 서비스에 "시작"은 렌더하지 않고 disabled로도 두지 않는다.</b> 상태상 가능한 동작만 존재한다.
+      </div>
+    </div>
+  </div>
+
+  <div style="height:1px;background:#e4e7ea;margin:26px 0"></div>
+
+  <div style="display:grid;grid-template-columns:132px 1fr;gap:28px">
+    <div style="font:600 11px/1.4 ui-monospace,monospace;color:#8a929c;padding-top:4px">STATUS<br><span style="font-weight:400;color:#b0b7c0">색 단독 금지</span></div>
+    <div>
+      <div style="display:flex;flex-wrap:wrap;gap:9px;align-items:center">
+        <span style="display:inline-flex;align-items:center;gap:6px;height:23px;padding:0 9px 0 8px;border-radius:4px;background:#ecfdf3;border:1px solid #b7e4c7;font:600 11.5px Pretendard,sans-serif;color:#067647"><span style="width:6px;height:6px;border-radius:50%;background:#067647"></span>실행 중</span>
+        <span style="display:inline-flex;align-items:center;gap:6px;height:23px;padding:0 9px 0 8px;border-radius:4px;background:#fffbeb;border:1px solid #f3dfa2;font:600 11.5px Pretendard,sans-serif;color:#b45309"><span style="width:6px;height:6px;border-radius:1px;background:#b45309;transform:rotate(45deg)"></span>재시작 반복</span>
+        <span style="display:inline-flex;align-items:center;gap:6px;height:23px;padding:0 9px 0 8px;border-radius:4px;background:#fef3f2;border:1px solid #f3c4c0;font:600 11.5px Pretendard,sans-serif;color:#b42318"><span style="width:7px;height:2px;background:#b42318"></span>중지됨</span>
+        <span style="display:inline-flex;align-items:center;gap:6px;height:23px;padding:0 9px 0 8px;border-radius:4px;background:#f6f7f8;border:1px solid #e2e6ea;font:600 11.5px Pretendard,sans-serif;color:#6b7785"><span style="width:6px;height:6px;border-radius:50%;border:1.5px solid #949daa"></span>헬스체크 없음</span>
+        <span style="display:inline-flex;align-items:center;gap:6px;height:23px;padding:0 9px;border-radius:4px;background:#f4f2fb;border:1px solid #ddd7f0;font:600 11.5px Pretendard,sans-serif;color:#5b4bb8">Admin 전용</span>
+      </div>
+      <div style="margin-top:14px;display:grid;grid-template-columns:1fr 1fr;gap:12px;font:12.5px/1.6 Pretendard,sans-serif;color:#4b5565">
+        <div style="padding:11px 13px;border:1px solid #e2e6ea;border-radius:6px;background:#fafbfc">배지는 <b style="color:#1c242d">컨테이너 상태 하나만</b> 담는다. 헬스는 상태가 정상 범위를 벗어날 때만 나타난다. 모든 행이 같은 형식을 쓴다.</div>
+        <div style="padding:11px 13px;border:1px solid #e2e6ea;border-radius:6px;background:#fafbfc">값이 없으면 <b style="color:#1c242d">칸을 비운다</b>. "내부 통신" 같은 텍스트로 채우지 않는다 — 공개 URL 없음은 그 자체로 정보다.</div>
+      </div>
+    </div>
+  </div>
+
+</div>
+</div>
+
+<div class="dv-opt" id="2b">
+<div class="dv-olabel"><a class="dv-oid" href="#2b">2b</a>홈 — 프로젝트 인덱스. 사이드바를 없애고 가용량은 한 줄로 압축했다. 디스크 95.8%는 게이지가 아니라 <b>행동할 수 있는 경고</b>로 올라온다. 문제 있는 프로젝트가 먼저 눈에 걸린다.</div>
+<div class="dv-card" style="width:1320px;background:#f6f7f8">
+  <div style="display:flex;align-items:center;justify-content:space-between;height:52px;padding:0 26px;background:#fff;border-bottom:1px solid #e2e6ea">
+    <div style="display:flex;align-items:center;gap:11px">
+      <div style="width:22px;height:22px;border-radius:5px;background:#0f1419;display:grid;place-items:center"><div style="width:8px;height:8px;border:1.6px solid #fff;border-radius:1px;transform:rotate(45deg)"></div></div>
+      <span style="font:600 14px Pretendard,sans-serif;color:#0f1419;letter-spacing:-.01em">Cloud Platform</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:16px">
+      <span style="font:500 12.5px Pretendard,sans-serif;color:#6b7785">관리자 콘솔</span>
+      <div style="width:1px;height:16px;background:#e2e6ea"></div>
+      <div style="display:flex;align-items:center;gap:7px"><span style="font:600 12.5px Pretendard,sans-serif;color:#1c242d">Minjae</span><span style="display:inline-flex;align-items:center;height:19px;padding:0 6px;border-radius:4px;background:#f4f2fb;border:1px solid #ddd7f0;font:600 10.5px ui-monospace,monospace;color:#5b4bb8">ADMIN</span></div>
+      <span style="font:500 12.5px Pretendard,sans-serif;color:#6b7785">로그아웃</span>
+    </div>
+  </div>
+
+  <div style="padding:28px 26px 34px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+      <div style="display:flex;align-items:center;gap:14px">
+        <h1 style="margin:0;font:600 24px/1.2 Pretendard,sans-serif;color:#0f1419;letter-spacing:-.015em">프로젝트</h1>
+        <div style="display:inline-flex;border:1px solid #cdd4dc;border-radius:6px;overflow:hidden;background:#fff">
+          <span style="height:30px;padding:0 12px;display:inline-flex;align-items:center;gap:6px;background:#1c242d;color:#fff;font:600 12.5px Pretendard,sans-serif">전체 프로젝트<span style="font:11.5px ui-monospace,monospace;opacity:.7">9</span></span>
+          <span style="height:30px;padding:0 12px;display:inline-flex;align-items:center;gap:6px;border-left:1px solid #cdd4dc;font:600 12.5px Pretendard,sans-serif;color:#6b7785">내 프로젝트<span style="font:11.5px ui-monospace,monospace;color:#a3aab4">4</span></span>
+        </div>
+      </div>
+      <button style="height:34px;padding:0 14px;border:1px solid #2563eb;border-radius:6px;background:#2563eb;color:#fff;font:600 13px Pretendard,sans-serif;cursor:pointer">새 프로젝트</button>
+    </div>
+
+    <div style="display:flex;align-items:center;gap:22px;padding:13px 18px;background:#fff;border:1px solid #e2e6ea;border-radius:8px 8px 0 0;border-bottom:none">
+      <span style="font:600 10.5px ui-monospace,monospace;letter-spacing:.08em;color:#8a929c">서버</span>
+      <div style="display:flex;align-items:center;gap:9px"><span style="font:500 12.5px Pretendard,sans-serif;color:#6b7785">컨테이너</span><span style="font:600 13px ui-monospace,monospace;color:#1c242d;font-variant-numeric:tabular-nums">8/9</span></div>
+      <div style="display:flex;align-items:center;gap:9px"><span style="font:500 12.5px Pretendard,sans-serif;color:#6b7785">메모리</span><div style="width:88px;height:5px;border-radius:3px;background:#e8ebee;overflow:hidden"><div style="width:59%;height:5px;background:#6b7785"></div></div><span style="font:600 12.5px ui-monospace,monospace;color:#1c242d;font-variant-numeric:tabular-nums">59.1%</span></div>
+      <div style="display:flex;align-items:center;gap:9px"><span style="font:500 12.5px Pretendard,sans-serif;color:#6b7785">디스크</span><div style="width:88px;height:5px;border-radius:3px;background:#e8ebee;overflow:hidden"><div style="width:96%;height:5px;background:#b42318"></div></div><span style="font:600 12.5px ui-monospace,monospace;color:#b42318;font-variant-numeric:tabular-nums">95.8%</span></div>
+      <div style="margin-left:auto;display:flex;align-items:center;gap:9px"><span style="font:500 12.5px Pretendard,sans-serif;color:#6b7785">가용 포트</span><span style="font:600 12.5px ui-monospace,monospace;color:#1c242d">9002–9100</span></div>
+    </div>
+    <div style="display:flex;align-items:center;gap:12px;padding:12px 18px;background:#fef3f2;border:1px solid #f3c4c0;border-radius:0;font:13px/1.5 Pretendard,sans-serif;color:#7f1d1a">
+      <span style="width:15px;height:15px;flex:none;border-radius:50%;background:#b42318;color:#fff;font:700 10px/15px Pretendard,sans-serif;text-align:center">!</span>
+      <span><b style="font-weight:600">디스크 여유 394.8MB.</b> 새 서비스 빌드가 실패할 수 있다. 스왑 534.6MB 사용 중.</span>
+      <button style="margin-left:auto;height:28px;padding:0 11px;border:1px solid #e6c9c5;border-radius:6px;background:#fff;color:#b42318;font:600 12px Pretendard,sans-serif;cursor:pointer">정리 대상 보기</button>
+    </div>
+
+    <div style="background:#fff;border:1px solid #e2e6ea;border-top:none;border-radius:0 0 8px 8px;overflow:hidden">
+      <div style="display:grid;grid-template-columns:1fr 96px 168px 150px 82px;gap:16px;align-items:center;padding:9px 18px;background:#fafbfc;border-bottom:1px solid #e2e6ea;font:600 10.5px ui-monospace,monospace;letter-spacing:.07em;color:#8a929c">
+        <div>프로젝트</div><div>실행</div><div>메모리</div><div>스택</div><div></div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 96px 168px 150px 82px;gap:16px;align-items:center;padding:15px 18px 15px 16px;border-bottom:1px solid #eef0f2;border-left:2px solid #b42318;background:#fffdfd">
+        <div>
+          <div style="display:flex;align-items:center;gap:9px"><span style="font:600 15px Pretendard,sans-serif;color:#0f1419">metrics</span><span style="display:inline-flex;align-items:center;gap:5px;height:21px;padding:0 8px 0 7px;border-radius:4px;background:#fef3f2;border:1px solid #f3c4c0;font:600 11px Pretendard,sans-serif;color:#b42318"><span style="width:7px;height:2px;background:#b42318"></span>주의 1</span></div>
+          <div style="font:12.5px/1.4 Pretendard,sans-serif;color:#b42318;margin-top:4px">collector 재시작 13회 — 로그 확인 필요</div>
+        </div>
+        <div style="font:600 13px ui-monospace,monospace;color:#1c242d;font-variant-numeric:tabular-nums">1/2</div>
+        <div style="display:flex;align-items:center;gap:8px"><div style="width:56px;height:4px;border-radius:2px;background:#e8ebee;overflow:hidden"><div style="width:31%;height:4px;background:#6b7785"></div></div><span style="font:12.5px ui-monospace,monospace;color:#4b5565;font-variant-numeric:tabular-nums">298MB</span></div>
+        <div style="font:12.5px/1.4 Pretendard,sans-serif;color:#6b7785">FastAPI · Vite</div>
+        <div style="text-align:right"><button style="height:30px;padding:0 12px;border:1px solid #cdd4dc;border-radius:6px;background:#fff;color:#1c242d;font:600 12.5px Pretendard,sans-serif;cursor:pointer">열기</button></div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 96px 168px 150px 82px;gap:16px;align-items:center;padding:15px 18px 15px 16px;border-bottom:1px solid #eef0f2;border-left:2px solid #f3dfa2">
+        <div>
+          <div style="display:flex;align-items:center;gap:9px"><span style="font:600 15px Pretendard,sans-serif;color:#0f1419">legacy_blog</span><span style="display:inline-flex;align-items:center;gap:5px;height:21px;padding:0 8px 0 7px;border-radius:4px;background:#fffbeb;border:1px solid #f3dfa2;font:600 11px Pretendard,sans-serif;color:#b45309"><span style="width:6px;height:6px;border-radius:1px;background:#b45309;transform:rotate(45deg)"></span>미완성</span></div>
+          <div style="font:12.5px/1.4 Pretendard,sans-serif;color:#b45309;margin-top:4px">compose 파일 없음 — 서비스 배포로 복구 가능</div>
+        </div>
+        <div style="font:600 13px ui-monospace,monospace;color:#949daa;font-variant-numeric:tabular-nums">0/0</div>
+        <div style="font:12.5px ui-monospace,monospace;color:#949daa">—</div>
+        <div style="font:12.5px/1.4 Pretendard,sans-serif;color:#949daa">확인 전</div>
+        <div style="text-align:right"><button style="height:30px;padding:0 12px;border:1px solid #cdd4dc;border-radius:6px;background:#fff;color:#1c242d;font:600 12.5px Pretendard,sans-serif;cursor:pointer">열기</button></div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 96px 168px 150px 82px;gap:16px;align-items:center;padding:15px 18px 15px 16px;border-bottom:1px solid #eef0f2;border-left:2px solid transparent">
+        <div>
+          <div style="display:flex;align-items:center;gap:9px"><span style="font:600 15px Pretendard,sans-serif;color:#0f1419">demoa</span><a href="#2b" style="font:500 12.5px ui-monospace,monospace;color:#2563eb;text-decoration:none">demo-a ↗</a></div>
+          <div style="font:12.5px/1.4 Pretendard,sans-serif;color:#6b7785;margin-top:4px">demo-a · demo-b</div>
+        </div>
+        <div style="font:600 13px ui-monospace,monospace;color:#1c242d;font-variant-numeric:tabular-nums">2/2</div>
+        <div style="display:flex;align-items:center;gap:8px"><div style="width:56px;height:4px;border-radius:2px;background:#e8ebee;overflow:hidden"><div style="width:2%;height:4px;background:#6b7785"></div></div><span style="font:12.5px ui-monospace,monospace;color:#4b5565;font-variant-numeric:tabular-nums">13.1MB</span></div>
+        <div style="font:12.5px/1.4 Pretendard,sans-serif;color:#6b7785">Express · Django</div>
+        <div style="text-align:right"><button style="height:30px;padding:0 12px;border:1px solid #cdd4dc;border-radius:6px;background:#fff;color:#1c242d;font:600 12.5px Pretendard,sans-serif;cursor:pointer">열기</button></div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 96px 168px 150px 82px;gap:16px;align-items:center;padding:15px 18px 15px 16px;border-left:2px solid transparent">
+        <div>
+          <div style="display:flex;align-items:center;gap:9px"><span style="font:600 15px Pretendard,sans-serif;color:#0f1419">horse_race</span><a href="#2b" style="font:500 12.5px ui-monospace,monospace;color:#2563eb;text-decoration:none">horse_front ↗</a></div>
+          <div style="font:12.5px/1.4 Pretendard,sans-serif;color:#6b7785;margin-top:4px">horse_front</div>
+        </div>
+        <div style="font:600 13px ui-monospace,monospace;color:#1c242d;font-variant-numeric:tabular-nums">1/1</div>
+        <div style="display:flex;align-items:center;gap:8px"><div style="width:56px;height:4px;border-radius:2px;background:#e8ebee;overflow:hidden"><div style="width:1%;height:4px;background:#6b7785"></div></div><span style="font:12.5px ui-monospace,monospace;color:#4b5565;font-variant-numeric:tabular-nums">0.4MB</span></div>
+        <div style="font:12.5px/1.4 Pretendard,sans-serif;color:#6b7785">Static HTML</div>
+        <div style="text-align:right"><button style="height:30px;padding:0 12px;border:1px solid #cdd4dc;border-radius:6px;background:#fff;color:#1c242d;font:600 12.5px Pretendard,sans-serif;cursor:pointer">열기</button></div>
+      </div>
+    </div>
+  </div>
+</div>
+</div>
+
+<div class="dv-opt" id="2c">
+<div class="dv-olabel"><a class="dv-oid" href="#2c">2c</a>프로젝트 워크스페이스 — 뒤로가기는 경로(breadcrumb)로, 3개 요약 카드는 한 줄 메타로. 서비스 행의 주 동작은 상태에 따라 달라지고 나머지는 <b>···</b> 안으로 접힌다. AI 레일은 <b>420px → 드래그 확장 → 전체화면</b>.</div>
+<div class="dv-card" style="width:1440px;background:#f6f7f8">
+  <div style="display:flex;align-items:center;justify-content:space-between;height:52px;padding:0 26px;background:#fff;border-bottom:1px solid #e2e6ea">
+    <div style="display:flex;align-items:center;gap:11px">
+      <div style="width:22px;height:22px;border-radius:5px;background:#0f1419;display:grid;place-items:center"><div style="width:8px;height:8px;border:1.6px solid #fff;border-radius:1px;transform:rotate(45deg)"></div></div>
+      <span style="font:600 14px Pretendard,sans-serif;color:#0f1419;letter-spacing:-.01em">Cloud Platform</span>
+      <span style="color:#cdd4dc;font:13px Pretendard,sans-serif">/</span>
+      <a href="#2b" style="font:500 13px Pretendard,sans-serif;color:#6b7785;text-decoration:none">프로젝트</a>
+      <span style="color:#cdd4dc;font:13px Pretendard,sans-serif">/</span>
+      <span style="font:600 13px Pretendard,sans-serif;color:#1c242d">demoa</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:16px">
+      <div style="display:flex;align-items:center;gap:7px"><span style="font:600 12.5px Pretendard,sans-serif;color:#1c242d">Minjae</span><span style="display:inline-flex;align-items:center;height:19px;padding:0 6px;border-radius:4px;background:#f4f2fb;border:1px solid #ddd7f0;font:600 10.5px ui-monospace,monospace;color:#5b4bb8">ADMIN</span></div>
+      <span style="font:500 12.5px Pretendard,sans-serif;color:#6b7785">로그아웃</span>
+    </div>
+  </div>
+
+  <div style="display:grid;grid-template-columns:1fr 420px;align-items:stretch">
+    <div style="padding:26px 26px 40px">
+      <div style="display:flex;align-items:flex-end;justify-content:space-between">
+        <div>
+          <h1 style="margin:0;font:600 26px/1.15 Pretendard,sans-serif;color:#0f1419;letter-spacing:-.02em">demoa</h1>
+          <div style="display:flex;align-items:center;gap:14px;margin-top:9px;font:12.5px Pretendard,sans-serif;color:#6b7785">
+            <span style="display:inline-flex;align-items:center;gap:6px"><span style="width:6px;height:6px;border-radius:50%;background:#067647"></span>서비스 2개 모두 실행 중</span>
+            <span style="color:#dfe3e7">·</span>
+            <span>메모리 <b style="font:600 12.5px ui-monospace,monospace;color:#1c242d;font-variant-numeric:tabular-nums">12.8MB</b> / 961.6MB <span style="color:#949daa">(1.3%)</span></span>
+            <span style="color:#dfe3e7">·</span>
+            <span>마지막 배포 <b style="font-weight:600;color:#4b5565">기록 없음</b></span>
+          </div>
+        </div>
+        <button style="height:34px;padding:0 14px;border:1px solid #2563eb;border-radius:6px;background:#2563eb;color:#fff;font:600 13px Pretendard,sans-serif;cursor:pointer">새 서비스 배포</button>
+      </div>
+
+      <div style="margin-top:22px;background:#fff;border:1px solid #e2e6ea;border-radius:8px;overflow:hidden">
+        <div style="display:grid;grid-template-columns:1fr 122px 116px 172px 186px;gap:14px;align-items:center;padding:9px 18px;background:#fafbfc;border-bottom:1px solid #e2e6ea;font:600 10.5px ui-monospace,monospace;letter-spacing:.07em;color:#8a929c">
+          <div>서비스</div><div>상태</div><div>포트</div><div>메모리</div><div></div>
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 122px 116px 172px 186px;gap:14px;align-items:center;padding:16px 18px;border-bottom:1px solid #eef0f2">
+          <div>
+            <div style="display:flex;align-items:center;gap:9px"><span style="font:600 15px Pretendard,sans-serif;color:#0f1419">demo-a</span><a href="#2c" style="font:500 12px ui-monospace,monospace;color:#2563eb;text-decoration:none">바로가기 ↗</a></div>
+            <div style="font:12.5px/1.4 Pretendard,sans-serif;color:#6b7785;margin-top:4px">Express / NestJS</div>
+          </div>
+          <div><span style="display:inline-flex;align-items:center;gap:6px;height:23px;padding:0 9px 0 8px;border-radius:4px;background:#ecfdf3;border:1px solid #b7e4c7;font:600 11.5px Pretendard,sans-serif;color:#067647"><span style="width:6px;height:6px;border-radius:50%;background:#067647"></span>실행 중</span></div>
+          <div style="font:12.5px ui-monospace,monospace;color:#1c242d;font-variant-numeric:tabular-nums">9000→3000</div>
+          <div style="display:flex;align-items:center;gap:8px"><div style="width:52px;height:4px;border-radius:2px;background:#e8ebee;overflow:hidden"><div style="width:1%;height:4px;background:#6b7785"></div></div><span style="font:12.5px ui-monospace,monospace;color:#4b5565;font-variant-numeric:tabular-nums">9.3MB · 1%</span></div>
+          <div style="display:flex;align-items:center;justify-content:flex-end;gap:7px">
+            <button style="height:30px;padding:0 11px;border:1px solid transparent;border-radius:6px;background:transparent;color:#4b5565;font:600 12.5px Pretendard,sans-serif;cursor:pointer">로그</button>
+            <button style="height:30px;padding:0 12px;border:1px solid #cdd4dc;border-radius:6px;background:#fff;color:#1c242d;font:600 12.5px Pretendard,sans-serif;cursor:pointer">재시작</button>
+            <button style="height:30px;width:30px;padding:0;border:1px solid #cdd4dc;border-radius:6px;background:#fff;color:#6b7785;font:600 13px Pretendard,sans-serif;cursor:pointer">···</button>
+          </div>
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 122px 116px 172px 186px;gap:14px;align-items:center;padding:16px 18px;border-bottom:1px solid #eef0f2;position:relative">
+          <div>
+            <div style="font:600 15px Pretendard,sans-serif;color:#0f1419">demo-b</div>
+            <div style="font:12.5px/1.4 Pretendard,sans-serif;color:#6b7785;margin-top:4px">Django</div>
+          </div>
+          <div><span style="display:inline-flex;align-items:center;gap:6px;height:23px;padding:0 9px 0 8px;border-radius:4px;background:#ecfdf3;border:1px solid #b7e4c7;font:600 11.5px Pretendard,sans-serif;color:#067647"><span style="width:6px;height:6px;border-radius:50%;background:#067647"></span>실행 중</span></div>
+          <div style="font:12.5px ui-monospace,monospace;color:#1c242d;font-variant-numeric:tabular-nums">3000</div>
+          <div style="display:flex;align-items:center;gap:8px"><div style="width:52px;height:4px;border-radius:2px;background:#e8ebee;overflow:hidden"><div style="width:1%;height:4px;background:#6b7785"></div></div><span style="font:12.5px ui-monospace,monospace;color:#4b5565;font-variant-numeric:tabular-nums">3.5MB · 0.4%</span></div>
+          <div style="display:flex;align-items:center;justify-content:flex-end;gap:7px">
+            <button style="height:30px;padding:0 11px;border:1px solid transparent;border-radius:6px;background:transparent;color:#4b5565;font:600 12.5px Pretendard,sans-serif;cursor:pointer">로그</button>
+            <button style="height:30px;padding:0 12px;border:1px solid #cdd4dc;border-radius:6px;background:#fff;color:#1c242d;font:600 12.5px Pretendard,sans-serif;cursor:pointer">재시작</button>
+            <button style="height:30px;width:30px;padding:0;border:1px solid #1c242d;border-radius:6px;background:#1c242d;color:#fff;font:600 13px Pretendard,sans-serif;cursor:pointer">···</button>
+          </div>
+          <div style="position:absolute;right:18px;top:56px;width:196px;padding:5px;background:#fff;border:1px solid #d3d8de;border-radius:8px;box-shadow:0 8px 24px rgba(15,20,25,.12);z-index:5">
+            <div style="padding:6px 9px 4px;font:600 10.5px ui-monospace,monospace;letter-spacing:.07em;color:#949daa">설정</div>
+            <div style="padding:7px 9px;border-radius:5px;font:500 13px Pretendard,sans-serif;color:#33404d">포트 변경</div>
+            <div style="padding:7px 9px;border-radius:5px;font:500 13px Pretendard,sans-serif;color:#33404d;background:#f6f7f8">환경변수</div>
+            <div style="height:1px;background:#eef0f2;margin:5px 0"></div>
+            <div style="padding:6px 9px 4px;font:600 10.5px ui-monospace,monospace;letter-spacing:.07em;color:#949daa">중단·교체</div>
+            <div style="padding:7px 9px;border-radius:5px;font:500 13px Pretendard,sans-serif;color:#33404d">중지<span style="float:right;font:11px ui-monospace,monospace;color:#949daa">가역</span></div>
+            <div style="padding:7px 9px;border-radius:5px;font:600 13px Pretendard,sans-serif;color:#b42318">재배포<span style="float:right;font:11px ui-monospace,monospace;color:#c98d87">승인 필요</span></div>
+          </div>
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 122px 116px 172px 186px;gap:14px;align-items:center;padding:16px 18px;background:#fffdfd">
+          <div>
+            <div style="display:flex;align-items:center;gap:9px"><span style="font:600 15px Pretendard,sans-serif;color:#0f1419">collector</span><span style="font:500 11.5px Pretendard,sans-serif;color:#b42318">재시작 13회</span></div>
+            <div style="font:12.5px/1.4 Pretendard,sans-serif;color:#6b7785;margin-top:4px">프레임워크 확인 전</div>
+          </div>
+          <div><span style="display:inline-flex;align-items:center;gap:6px;height:23px;padding:0 9px 0 8px;border-radius:4px;background:#fffbeb;border:1px solid #f3dfa2;font:600 11.5px Pretendard,sans-serif;color:#b45309"><span style="width:6px;height:6px;border-radius:1px;background:#b45309;transform:rotate(45deg)"></span>재시작 중</span></div>
+          <div style="font:12.5px ui-monospace,monospace;color:#949daa">—</div>
+          <div style="font:12.5px ui-monospace,monospace;color:#949daa">확인 전</div>
+          <div style="display:flex;align-items:center;justify-content:flex-end;gap:7px">
+            <button style="height:30px;padding:0 12px;border:1px solid #2563eb;border-radius:6px;background:#2563eb;color:#fff;font:600 12.5px Pretendard,sans-serif;cursor:pointer">로그 보기</button>
+            <button style="height:30px;padding:0 12px;border:1px solid #cdd4dc;border-radius:6px;background:#fff;color:#1c242d;font:600 12.5px Pretendard,sans-serif;cursor:pointer">중지</button>
+            <button style="height:30px;width:30px;padding:0;border:1px solid #cdd4dc;border-radius:6px;background:#fff;color:#6b7785;font:600 13px Pretendard,sans-serif;cursor:pointer">···</button>
+          </div>
+        </div>
+      </div>
+      <div style="margin-top:11px;font:12px/1.5 Pretendard,sans-serif;color:#949daa">재시작이 반복되는 서비스는 주 동작이 <b style="color:#4b5565">로그 보기</b>로 바뀐다. 원인을 보기 전에 재시작을 다시 누르게 하지 않는다.</div>
+    </div>
+
+    <div style="border-left:1px solid #e2e6ea;background:#fff;display:flex;flex-direction:column;position:relative">
+      <div style="position:absolute;left:-3px;top:0;bottom:0;width:5px;cursor:col-resize"></div>
+      <div style="display:flex;align-items:center;gap:9px;padding:14px 16px;border-bottom:1px solid #eef0f2">
+        <span style="width:20px;height:20px;border-radius:5px;background:#f4f2fb;border:1px solid #ddd7f0;display:grid;place-items:center;font:700 10px Pretendard,sans-serif;color:#5b4bb8">AI</span>
+        <div style="min-width:0">
+          <div style="font:600 13px Pretendard,sans-serif;color:#1c242d">운영 AI</div>
+          <div style="font:11.5px Pretendard,sans-serif;color:#6b7785">demoa 범위 · 변경은 승인 후 실행</div>
+        </div>
+        <div style="margin-left:auto;display:flex;gap:5px">
+          <span style="width:26px;height:26px;border:1px solid #e2e6ea;border-radius:5px;display:grid;place-items:center;font:12px Pretendard,sans-serif;color:#6b7785">⤢</span>
+          <span style="width:26px;height:26px;border:1px solid #e2e6ea;border-radius:5px;display:grid;place-items:center;font:12px Pretendard,sans-serif;color:#6b7785">✕</span>
+        </div>
+      </div>
+      <div style="flex:1;padding:18px 16px;display:flex;flex-direction:column;gap:14px;min-height:470px">
+        <div style="align-self:flex-end;max-width:88%;padding:9px 12px;border-radius:8px 8px 3px 8px;background:#f1f3f5;font:14px/1.55 Pretendard,sans-serif;color:#1c242d">collector 왜 계속 죽어?</div>
+        <div style="max-width:96%">
+          <div style="display:inline-flex;align-items:center;gap:7px;padding:5px 9px;border:1px solid #e6e9ec;border-radius:6px;background:#fafbfc;font:11.5px Pretendard,sans-serif;color:#6b7785;margin-bottom:9px">
+            <span style="font:11px ui-monospace,monospace;color:#5b4bb8">service.logs</span> 실행함 · 80줄
+            <span style="color:#b0b7c0">▾</span>
+          </div>
+          <div style="font:14px/1.6 Pretendard,sans-serif;color:#33404d">collector가 부팅 직후 <code style="font:12.5px ui-monospace,monospace;background:#f1f3f5;padding:1px 4px;border-radius:3px;color:#b42318">DATABASE_URL</code> 없이 종료되고 있습니다. 환경변수 이름은 등록됐지만 값이 비어 있습니다.</div>
+          <div style="margin-top:12px;padding:11px 13px;border:1px solid #e2e6ea;border-radius:7px;background:#fafbfc">
+            <div style="font:600 12.5px Pretendard,sans-serif;color:#1c242d;margin-bottom:5px">다음으로 할 수 있는 것</div>
+            <div style="font:13px/1.6 Pretendard,sans-serif;color:#4b5565">값을 채우려면 <b style="color:#1c242d">환경변수</b>에서 직접 수정하세요 — 안전한 동작이라 승인 절차가 필요 없습니다.</div>
+          </div>
+        </div>
+      </div>
+      <div style="padding:12px 14px 14px;border-top:1px solid #eef0f2">
+        <div style="border:1px solid #cdd4dc;border-radius:8px;padding:10px 11px;display:flex;align-items:flex-end;gap:9px;background:#fff">
+          <span style="flex:1;font:14px/1.5 Pretendard,sans-serif;color:#a3aab4">demoa에 대해 물어보기</span>
+          <span style="width:28px;height:28px;border-radius:6px;background:#2563eb;color:#fff;display:grid;place-items:center;font:13px Pretendard,sans-serif">↑</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</div>
+
+<div class="dv-opt" id="2d">
+<div class="dv-olabel"><a class="dv-oid" href="#2d">2d</a><b>AI · 빈 상태.</b> 카드 3개 + 버튼 6개 + 설명문 두 단락 → 제안 프롬프트 3개. 화면이 자기 기능을 해설하지 않는다.</div>
+<div class="dv-card" style="width:560px;background:#fff;display:flex;flex-direction:column;height:600px">
+  <div style="display:flex;align-items:center;gap:9px;padding:14px 16px;border-bottom:1px solid #eef0f2">
+    <span style="width:20px;height:20px;border-radius:5px;background:#f4f2fb;border:1px solid #ddd7f0;display:grid;place-items:center;font:700 10px Pretendard,sans-serif;color:#5b4bb8">AI</span>
+    <div><div style="font:600 13px Pretendard,sans-serif;color:#1c242d">운영 AI</div><div style="font:11.5px Pretendard,sans-serif;color:#6b7785">demoa 범위 · 변경은 승인 후 실행</div></div>
+    <div style="margin-left:auto;display:flex;gap:5px"><span style="width:26px;height:26px;border:1px solid #e2e6ea;border-radius:5px;display:grid;place-items:center;font:12px Pretendard,sans-serif;color:#6b7785">⤢</span><span style="width:26px;height:26px;border:1px solid #e2e6ea;border-radius:5px;display:grid;place-items:center;font:12px Pretendard,sans-serif;color:#6b7785">✕</span></div>
+  </div>
+  <div style="flex:1;display:flex;flex-direction:column;justify-content:flex-end;padding:20px 18px">
+    <div style="font:600 10.5px ui-monospace,monospace;letter-spacing:.08em;color:#a3aab4;margin-bottom:12px">시작해볼 것</div>
+    <div style="display:flex;flex-direction:column">
+      <div style="display:flex;align-items:center;gap:10px;padding:11px 2px;border-top:1px solid #eef0f2;font:14px Pretendard,sans-serif;color:#33404d">지금 상태 요약해줘<span style="margin-left:auto;color:#c4cad1;font:13px Pretendard,sans-serif">↗</span></div>
+      <div style="display:flex;align-items:center;gap:10px;padding:11px 2px;border-top:1px solid #eef0f2;font:14px Pretendard,sans-serif;color:#33404d">collector 왜 계속 죽어?<span style="margin-left:auto;color:#c4cad1;font:13px Pretendard,sans-serif">↗</span></div>
+      <div style="display:flex;align-items:center;gap:10px;padding:11px 2px;border-top:1px solid #eef0f2;font:14px Pretendard,sans-serif;color:#33404d">새 서비스 배포하고 싶어<span style="margin-left:auto;color:#c4cad1;font:13px Pretendard,sans-serif">↗</span></div>
+      <div style="border-top:1px solid #eef0f2"></div>
+    </div>
+  </div>
+  <div style="padding:12px 16px 16px">
+    <div style="border:1px solid #cdd4dc;border-radius:8px;padding:10px 11px;display:flex;align-items:flex-end;gap:9px">
+      <span style="flex:1;font:14px/1.5 Pretendard,sans-serif;color:#a3aab4">demoa에 대해 물어보기</span>
+      <span style="width:28px;height:28px;border-radius:6px;background:#eef0f2;color:#a3aab4;display:grid;place-items:center;font:13px Pretendard,sans-serif">↑</span>
+    </div>
+    <div style="margin-top:8px;font:11.5px Pretendard,sans-serif;color:#a3aab4">시작·중지·로그는 서비스 표에서 바로 누르는 게 빠릅니다.</div>
+  </div>
+</div>
+</div>
+
+<div class="dv-opt" id="2e">
+<div class="dv-olabel"><a class="dv-oid" href="#2e">2e</a><b>AI · 진행 표시 → 도구 사용 → 스트리밍.</b> 진행 표시가 응답 자리에 먼저 나타나고 결과로 교체된다. 도구 블록은 한 줄, 펼치면 근거. 원시 JSON은 기본 노출 없음. 응답 중 전송 → 중지.</div>
+<div class="dv-card" style="width:560px;background:#fff;display:flex;flex-direction:column;height:722px">
+  <div style="display:flex;align-items:center;gap:9px;padding:14px 16px;border-bottom:1px solid #eef0f2">
+    <span style="width:20px;height:20px;border-radius:5px;background:#f4f2fb;border:1px solid #ddd7f0;display:grid;place-items:center;font:700 10px Pretendard,sans-serif;color:#5b4bb8">AI</span>
+    <div><div style="font:600 13px Pretendard,sans-serif;color:#1c242d">운영 AI</div><div style="font:11.5px Pretendard,sans-serif;color:#6b7785">demoa 범위 · 변경은 승인 후 실행</div></div>
+    <div style="margin-left:auto;display:flex;gap:5px"><span style="width:26px;height:26px;border:1px solid #e2e6ea;border-radius:5px;display:grid;place-items:center;font:12px Pretendard,sans-serif;color:#6b7785">⤢</span><span style="width:26px;height:26px;border:1px solid #e2e6ea;border-radius:5px;display:grid;place-items:center;font:12px Pretendard,sans-serif;color:#6b7785">✕</span></div>
+  </div>
+  <div style="flex:1;padding:18px;display:flex;flex-direction:column;gap:16px;overflow:hidden">
+    <div style="align-self:flex-end;max-width:82%;padding:9px 12px;border-radius:8px 8px 3px 8px;background:#f1f3f5;font:14px/1.55 Pretendard,sans-serif;color:#1c242d">서비스 목록 보여줘</div>
+    <div>
+      <div style="display:inline-flex;align-items:center;gap:8px;padding:5px 9px;border:1px solid #e6e9ec;border-radius:6px;background:#fafbfc;font:11.5px Pretendard,sans-serif;color:#6b7785;margin-bottom:9px"><span style="font:11px ui-monospace,monospace;color:#5b4bb8">service.status</span> 실행함<span style="color:#b0b7c0">▾</span></div>
+      <div style="font:14px/1.6 Pretendard,sans-serif;color:#33404d">demo-a와 demo-b가 모두 실행 중입니다. collector는 재시작을 13회 반복하고 있어 정상 범위를 벗어났습니다.</div>
+    </div>
+    <div style="align-self:flex-end;max-width:82%;padding:9px 12px;border-radius:8px 8px 3px 8px;background:#f1f3f5;font:14px/1.55 Pretendard,sans-serif;color:#1c242d">collector 최근 로그에서 원인 찾아줘</div>
+    <div style="display:flex;align-items:center;gap:9px;font:13px Pretendard,sans-serif;color:#6b7785">
+      <span style="width:13px;height:13px;border:1.6px solid #dfe3e7;border-top-color:#5b4bb8;border-radius:50%;animation:spin .8s linear infinite;display:inline-block"></span>
+      로그 80줄 읽는 중…
+    </div>
+    <div>
+      <div style="border:1px solid #e6e9ec;border-radius:7px;background:#fafbfc;margin-bottom:11px;overflow:hidden">
+        <div style="display:flex;align-items:center;gap:8px;padding:7px 10px;font:11.5px Pretendard,sans-serif;color:#4b5565"><span style="font:11px ui-monospace,monospace;color:#5b4bb8">service.logs</span> 실행함 · collector · 80줄<span style="margin-left:auto;color:#8a929c">▴</span></div>
+        <div style="border-top:1px solid #eef0f2;padding:9px 11px;background:#fff">
+          <div style="font:600 10.5px ui-monospace,monospace;letter-spacing:.06em;color:#a3aab4;margin-bottom:6px">근거 3줄</div>
+          <div style="font:12px/1.7 ui-monospace,monospace;color:#4b5565">
+            <div><span style="color:#b0b7c0">02:14:07</span> KeyError: DATABASE_URL</div>
+            <div><span style="color:#b0b7c0">02:14:07</span> exited with code 1</div>
+            <div><span style="color:#b0b7c0">02:14:12</span> restarting (13)</div>
+          </div>
+        </div>
+      </div>
+      <div style="font:14px/1.6 Pretendard,sans-serif;color:#33404d">부팅 직후 <code style="font:12.5px ui-monospace,monospace;background:#f1f3f5;padding:1px 4px;border-radius:3px;color:#b42318">DATABASE_URL</code>을 읽지 못해 종료되고, compose의 <code style="font:12.5px ui-monospace,monospace;background:#f1f3f5;padding:1px 4px;border-radius:3px;color:#33404d">restart: always</code> 때문에 다시 뜨는 중입니다. 환경변수 이름은 등록됐지만 값이<span style="display:inline-block;width:7px;height:15px;background:#33404d;vertical-align:-3px;margin-left:2px;animation:cur 1s step-end infinite"></span></div>
+    </div>
+  </div>
+  <div style="padding:12px 16px 16px;border-top:1px solid #eef0f2">
+    <div style="border:1px solid #cdd4dc;border-radius:8px;padding:10px 11px;display:flex;align-items:flex-end;gap:9px">
+      <span style="flex:1;font:14px/1.5 Pretendard,sans-serif;color:#a3aab4">demoa에 대해 물어보기</span>
+      <span style="width:28px;height:28px;border-radius:6px;background:#1c242d;color:#fff;display:grid;place-items:center"><span style="width:9px;height:9px;background:#fff;border-radius:1.5px"></span></span>
+    </div>
+  </div>
+</div>
+</div>
+
+<div class="dv-opt" id="2f">
+<div class="dv-olabel"><a class="dv-oid" href="#2f">2f</a><b>AI · 승인 카드.</b> 대화 흐름 안의 카드다. 대상·입력값·위험·예상 결과를 보여주고, 파괴적 동작이라 승인 버튼이 danger 무게를 갖는다. 대화 밖으로 튀어나오지 않는다.</div>
+<div class="dv-card" style="width:560px;background:#fff;display:flex;flex-direction:column;height:722px">
+  <div style="display:flex;align-items:center;gap:9px;padding:14px 16px;border-bottom:1px solid #eef0f2">
+    <span style="width:20px;height:20px;border-radius:5px;background:#f4f2fb;border:1px solid #ddd7f0;display:grid;place-items:center;font:700 10px Pretendard,sans-serif;color:#5b4bb8">AI</span>
+    <div><div style="font:600 13px Pretendard,sans-serif;color:#1c242d">운영 AI</div><div style="font:11.5px Pretendard,sans-serif;color:#6b7785">demoa 범위 · 변경은 승인 후 실행</div></div>
+    <div style="margin-left:auto;display:flex;gap:5px"><span style="width:26px;height:26px;border:1px solid #e2e6ea;border-radius:5px;display:grid;place-items:center;font:12px Pretendard,sans-serif;color:#6b7785">⤢</span><span style="width:26px;height:26px;border:1px solid #e2e6ea;border-radius:5px;display:grid;place-items:center;font:12px Pretendard,sans-serif;color:#6b7785">✕</span></div>
+  </div>
+  <div style="flex:1;padding:18px;display:flex;flex-direction:column;gap:16px;overflow:hidden">
+    <div style="align-self:flex-end;max-width:82%;padding:9px 12px;border-radius:8px 8px 3px 8px;background:#f1f3f5;font:14px/1.55 Pretendard,sans-serif;color:#1c242d">demo-b를 최신 커밋으로 다시 올려줘</div>
+    <div>
+      <div style="display:inline-flex;align-items:center;gap:8px;padding:5px 9px;border:1px solid #e6e9ec;border-radius:6px;background:#fafbfc;font:11.5px Pretendard,sans-serif;color:#6b7785;margin-bottom:9px"><span style="font:11px ui-monospace,monospace;color:#5b4bb8">repository.inspect</span> 실행함<span style="color:#b0b7c0">▾</span></div>
+      <div style="font:14px/1.6 Pretendard,sans-serif;color:#33404d">재배포는 컨테이너를 새로 빌드해 교체합니다. 아직 실행하지 않았습니다.</div>
+    </div>
+    <div style="border:1px solid #e6c9c5;border-radius:8px;overflow:hidden">
+      <div style="display:flex;align-items:center;gap:8px;padding:10px 13px;background:#fef7f6;border-bottom:1px solid #f3dedb">
+        <span style="font:600 10.5px ui-monospace,monospace;letter-spacing:.07em;color:#b42318">파괴적 · 승인 필요</span>
+        <span style="margin-left:auto;font:600 11.5px Pretendard,sans-serif;color:#8a929c">승인 대기</span>
+      </div>
+      <div style="padding:13px 14px 15px">
+        <div style="font:600 15px Pretendard,sans-serif;color:#0f1419">demo-b 재배포</div>
+        <div style="display:grid;grid-template-columns:66px 1fr;gap:7px 12px;margin-top:11px;font:12.5px/1.45 Pretendard,sans-serif">
+          <div style="color:#8a929c">대상</div><div style="color:#1c242d">demoa / demo-b</div>
+          <div style="color:#8a929c">저장소</div><div style="font:12px ui-monospace,monospace;color:#1c242d;word-break:break-all">github.com/minjae/demo-b · main @ 4f21c9d</div>
+          <div style="color:#8a929c">유지</div><div style="color:#1c242d">포트 3000 · 환경변수 2개</div>
+        </div>
+        <div style="height:1px;background:#f0e5e3;margin:13px 0"></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+          <div>
+            <div style="font:600 11px Pretendard,sans-serif;color:#b42318;margin-bottom:5px">위험</div>
+            <div style="font:12.5px/1.55 Pretendard,sans-serif;color:#4b5565">약 40초 다운타임<br>이전 이미지로 롤백 불가</div>
+          </div>
+          <div>
+            <div style="font:600 11px Pretendard,sans-serif;color:#4b5565;margin-bottom:5px">예상 결과</div>
+            <div style="font:12.5px/1.55 Pretendard,sans-serif;color:#4b5565">빌드 → 교체 → 헬스 확인<br>디스크 약 180MB 사용</div>
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:9px;margin-top:15px">
+          <button style="height:32px;padding:0 14px;border:1px solid #b42318;border-radius:6px;background:#b42318;color:#fff;font:600 12.5px Pretendard,sans-serif;cursor:pointer">승인하고 재배포</button>
+          <button style="height:32px;padding:0 12px;border:1px solid #cdd4dc;border-radius:6px;background:#fff;color:#1c242d;font:600 12.5px Pretendard,sans-serif;cursor:pointer">취소</button>
+          <span style="margin-left:auto;font:11.5px Pretendard,sans-serif;color:#a3aab4">디스크 여유 394.8MB</span>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div style="padding:12px 16px 16px;border-top:1px solid #eef0f2">
+    <div style="border:1px solid #cdd4dc;border-radius:8px;padding:10px 11px;display:flex;align-items:flex-end;gap:9px">
+      <span style="flex:1;font:14px/1.5 Pretendard,sans-serif;color:#a3aab4">demoa에 대해 물어보기</span>
+      <span style="width:28px;height:28px;border-radius:6px;background:#eef0f2;color:#a3aab4;display:grid;place-items:center;font:13px Pretendard,sans-serif">↑</span>
+    </div>
+  </div>
+</div>
+</div>
+
+<div class="dv-opt" id="2g">
+<div class="dv-olabel"><a class="dv-oid" href="#2g">2g</a><b>AI · 배포 되묻기.</b> 폼이 대화를 가로막지 않는다. 한 번에 하나씩 묻고, 답한 것은 접힌 요약으로 남는다. 자동 감지 결과는 <b>확정이 아니라 확인이 필요한 제안</b>으로 보인다.</div>
+<div class="dv-card" style="width:560px;background:#fff;display:flex;flex-direction:column;height:722px">
+  <div style="display:flex;align-items:center;gap:9px;padding:14px 16px;border-bottom:1px solid #eef0f2">
+    <span style="width:20px;height:20px;border-radius:5px;background:#f4f2fb;border:1px solid #ddd7f0;display:grid;place-items:center;font:700 10px Pretendard,sans-serif;color:#5b4bb8">AI</span>
+    <div><div style="font:600 13px Pretendard,sans-serif;color:#1c242d">운영 AI</div><div style="font:11.5px Pretendard,sans-serif;color:#6b7785">demoa 범위 · 3/4 단계</div></div>
+    <div style="margin-left:auto;display:flex;gap:5px"><span style="width:26px;height:26px;border:1px solid #e2e6ea;border-radius:5px;display:grid;place-items:center;font:12px Pretendard,sans-serif;color:#6b7785">⤢</span><span style="width:26px;height:26px;border:1px solid #e2e6ea;border-radius:5px;display:grid;place-items:center;font:12px Pretendard,sans-serif;color:#6b7785">✕</span></div>
+  </div>
+  <div style="flex:1;padding:18px;display:flex;flex-direction:column;gap:14px;overflow:hidden">
+    <div style="align-self:flex-end;max-width:82%;padding:9px 12px;border-radius:8px 8px 3px 8px;background:#f1f3f5;font:14px/1.55 Pretendard,sans-serif;color:#1c242d">새 서비스 배포하고 싶어</div>
+    <div style="display:flex;align-items:center;gap:9px;padding:8px 11px;border:1px solid #eef0f2;border-radius:7px;background:#fafbfc;font:12.5px Pretendard,sans-serif;color:#4b5565">
+      <span style="width:14px;height:14px;border-radius:50%;background:#067647;color:#fff;font:700 9px/14px Pretendard,sans-serif;text-align:center">✓</span>
+      이름 <b style="color:#1c242d;font-weight:600">horse_api</b> · 저장소 <b style="color:#1c242d;font-weight:600">minjae/horse-api</b>
+      <span style="margin-left:auto;font:11.5px Pretendard,sans-serif;color:#8a929c">수정</span>
+    </div>
+    <div>
+      <div style="display:inline-flex;align-items:center;gap:8px;padding:5px 9px;border:1px solid #e6e9ec;border-radius:6px;background:#fafbfc;font:11.5px Pretendard,sans-serif;color:#6b7785;margin-bottom:9px"><span style="font:11px ui-monospace,monospace;color:#5b4bb8">repository.inspect</span> 실행함 · 파일 4개<span style="color:#b0b7c0">▾</span></div>
+      <div style="font:14px/1.6 Pretendard,sans-serif;color:#33404d">저장소에 <code style="font:12.5px ui-monospace,monospace;background:#f1f3f5;padding:1px 4px;border-radius:3px;color:#33404d">main.py</code>와 <code style="font:12.5px ui-monospace,monospace;background:#f1f3f5;padding:1px 4px;border-radius:3px;color:#33404d">requirements.txt</code>가 있습니다. FastAPI로 보이는데, 맞나요?</div>
+      <div style="margin-top:11px;border:1px solid #dbe3f2;border-radius:8px;overflow:hidden">
+        <div style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:#f5f8fe;border-bottom:1px solid #e4ebf7">
+          <span style="font:600 10.5px ui-monospace,monospace;letter-spacing:.07em;color:#2563eb">제안 · 확인 필요</span>
+        </div>
+        <div style="padding:11px 12px 13px">
+          <div style="display:flex;align-items:center;gap:9px">
+            <div style="flex:1;padding:9px 11px;border:1.5px solid #2563eb;border-radius:6px;background:#fff">
+              <div style="font:600 13.5px Pretendard,sans-serif;color:#0f1419">FastAPI</div>
+              <div style="font:11.5px Pretendard,sans-serif;color:#6b7785;margin-top:2px">Uvicorn · 3000번</div>
+            </div>
+            <button style="height:32px;padding:0 13px;border:1px solid #2563eb;border-radius:6px;background:#2563eb;color:#fff;font:600 12.5px Pretendard,sans-serif;cursor:pointer">맞아요</button>
+          </div>
+          <div style="margin-top:9px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+            <span style="font:11.5px Pretendard,sans-serif;color:#8a929c">아니면</span>
+            <span style="height:26px;padding:0 10px;display:inline-flex;align-items:center;border:1px solid #cdd4dc;border-radius:5px;font:500 12px Pretendard,sans-serif;color:#33404d">Flask</span>
+            <span style="height:26px;padding:0 10px;display:inline-flex;align-items:center;border:1px solid #cdd4dc;border-radius:5px;font:500 12px Pretendard,sans-serif;color:#33404d">Django</span>
+            <span style="height:26px;padding:0 10px;display:inline-flex;align-items:center;border:1px solid #cdd4dc;border-radius:5px;font:500 12px Pretendard,sans-serif;color:#33404d">기존 Dockerfile</span>
+            <span style="height:26px;padding:0 10px;display:inline-flex;align-items:center;font:500 12px Pretendard,sans-serif;color:#6b7785">전체 11종 ▾</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div style="align-self:flex-end;max-width:82%;padding:9px 12px;border-radius:8px 8px 3px 8px;background:#f1f3f5;font:14px/1.55 Pretendard,sans-serif;color:#1c242d">내부 서비스야. 포트는 알아서.</div>
+    <div>
+      <div style="font:14px/1.6 Pretendard,sans-serif;color:#33404d">외부 URL 없이 올리고, 호스트 포트는 <b style="font:600 13.5px ui-monospace,monospace;color:#1c242d">9002</b>로 잡았습니다. 환경변수 이름만 알려주면 계획을 정리하겠습니다.</div>
+    </div>
+  </div>
+  <div style="padding:12px 16px 16px;border-top:1px solid #eef0f2">
+    <div style="border:1px solid #2563eb;border-radius:8px;padding:10px 11px;display:flex;align-items:flex-end;gap:9px">
+      <span style="flex:1;font:14px/1.5 Pretendard,sans-serif;color:#1c242d">DATABASE_URL, SECRET_KEY</span>
+      <span style="width:28px;height:28px;border-radius:6px;background:#2563eb;color:#fff;display:grid;place-items:center;font:13px Pretendard,sans-serif">↑</span>
+    </div>
+    <div style="margin-top:8px;font:11.5px Pretendard,sans-serif;color:#a3aab4">이름만 보냅니다. 실제 값은 배포 후 환경변수 화면에서 입력합니다.</div>
+  </div>
+</div>
+</div>
+
+<div class="dv-opt" id="2h">
+<div class="dv-olabel"><a class="dv-oid" href="#2h">2h</a><b>패널 폭 해법.</b> 420px 레일(기본) → 드래그로 720px까지 → <b>전체화면 오버레이</b>. 전체화면은 워크스페이스를 <b>대체하지 않고 덮는다</b> — 뒤 화면이 가장자리에 남아 있고 ESC로 닫으면 스크롤 위치까지 그대로다. 사이드바는 없다: 범위는 상단 배지 하나, <b>실제로 실행된 변경만</b> 접힌 기록으로 남는다.</div>
+<div class="dv-card" style="width:1100px;background:#f6f7f8;height:640px;padding:0;position:relative;overflow:hidden">
+  <div style="position:absolute;left:0;right:0;top:0;height:50px;background:#fff;border-bottom:1px solid #e2e6ea;display:flex;align-items:center;gap:9px;padding:0 22px;font:500 13px Pretendard,sans-serif;color:#6b7785">
+    <span>프로젝트</span><span style="color:#cdd4dc">/</span><span style="font-weight:600;color:#1c242d">demoa</span>
+    <span style="margin-left:auto;font:500 12.5px Pretendard,sans-serif;color:#a3aab4">Minjae · admin</span>
+  </div>
+  <div style="position:absolute;left:0;right:0;top:50px;bottom:0;padding:22px;opacity:.5">
+    <div style="font:600 24px Pretendard,sans-serif;color:#0f1419">demoa</div>
+    <div style="margin-top:16px;height:150px;background:#fff;border:1px solid #e2e6ea;border-radius:8px"></div>
+  </div>
+  <div style="position:absolute;left:0;right:0;top:50px;bottom:0;background:rgba(15,20,25,.32)"></div>
+  <div style="position:absolute;left:26px;right:26px;top:76px;bottom:26px;background:#fff;border:1px solid #d3d8de;border-radius:10px;box-shadow:0 18px 48px rgba(15,20,25,.22);display:flex;flex-direction:column;overflow:hidden">
+  <div style="display:flex;align-items:center;gap:11px;padding:0 18px;height:48px;border-bottom:1px solid #eef0f2">
+    <span style="width:20px;height:20px;border-radius:5px;background:#f4f2fb;border:1px solid #ddd7f0;display:grid;place-items:center;font:700 10px Pretendard,sans-serif;color:#5b4bb8">AI</span>
+    <span style="font:600 13.5px Pretendard,sans-serif;color:#1c242d">운영 AI</span>
+    <span style="display:inline-flex;align-items:center;height:21px;padding:0 8px;border-radius:4px;background:#f6f7f8;border:1px solid #e2e6ea;font:600 11.5px Pretendard,sans-serif;color:#4b5565">demoa</span>
+    <span style="margin-left:auto;display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 9px;border:1px solid #e2e6ea;border-radius:5px;font:500 11.5px Pretendard,sans-serif;color:#6b7785">실행한 변경 0건<span style="color:#b0b7c0">▾</span></span>
+    <span style="font:500 12.5px Pretendard,sans-serif;color:#6b7785">축소 ⤡</span>
+    <span style="font:500 12.5px Pretendard,sans-serif;color:#6b7785">닫기 ESC</span>
+  </div>
+  <div style="flex:1;display:flex;flex-direction:column;overflow:hidden">
+    <div style="display:flex;flex-direction:column;overflow:hidden;flex:1">
+      <div style="flex:1;padding:26px 0;overflow:hidden">
+        <div style="width:640px;margin:0 auto;display:flex;flex-direction:column;gap:18px">
+          <div style="align-self:flex-end;max-width:74%;padding:10px 13px;border-radius:8px 8px 3px 8px;background:#f1f3f5;font:14.5px/1.55 Pretendard,sans-serif;color:#1c242d">이 프로젝트 전체 상태를 한 번에 정리해줘. 지금 손대야 하는 게 뭐야?</div>
+          <div>
+            <div style="display:inline-flex;align-items:center;gap:8px;padding:5px 9px;border:1px solid #e6e9ec;border-radius:6px;background:#fafbfc;font:11.5px Pretendard,sans-serif;color:#6b7785;margin-bottom:11px"><span style="font:11px ui-monospace,monospace;color:#5b4bb8">service.status</span> · <span style="font:11px ui-monospace,monospace;color:#5b4bb8">server.health</span> 실행함<span style="color:#b0b7c0">▾</span></div>
+            <div style="font:14.5px/1.7 Pretendard,sans-serif;color:#33404d">손대야 하는 건 <b style="font-weight:600;color:#0f1419">두 가지</b>입니다.</div>
+            <div style="margin-top:13px;display:flex;flex-direction:column;gap:11px">
+              <div style="display:flex;gap:11px"><span style="width:18px;height:18px;flex:none;margin-top:3px;border-radius:4px;background:#fef3f2;border:1px solid #f3c4c0;font:700 10px/17px Pretendard,sans-serif;text-align:center;color:#b42318">1</span><div style="font:14.5px/1.7 Pretendard,sans-serif;color:#33404d"><b style="font-weight:600;color:#0f1419">collector</b> — DATABASE_URL 값이 비어 재시작 13회. 값을 채우면 해결됩니다. 재배포는 필요 없습니다.</div></div>
+              <div style="display:flex;gap:11px"><span style="width:18px;height:18px;flex:none;margin-top:3px;border-radius:4px;background:#fffbeb;border:1px solid #f3dfa2;font:700 10px/17px Pretendard,sans-serif;text-align:center;color:#b45309">2</span><div style="font:14.5px/1.7 Pretendard,sans-serif;color:#33404d"><b style="font-weight:600;color:#0f1419">디스크 95.8%</b> — 여유 394.8MB. 다음 빌드가 실패할 수 있어 사용하지 않는 이미지를 먼저 정리하는 편이 안전합니다.</div></div>
+            </div>
+            <div style="margin-top:15px;font:14.5px/1.7 Pretendard,sans-serif;color:#33404d">demo-a와 demo-b는 정상이고 메모리도 1% 수준이라 지금 조치할 것이 없습니다.</div>
+          </div>
+        </div>
+      </div>
+      <div style="padding:14px 0 20px;border-top:1px solid #eef0f2">
+        <div style="width:640px;margin:0 auto">
+          <div style="border:1px solid #cdd4dc;border-radius:8px;padding:11px 12px;display:flex;align-items:flex-end;gap:10px;min-height:56px">
+            <span style="flex:1;font:14.5px/1.5 Pretendard,sans-serif;color:#a3aab4">demoa에 대해 물어보기 · Shift+Enter로 줄바꿈</span>
+            <span style="width:30px;height:30px;border-radius:6px;background:#2563eb;color:#fff;display:grid;place-items:center;font:13px Pretendard,sans-serif">↑</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  </div>
+</div>
+</div>
+
+<div class="dv-opt" id="2i">
+<div class="dv-olabel"><a class="dv-oid" href="#2i">2i</a><b>새 서비스 배포 — 직접 경로.</b> AI를 거치지 않아도 되는 안전한 폼. 프레임워크 11종은 카테고리로 묶고, 자동 감지 결과는 배지로 "제안"임을 명시한다. 오른쪽 요약이 승인 전 마지막 확인.</div>
+<div class="dv-card" style="width:1040px;background:#f6f7f8;padding:0">
+  <div style="display:flex;align-items:center;gap:9px;padding:0 24px;height:50px;background:#fff;border-bottom:1px solid #e2e6ea;font:500 13px Pretendard,sans-serif;color:#6b7785">
+    <a href="#2c" style="color:#6b7785;text-decoration:none">demoa</a><span style="color:#cdd4dc">/</span><span style="font-weight:600;color:#1c242d">새 서비스</span>
+    <span style="margin-left:auto;color:#6b7785">취소</span>
+  </div>
+  <div style="display:grid;grid-template-columns:1fr 296px;gap:24px;padding:26px 24px 32px">
+    <div>
+      <h2 style="margin:0 0 20px;font:600 21px/1.2 Pretendard,sans-serif;color:#0f1419;letter-spacing:-.015em">새 서비스 배포</h2>
+      <div style="background:#fff;border:1px solid #e2e6ea;border-radius:8px;padding:20px 20px 22px">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+          <div>
+            <label style="display:block;font:600 12px Pretendard,sans-serif;color:#33404d;margin-bottom:6px">서비스 이름</label>
+            <div style="height:36px;border:1px solid #cdd4dc;border-radius:6px;background:#fff;display:flex;align-items:center;padding:0 11px;font:13.5px ui-monospace,monospace;color:#1c242d">horse_api</div>
+            <div style="font:11.5px Pretendard,sans-serif;color:#949daa;margin-top:5px">프로젝트 안에서만 구분됩니다</div>
+          </div>
+          <div>
+            <label style="display:block;font:600 12px Pretendard,sans-serif;color:#33404d;margin-bottom:6px">GitHub 저장소</label>
+            <div style="height:36px;border:1px solid #cdd4dc;border-radius:6px;background:#fff;display:flex;align-items:center;gap:7px;padding:0 11px;font:12.5px ui-monospace,monospace;color:#1c242d;overflow:hidden"><span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">github.com/minjae/horse-api-service-2026</span><span style="margin-left:auto;flex:none;width:14px;height:14px;border-radius:50%;background:#067647;color:#fff;font:700 9px/14px Pretendard,sans-serif;text-align:center">✓</span></div>
+            <div style="font:11.5px Pretendard,sans-serif;color:#067647;margin-top:5px">공개 저장소 확인됨</div>
+          </div>
+        </div>
+
+        <div style="height:1px;background:#eef0f2;margin:20px 0"></div>
+
+        <div style="display:flex;align-items:baseline;gap:9px;margin-bottom:10px">
+          <label style="font:600 12px Pretendard,sans-serif;color:#33404d">프레임워크</label>
+          <span style="display:inline-flex;align-items:center;height:19px;padding:0 7px;border-radius:4px;background:#f5f8fe;border:1px solid #dbe3f2;font:600 10.5px Pretendard,sans-serif;color:#2563eb">저장소 분석 결과 FastAPI 제안 · 확인 필요</span>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:12px">
+          <div>
+            <div style="font:600 10.5px ui-monospace,monospace;letter-spacing:.07em;color:#a3aab4;margin-bottom:6px">BACKEND</div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap">
+              <span style="height:30px;padding:0 12px;display:inline-flex;align-items:center;gap:6px;border:1.5px solid #2563eb;border-radius:6px;background:#f5f8fe;font:600 12.5px Pretendard,sans-serif;color:#1e3a8a">FastAPI<span style="font:10.5px ui-monospace,monospace;color:#2563eb">제안</span></span>
+              <span style="height:30px;padding:0 12px;display:inline-flex;align-items:center;border:1px solid #cdd4dc;border-radius:6px;background:#fff;font:500 12.5px Pretendard,sans-serif;color:#33404d">Flask</span>
+              <span style="height:30px;padding:0 12px;display:inline-flex;align-items:center;border:1px solid #cdd4dc;border-radius:6px;background:#fff;font:500 12.5px Pretendard,sans-serif;color:#33404d">Django</span>
+              <span style="height:30px;padding:0 12px;display:inline-flex;align-items:center;border:1px solid #cdd4dc;border-radius:6px;background:#fff;font:500 12.5px Pretendard,sans-serif;color:#33404d">Express / NestJS</span>
+              <span style="height:30px;padding:0 12px;display:inline-flex;align-items:center;border:1px solid #cdd4dc;border-radius:6px;background:#fff;font:500 12.5px Pretendard,sans-serif;color:#33404d">Spring Boot (Maven)</span>
+              <span style="height:30px;padding:0 12px;display:inline-flex;align-items:center;border:1px solid #cdd4dc;border-radius:6px;background:#fff;font:500 12.5px Pretendard,sans-serif;color:#33404d">Spring Boot (Gradle)</span>
+              <span style="height:30px;padding:0 12px;display:inline-flex;align-items:center;border:1px solid #cdd4dc;border-radius:6px;background:#fff;font:500 12.5px Pretendard,sans-serif;color:#33404d">Go HTTP</span>
+            </div>
+          </div>
+          <div>
+            <div style="font:600 10.5px ui-monospace,monospace;letter-spacing:.07em;color:#a3aab4;margin-bottom:6px">FRONTEND · CUSTOM</div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap">
+              <span style="height:30px;padding:0 12px;display:inline-flex;align-items:center;border:1px solid #cdd4dc;border-radius:6px;background:#fff;font:500 12.5px Pretendard,sans-serif;color:#33404d">Static HTML / JS</span>
+              <span style="height:30px;padding:0 12px;display:inline-flex;align-items:center;border:1px solid #cdd4dc;border-radius:6px;background:#fff;font:500 12.5px Pretendard,sans-serif;color:#33404d">Vite</span>
+              <span style="height:30px;padding:0 12px;display:inline-flex;align-items:center;border:1px solid #cdd4dc;border-radius:6px;background:#fff;font:500 12.5px Pretendard,sans-serif;color:#33404d">CRA</span>
+              <span style="height:30px;padding:0 12px;display:inline-flex;align-items:center;border:1px solid #cdd4dc;border-radius:6px;background:#fff;font:500 12.5px Pretendard,sans-serif;color:#33404d">Next.js</span>
+              <span style="height:30px;padding:0 12px;display:inline-flex;align-items:center;border:1px solid #cdd4dc;border-radius:6px;background:#fff;font:500 12.5px Pretendard,sans-serif;color:#33404d">기존 Dockerfile</span>
+            </div>
+          </div>
+        </div>
+
+        <div style="height:1px;background:#eef0f2;margin:20px 0"></div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+          <div>
+            <label style="display:block;font:600 12px Pretendard,sans-serif;color:#33404d;margin-bottom:6px">외부 접속</label>
+            <div style="display:inline-flex;border:1px solid #cdd4dc;border-radius:6px;overflow:hidden">
+              <span style="height:32px;padding:0 13px;display:inline-flex;align-items:center;font:600 12.5px Pretendard,sans-serif;color:#6b7785">웹 공개</span>
+              <span style="height:32px;padding:0 13px;display:inline-flex;align-items:center;background:#1c242d;color:#fff;font:600 12.5px Pretendard,sans-serif">내부 전용</span>
+            </div>
+          </div>
+          <div>
+            <label style="display:block;font:600 12px Pretendard,sans-serif;color:#33404d;margin-bottom:6px">호스트 포트</label>
+            <div style="height:36px;border:1px solid #cdd4dc;border-radius:6px;background:#fff;display:flex;align-items:center;padding:0 11px;font:13.5px ui-monospace,monospace;color:#1c242d">9002<span style="margin-left:auto;font:11.5px Pretendard,sans-serif;color:#6b7785">자동 추천 · 9000–9100</span></div>
+          </div>
+        </div>
+        <div style="margin-top:16px">
+          <label style="display:block;font:600 12px Pretendard,sans-serif;color:#33404d;margin-bottom:6px">환경변수 이름</label>
+          <div style="min-height:36px;border:1px solid #cdd4dc;border-radius:6px;background:#fff;display:flex;align-items:center;gap:7px;padding:6px 9px;flex-wrap:wrap">
+            <span style="height:22px;padding:0 8px;display:inline-flex;align-items:center;gap:6px;border-radius:4px;background:#f1f3f5;font:11.5px ui-monospace,monospace;color:#1c242d">DATABASE_URL<span style="color:#a3aab4">✕</span></span>
+            <span style="height:22px;padding:0 8px;display:inline-flex;align-items:center;gap:6px;border-radius:4px;background:#f1f3f5;font:11.5px ui-monospace,monospace;color:#1c242d">SECRET_KEY<span style="color:#a3aab4">✕</span></span>
+            <span style="font:12.5px Pretendard,sans-serif;color:#a3aab4">이름 추가</span>
+          </div>
+          <div style="font:11.5px Pretendard,sans-serif;color:#949daa;margin-top:5px">값은 배포 후 환경변수 화면에서 입력합니다. 요청에 비밀값을 담지 않습니다.</div>
+        </div>
+      </div>
+    </div>
+
+    <div>
+      <div style="position:sticky;top:0;background:#fff;border:1px solid #e2e6ea;border-radius:8px;padding:16px 16px 18px">
+        <div style="font:600 10.5px ui-monospace,monospace;letter-spacing:.08em;color:#a3aab4">실행 계획</div>
+        <div style="display:grid;grid-template-columns:60px 1fr;gap:8px 10px;margin-top:12px;font:12.5px/1.45 Pretendard,sans-serif">
+          <div style="color:#8a929c">서비스</div><div style="color:#1c242d;font-weight:600">horse_api</div>
+          <div style="color:#8a929c">런타임</div><div style="color:#1c242d">FastAPI · Uvicorn</div>
+          <div style="color:#8a929c">포트</div><div style="font:12.5px ui-monospace,monospace;color:#1c242d">9002→3000</div>
+          <div style="color:#8a929c">공개</div><div style="color:#1c242d">없음 (내부 전용)</div>
+        </div>
+        <div style="height:1px;background:#eef0f2;margin:14px 0"></div>
+        <div style="font:600 11.5px Pretendard,sans-serif;color:#33404d;margin-bottom:7px">진행 순서</div>
+        <div style="display:flex;flex-direction:column;gap:6px;font:12.5px/1.4 Pretendard,sans-serif;color:#6b7785">
+          <div>1 · 저장소 클론 및 구조 검증</div>
+          <div>2 · compose 생성 · 이미지 빌드</div>
+          <div>3 · 컨테이너 실행 · 헬스 확인</div>
+        </div>
+        <div style="margin-top:14px;padding:10px 11px;border:1px solid #f3dfa2;border-radius:6px;background:#fffbeb;font:12px/1.5 Pretendard,sans-serif;color:#8a5a08">빌드에 약 180MB가 필요합니다. 현재 디스크 여유는 394.8MB입니다.</div>
+        <button style="width:100%;height:36px;margin-top:14px;border:1px solid #2563eb;border-radius:6px;background:#2563eb;color:#fff;font:600 13px Pretendard,sans-serif;cursor:pointer">배포 실행</button>
+        <div style="margin-top:8px;font:11.5px/1.5 Pretendard,sans-serif;color:#949daa;text-align:center">실행 전 이 요약을 한 번 더 확인합니다.</div>
+      </div>
+    </div>
+  </div>
+</div>
+</div>
+
+<div class="dv-opt" id="2j">
+<div class="dv-olabel"><a class="dv-oid" href="#2j">2j</a><b>로그인 위치 — 퍼널을 늘리지 않는다.</b> 별도 로그인 페이지는 없다. <b>진입점은 항상 홈</b>이고, 로그인 안 한 사람에게는 같은 홈이 공개 범위로 보인다(공개 프로젝트 + 서버 가용량). 로그인은 헤더 버튼 → <b>같은 화면 위 모달</b>. 성공하면 페이지 이동 없이 그 자리에서 내 프로젝트가 채워진다.</div>
+<div class="dv-card" style="width:900px;background:#f6f7f8;position:relative;overflow:hidden;height:560px">
+  <div style="display:flex;align-items:center;justify-content:space-between;height:50px;padding:0 22px;background:#fff;border-bottom:1px solid #e2e6ea">
+    <div style="display:flex;align-items:center;gap:11px"><div style="width:22px;height:22px;border-radius:5px;background:#0f1419;display:grid;place-items:center"><div style="width:8px;height:8px;border:1.6px solid #fff;border-radius:1px;transform:rotate(45deg)"></div></div><span style="font:600 14px Pretendard,sans-serif;color:#0f1419;letter-spacing:-.01em">Cloud Platform</span></div>
+    <button style="height:30px;padding:0 13px;border:1px solid #1c242d;border-radius:6px;background:#1c242d;color:#fff;font:600 12.5px Pretendard,sans-serif;cursor:pointer">로그인</button>
+  </div>
+  <div style="padding:24px 22px">
+    <div style="display:flex;align-items:center;gap:14px;margin-bottom:14px">
+      <h1 style="margin:0;font:600 24px/1.2 Pretendard,sans-serif;color:#0f1419;letter-spacing:-.015em">프로젝트</h1>
+      <span style="display:inline-flex;align-items:center;height:22px;padding:0 8px;border-radius:4px;background:#f1f3f5;border:1px solid #e2e6ea;font:600 11px ui-monospace,monospace;color:#6b7785">공개 범위</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:20px;padding:12px 16px;background:#fff;border:1px solid #e2e6ea;border-radius:8px 8px 0 0;border-bottom:none">
+      <span style="font:600 10.5px ui-monospace,monospace;letter-spacing:.08em;color:#8a929c">서버</span>
+      <div style="display:flex;align-items:center;gap:8px"><span style="font:500 12.5px Pretendard,sans-serif;color:#6b7785">메모리</span><div style="width:76px;height:5px;border-radius:3px;background:#e8ebee;overflow:hidden"><div style="width:59%;height:5px;background:#6b7785"></div></div><span style="font:600 12.5px ui-monospace,monospace;color:#1c242d">59.1%</span></div>
+      <div style="display:flex;align-items:center;gap:8px"><span style="font:500 12.5px Pretendard,sans-serif;color:#6b7785">디스크</span><div style="width:76px;height:5px;border-radius:3px;background:#e8ebee;overflow:hidden"><div style="width:96%;height:5px;background:#b42318"></div></div><span style="font:600 12.5px ui-monospace,monospace;color:#b42318">95.8%</span></div>
+    </div>
+    <div style="background:#fff;border:1px solid #e2e6ea;border-radius:0 0 8px 8px">
+      <div style="display:flex;align-items:center;gap:14px;padding:15px 16px;border-bottom:1px solid #eef0f2">
+        <span style="font:600 15px Pretendard,sans-serif;color:#0f1419">demoa</span>
+        <span style="font:12.5px Pretendard,sans-serif;color:#6b7785">공개 서비스 1개</span>
+        <a href="#2j" style="margin-left:auto;font:500 12.5px ui-monospace,monospace;text-decoration:none">demo-a ↗</a>
+      </div>
+      <div style="display:flex;align-items:center;gap:14px;padding:15px 16px">
+        <span style="font:600 15px Pretendard,sans-serif;color:#0f1419">horse_race</span>
+        <span style="font:12.5px Pretendard,sans-serif;color:#6b7785">공개 서비스 1개</span>
+        <a href="#2j" style="margin-left:auto;font:500 12.5px ui-monospace,monospace;text-decoration:none">horse_front ↗</a>
+      </div>
+    </div>
+    <div style="margin-top:12px;font:12.5px/1.6 Pretendard,sans-serif;color:#949daa">비회원에게는 공개 URL이 있는 프로젝트만, 이름과 바로가기까지만 보인다. 서비스 상태·메모리·조작·AI는 목록에 존재하지 않는다 — 잠긴 버튼을 보여주고 나중에 막지 않는다.</div>
+  </div>
+  <div style="position:absolute;inset:0;background:rgba(15,20,25,.34)"></div>
+  <div style="position:absolute;left:50%;top:78px;transform:translateX(-50%);width:352px;background:#fff;border:1px solid #d3d8de;border-radius:10px;box-shadow:0 20px 52px rgba(15,20,25,.26);padding:22px 22px 20px">
+    <div style="display:flex;align-items:center"><span style="font:600 15.5px Pretendard,sans-serif;color:#0f1419">로그인</span><span style="margin-left:auto;font:13px Pretendard,sans-serif;color:#a3aab4">✕</span></div>
+    <label style="display:block;font:600 12px Pretendard,sans-serif;color:#33404d;margin:18px 0 6px">아이디</label>
+    <div style="height:36px;border:1px solid #cdd4dc;border-radius:6px;display:flex;align-items:center;padding:0 11px;font:13.5px Pretendard,sans-serif;color:#1c242d">minjae</div>
+    <label style="display:block;font:600 12px Pretendard,sans-serif;color:#33404d;margin:14px 0 6px">비밀번호</label>
+    <div style="height:36px;border:1.5px solid #b42318;border-radius:6px;display:flex;align-items:center;padding:0 11px;font:13.5px Pretendard,sans-serif;color:#1c242d">••••••••</div>
+    <div style="display:flex;gap:7px;margin-top:8px;font:12.5px/1.5 Pretendard,sans-serif;color:#b42318"><span style="flex:none;width:14px;height:14px;margin-top:2px;border-radius:50%;background:#b42318;color:#fff;font:700 9px/14px Pretendard,sans-serif;text-align:center">!</span><span>비밀번호가 맞지 않습니다. 5회 실패하면 10분 잠깁니다. (2/5)</span></div>
+    <button style="width:100%;height:38px;margin-top:16px;border:1px solid #2563eb;border-radius:6px;background:#2563eb;color:#fff;font:600 13.5px Pretendard,sans-serif;cursor:pointer">로그인</button>
+    <div style="margin-top:12px;font:11.5px/1.5 Pretendard,sans-serif;color:#949daa;text-align:center">닫으면 지금 보던 공개 목록으로 돌아갑니다.</div>
+  </div>
+</div>
+</div>
+
+<div class="dv-opt" id="2k">
+<div class="dv-olabel"><a class="dv-oid" href="#2k">2k</a><b>상태.</b> 로딩은 자리를 잡아두는 스켈레톤, 빈 상태는 다음 한 걸음만, 오류는 원인과 재시도, 권한 거부는 <b>누르기 전에</b>. 긴 이름·긴 URL은 자르고 tooltip, 좁은 화면은 표가 카드로 접힌다.</div>
+<div style="display:flex;flex-wrap:wrap;gap:18px;align-items:flex-start;width:1320px">
+  <div class="dv-card" style="width:420px;background:#fff;padding:18px">
+    <div style="font:600 10.5px ui-monospace,monospace;letter-spacing:.08em;color:#a3aab4;margin-bottom:14px">로딩 · 서버 조회 2–4초</div>
+    <div style="display:flex;align-items:center;gap:20px;padding-bottom:14px;border-bottom:1px solid #eef0f2">
+      <div style="width:44px;height:9px;border-radius:3px;background:#eef0f2"></div>
+      <div style="width:120px;height:9px;border-radius:3px;background:#f3f5f6"></div>
+      <div style="width:96px;height:9px;border-radius:3px;background:#f3f5f6"></div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:15px;margin-top:15px">
+      <div style="display:flex;align-items:center;gap:14px"><div style="width:86px;height:12px;border-radius:3px;background:#eef0f2"></div><div style="width:52px;height:12px;border-radius:3px;background:#f3f5f6"></div><div style="flex:1"></div><div style="width:56px;height:26px;border-radius:6px;background:#f3f5f6"></div></div>
+      <div style="display:flex;align-items:center;gap:14px"><div style="width:112px;height:12px;border-radius:3px;background:#eef0f2"></div><div style="width:52px;height:12px;border-radius:3px;background:#f3f5f6"></div><div style="flex:1"></div><div style="width:56px;height:26px;border-radius:6px;background:#f3f5f6"></div></div>
+      <div style="display:flex;align-items:center;gap:14px"><div style="width:74px;height:12px;border-radius:3px;background:#eef0f2"></div><div style="width:52px;height:12px;border-radius:3px;background:#f3f5f6"></div><div style="flex:1"></div><div style="width:56px;height:26px;border-radius:6px;background:#f3f5f6"></div></div>
+    </div>
+    <div style="margin-top:16px;font:12px Pretendard,sans-serif;color:#a3aab4">Docker stats를 읽는 중입니다 · 3초 넘으면 캐시된 값을 먼저 보여줍니다</div>
+  </div>
+
+  <div class="dv-card" style="width:420px;background:#fff;padding:18px">
+    <div style="font:600 10.5px ui-monospace,monospace;letter-spacing:.08em;color:#a3aab4;margin-bottom:14px">빈 상태 · 서비스 없음</div>
+    <div style="padding:34px 0 30px;text-align:center">
+      <div style="width:34px;height:34px;margin:0 auto;border:1.5px dashed #cdd4dc;border-radius:7px"></div>
+      <div style="font:600 15px Pretendard,sans-serif;color:#1c242d;margin-top:14px">아직 서비스가 없습니다</div>
+      <div style="font:13px/1.6 Pretendard,sans-serif;color:#6b7785;margin-top:5px">GitHub 저장소 하나로 첫 서비스를 올릴 수 있습니다.</div>
+      <button style="height:34px;padding:0 14px;margin-top:16px;border:1px solid #2563eb;border-radius:6px;background:#2563eb;color:#fff;font:600 13px Pretendard,sans-serif;cursor:pointer">새 서비스 배포</button>
+    </div>
+  </div>
+
+  <div class="dv-card" style="width:420px;background:#fff;padding:18px">
+    <div style="font:600 10.5px ui-monospace,monospace;letter-spacing:.08em;color:#a3aab4;margin-bottom:14px">오류 · 에이전트 무응답</div>
+    <div style="padding:13px 14px;border:1px solid #f3c4c0;border-radius:7px;background:#fef7f6">
+      <div style="font:600 13.5px Pretendard,sans-serif;color:#7f1d1a">운영 AI가 응답하지 않습니다</div>
+      <div style="font:12.5px/1.6 Pretendard,sans-serif;color:#8a4441;margin-top:5px">demoa 에이전트가 20초 안에 응답하지 않았습니다. 서비스 상태와 조작 버튼은 정상 동작합니다.</div>
+      <div style="display:flex;gap:8px;margin-top:12px">
+        <button style="height:30px;padding:0 12px;border:1px solid #e6c9c5;border-radius:6px;background:#fff;color:#b42318;font:600 12.5px Pretendard,sans-serif;cursor:pointer">다시 시도</button>
+        <button style="height:30px;padding:0 11px;border:1px solid transparent;border-radius:6px;background:transparent;color:#8a4441;font:600 12.5px Pretendard,sans-serif;cursor:pointer">AI 없이 계속</button>
+      </div>
+    </div>
+    <div style="margin-top:14px;padding:11px 13px;border:1px solid #f3dfa2;border-radius:7px;background:#fffbeb;font:12.5px/1.55 Pretendard,sans-serif;color:#8a5a08"><b style="font-weight:600">API 연결이 끊겼습니다.</b> 마지막 확인 02:31 · 화면 값은 그때 기준입니다.</div>
+  </div>
+
+  <div class="dv-card" style="width:420px;background:#fff;padding:18px">
+    <div style="font:600 10.5px ui-monospace,monospace;letter-spacing:.08em;color:#a3aab4;margin-bottom:14px">권한 · 누르기 전에</div>
+    <div style="display:flex;align-items:center;gap:14px;padding:13px 0;border-bottom:1px solid #eef0f2">
+      <div><div style="font:600 14.5px Pretendard,sans-serif;color:#0f1419">metrics</div><div style="font:12.5px Pretendard,sans-serif;color:#6b7785;margin-top:3px">멤버가 아닙니다</div></div>
+      <div style="margin-left:auto;display:flex;align-items:center;gap:9px">
+        <span style="font:11.5px Pretendard,sans-serif;color:#949daa">접근 요청</span>
+        <button style="height:30px;padding:0 12px;border:1px solid #e2e6ea;border-radius:6px;background:#f1f3f5;color:#a3aab4;font:600 12.5px Pretendard,sans-serif" disabled="disabled">열기</button>
+      </div>
+    </div>
+    <div style="margin-top:14px;font:600 10.5px ui-monospace,monospace;letter-spacing:.08em;color:#a3aab4;margin-bottom:10px">긴 이름 · 긴 URL</div>
+    <div style="display:flex;align-items:center;gap:12px;padding:12px 0;border-top:1px solid #eef0f2">
+      <div style="min-width:0;flex:1">
+        <div style="font:600 14.5px Pretendard,sans-serif;color:#0f1419;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">horse-race-realtime-odds-collector</div>
+        <div style="font:12px ui-monospace,monospace;color:#6b7785;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">github.com/minjae/horse-race-realtime-odds-collector-service</div>
+      </div>
+      <button style="flex:none;height:30px;width:30px;padding:0;border:1px solid #cdd4dc;border-radius:6px;background:#fff;color:#6b7785;font:600 13px Pretendard,sans-serif;cursor:pointer">···</button>
+    </div>
+  </div>
+
+  <div class="dv-card" style="width:340px;background:#f6f7f8;padding:0">
+    <div style="padding:14px 14px 4px;font:600 10.5px ui-monospace,monospace;letter-spacing:.08em;color:#a3aab4">좁은 화면 · 표 → 카드</div>
+    <div style="padding:10px 14px 18px">
+      <div style="background:#fff;border:1px solid #e2e6ea;border-radius:8px;padding:13px 14px;margin-bottom:10px">
+        <div style="display:flex;align-items:center;gap:9px"><span style="font:600 15px Pretendard,sans-serif;color:#0f1419">demo-a</span><span style="display:inline-flex;align-items:center;gap:5px;height:21px;padding:0 8px 0 7px;border-radius:4px;background:#ecfdf3;border:1px solid #b7e4c7;font:600 11px Pretendard,sans-serif;color:#067647"><span style="width:5px;height:5px;border-radius:50%;background:#067647"></span>실행 중</span></div>
+        <div style="display:flex;gap:14px;margin-top:9px;font:12px ui-monospace,monospace;color:#4b5565"><span>9000→3000</span><span>9.3MB · 1%</span></div>
+        <div style="display:flex;gap:7px;margin-top:12px">
+          <button style="flex:1;height:34px;border:1px solid #cdd4dc;border-radius:6px;background:#fff;color:#1c242d;font:600 12.5px Pretendard,sans-serif;cursor:pointer">로그</button>
+          <button style="flex:1;height:34px;border:1px solid #cdd4dc;border-radius:6px;background:#fff;color:#1c242d;font:600 12.5px Pretendard,sans-serif;cursor:pointer">재시작</button>
+          <button style="flex:none;width:44px;height:34px;border:1px solid #cdd4dc;border-radius:6px;background:#fff;color:#6b7785;font:600 13px Pretendard,sans-serif;cursor:pointer">···</button>
+        </div>
+      </div>
+      <div style="background:#fff;border:1px solid #e2e6ea;border-radius:8px;padding:13px 14px">
+        <div style="display:flex;align-items:center;gap:9px"><span style="font:600 15px Pretendard,sans-serif;color:#0f1419">collector</span><span style="display:inline-flex;align-items:center;gap:5px;height:21px;padding:0 8px 0 7px;border-radius:4px;background:#fffbeb;border:1px solid #f3dfa2;font:600 11px Pretendard,sans-serif;color:#b45309"><span style="width:5px;height:5px;background:#b45309;transform:rotate(45deg)"></span>재시작 중</span></div>
+        <div style="margin-top:9px;font:12.5px Pretendard,sans-serif;color:#b42318">재시작 13회</div>
+        <div style="display:flex;gap:7px;margin-top:12px">
+          <button style="flex:1;height:34px;border:1px solid #2563eb;border-radius:6px;background:#2563eb;color:#fff;font:600 12.5px Pretendard,sans-serif;cursor:pointer">로그 보기</button>
+          <button style="flex:none;width:44px;height:34px;border:1px solid #cdd4dc;border-radius:6px;background:#fff;color:#6b7785;font:600 13px Pretendard,sans-serif;cursor:pointer">···</button>
+        </div>
+      </div>
+      <div style="margin-top:12px;font:11.5px/1.5 Pretendard,sans-serif;color:#949daa">AI는 하단 고정 버튼으로 내려가고, 열면 전체화면으로 뜬다.</div>
+    </div>
+  </div>
+</div>
+</div>
+
+<div class="dv-opt" id="2l">
+<div class="dv-olabel"><a class="dv-oid" href="#2l">2l</a><b>관리자 = 별도 콘솔이 아니라 같은 홈의 넓은 범위.</b> 화면 구조는 <a href="#2b">2b</a>와 동일하고, 필터가 <b>전체</b>로 넘어가면서 ① 남의 프로젝트 행에 소유자 열이 붙고 ② 서버 줄이 상세로 펼쳐지고 ③ AI 범위 선택에 "전체 서버"가 추가된다. 관리자용 화면을 새로 만들지 않는다 — 권한은 <b>같은 UI의 범위 스위치</b>다.</div>
+<div class="dv-card" style="width:1320px;background:#f6f7f8">
+  <div style="display:flex;align-items:center;justify-content:space-between;height:52px;padding:0 26px;background:#fff;border-bottom:1px solid #e2e6ea">
+    <div style="display:flex;align-items:center;gap:11px">
+      <div style="width:22px;height:22px;border-radius:5px;background:#0f1419;display:grid;place-items:center"><div style="width:8px;height:8px;border:1.6px solid #fff;border-radius:1px;transform:rotate(45deg)"></div></div>
+      <span style="font:600 14px Pretendard,sans-serif;color:#0f1419;letter-spacing:-.01em">Cloud Platform</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:16px">
+      <div style="display:flex;align-items:center;gap:7px"><span style="font:600 12.5px Pretendard,sans-serif;color:#1c242d">Minjae</span><span style="display:inline-flex;align-items:center;height:19px;padding:0 6px;border-radius:4px;background:#f4f2fb;border:1px solid #ddd7f0;font:600 10.5px ui-monospace,monospace;color:#5b4bb8">ADMIN</span></div>
+      <span style="font:500 12.5px Pretendard,sans-serif;color:#6b7785">로그아웃</span>
+    </div>
+  </div>
+  <div style="padding:28px 26px 34px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+      <div style="display:flex;align-items:center;gap:14px">
+        <h1 style="margin:0;font:600 24px/1.2 Pretendard,sans-serif;color:#0f1419;letter-spacing:-.015em">프로젝트</h1>
+        <div style="display:inline-flex;border:1px solid #cdd4dc;border-radius:6px;overflow:hidden;background:#fff">
+          <span style="height:30px;padding:0 12px;display:inline-flex;align-items:center;gap:6px;background:#1c242d;color:#fff;font:600 12.5px Pretendard,sans-serif">전체 프로젝트<span style="font:11.5px ui-monospace,monospace;opacity:.7">9</span></span>
+          <span style="height:30px;padding:0 12px;display:inline-flex;align-items:center;gap:6px;border-left:1px solid #cdd4dc;font:600 12.5px Pretendard,sans-serif;color:#6b7785">내 프로젝트<span style="font:11.5px ui-monospace,monospace;color:#a3aab4">4</span></span>
+        </div>
+      </div>
+      <button style="height:34px;padding:0 14px;border:1px solid #2563eb;border-radius:6px;background:#2563eb;color:#fff;font:600 13px Pretendard,sans-serif;cursor:pointer">새 프로젝트</button>
+    </div>
+
+    <div style="background:#fff;border:1px solid #e2e6ea;border-radius:8px 8px 0 0;border-bottom:none">
+      <div style="display:flex;align-items:center;gap:22px;padding:13px 18px">
+        <span style="font:600 10.5px ui-monospace,monospace;letter-spacing:.08em;color:#8a929c">서버</span>
+        <div style="display:flex;align-items:center;gap:9px"><span style="font:500 12.5px Pretendard,sans-serif;color:#6b7785">컨테이너</span><span style="font:600 13px ui-monospace,monospace;color:#1c242d;font-variant-numeric:tabular-nums">8/9</span></div>
+        <div style="display:flex;align-items:center;gap:9px"><span style="font:500 12.5px Pretendard,sans-serif;color:#6b7785">메모리</span><div style="width:88px;height:5px;border-radius:3px;background:#e8ebee;overflow:hidden"><div style="width:59%;height:5px;background:#6b7785"></div></div><span style="font:600 12.5px ui-monospace,monospace;color:#1c242d;font-variant-numeric:tabular-nums">59.1%</span></div>
+        <div style="display:flex;align-items:center;gap:9px"><span style="font:500 12.5px Pretendard,sans-serif;color:#6b7785">디스크</span><div style="width:88px;height:5px;border-radius:3px;background:#e8ebee;overflow:hidden"><div style="width:96%;height:5px;background:#b42318"></div></div><span style="font:600 12.5px ui-monospace,monospace;color:#b42318;font-variant-numeric:tabular-nums">95.8%</span></div>
+        <span style="margin-left:auto;font:500 12.5px Pretendard,sans-serif;color:#4b5565">상세 접기 ▴</span>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);border-top:1px solid #eef0f2;background:#fafbfc">
+        <div style="padding:11px 18px;border-right:1px solid #eef0f2"><div style="font:600 10.5px ui-monospace,monospace;letter-spacing:.07em;color:#a3aab4">디스크 여유</div><div style="font:600 14px ui-monospace,monospace;color:#1c242d;margin-top:3px">394.8MB</div></div>
+        <div style="padding:11px 18px;border-right:1px solid #eef0f2"><div style="font:600 10.5px ui-monospace,monospace;letter-spacing:.07em;color:#a3aab4">스왑 사용</div><div style="font:600 14px ui-monospace,monospace;color:#b45309;margin-top:3px">534.6MB</div></div>
+        <div style="padding:11px 18px;border-right:1px solid #eef0f2"><div style="font:600 10.5px ui-monospace,monospace;letter-spacing:.07em;color:#a3aab4">가용 포트</div><div style="font:600 14px ui-monospace,monospace;color:#1c242d;margin-top:3px">9002–9100</div></div>
+        <div style="padding:11px 18px"><div style="font:600 10.5px ui-monospace,monospace;letter-spacing:.07em;color:#a3aab4">Docker</div><div style="font:600 14px Pretendard,sans-serif;color:#067647;margin-top:3px">연결됨</div></div>
+      </div>
+    </div>
+    <div style="display:flex;align-items:center;gap:12px;padding:12px 18px;background:#fef3f2;border:1px solid #f3c4c0;font:13px/1.5 Pretendard,sans-serif;color:#7f1d1a">
+      <span style="width:15px;height:15px;flex:none;border-radius:50%;background:#b42318;color:#fff;font:700 10px/15px Pretendard,sans-serif;text-align:center">!</span>
+      <span><b style="font-weight:600">디스크 여유 394.8MB.</b> 새 서비스 빌드가 실패할 수 있다.</span>
+      <button style="margin-left:auto;height:28px;padding:0 11px;border:1px solid #e6c9c5;border-radius:6px;background:#fff;color:#b42318;font:600 12px Pretendard,sans-serif;cursor:pointer">정리 대상 보기</button>
+    </div>
+
+    <div style="background:#fff;border:1px solid #e2e6ea;border-top:none;border-radius:0 0 8px 8px;overflow:hidden">
+      <div style="display:grid;grid-template-columns:1fr 108px 88px 158px 140px 82px;gap:16px;align-items:center;padding:9px 18px;background:#fafbfc;border-bottom:1px solid #e2e6ea;font:600 10.5px ui-monospace,monospace;letter-spacing:.07em;color:#8a929c">
+        <div>프로젝트</div><div>소유자</div><div>실행</div><div>메모리</div><div>스택</div><div></div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 108px 88px 158px 140px 82px;gap:16px;align-items:center;padding:15px 18px 15px 16px;border-bottom:1px solid #eef0f2;border-left:2px solid #b42318;background:#fffdfd">
+        <div><div style="display:flex;align-items:center;gap:9px"><span style="font:600 15px Pretendard,sans-serif;color:#0f1419">metrics</span><span style="display:inline-flex;align-items:center;gap:5px;height:21px;padding:0 8px 0 7px;border-radius:4px;background:#fef3f2;border:1px solid #f3c4c0;font:600 11px Pretendard,sans-serif;color:#b42318"><span style="width:7px;height:2px;background:#b42318"></span>주의 1</span></div><div style="font:12.5px/1.4 Pretendard,sans-serif;color:#b42318;margin-top:4px">collector 재시작 13회</div></div>
+        <div style="font:12.5px Pretendard,sans-serif;color:#1c242d">Minjae</div>
+        <div style="font:600 13px ui-monospace,monospace;color:#1c242d;font-variant-numeric:tabular-nums">1/2</div>
+        <div style="display:flex;align-items:center;gap:8px"><div style="width:52px;height:4px;border-radius:2px;background:#e8ebee;overflow:hidden"><div style="width:31%;height:4px;background:#6b7785"></div></div><span style="font:12.5px ui-monospace,monospace;color:#4b5565">298MB</span></div>
+        <div style="font:12.5px Pretendard,sans-serif;color:#6b7785">FastAPI · Vite</div>
+        <div style="text-align:right"><button style="height:30px;padding:0 12px;border:1px solid #cdd4dc;border-radius:6px;background:#fff;color:#1c242d;font:600 12.5px Pretendard,sans-serif;cursor:pointer">열기</button></div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 108px 88px 158px 140px 82px;gap:16px;align-items:center;padding:15px 18px 15px 16px;border-bottom:1px solid #eef0f2;border-left:2px solid transparent">
+        <div><div style="font:600 15px Pretendard,sans-serif;color:#0f1419">demoa</div><div style="font:12.5px/1.4 Pretendard,sans-serif;color:#6b7785;margin-top:4px">demo-a · demo-b</div></div>
+        <div style="font:12.5px Pretendard,sans-serif;color:#1c242d">Minjae</div>
+        <div style="font:600 13px ui-monospace,monospace;color:#1c242d;font-variant-numeric:tabular-nums">2/2</div>
+        <div style="display:flex;align-items:center;gap:8px"><div style="width:52px;height:4px;border-radius:2px;background:#e8ebee;overflow:hidden"><div style="width:2%;height:4px;background:#6b7785"></div></div><span style="font:12.5px ui-monospace,monospace;color:#4b5565">13.1MB</span></div>
+        <div style="font:12.5px Pretendard,sans-serif;color:#6b7785">Express · Django</div>
+        <div style="text-align:right"><button style="height:30px;padding:0 12px;border:1px solid #cdd4dc;border-radius:6px;background:#fff;color:#1c242d;font:600 12.5px Pretendard,sans-serif;cursor:pointer">열기</button></div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 108px 88px 158px 140px 82px;gap:16px;align-items:center;padding:15px 18px 15px 16px;border-left:2px solid transparent;background:#fcfcfd">
+        <div><div style="font:600 15px Pretendard,sans-serif;color:#0f1419">sohee_portfolio</div><div style="font:12.5px/1.4 Pretendard,sans-serif;color:#6b7785;margin-top:4px">portfolio_web</div></div>
+        <div style="font:12.5px Pretendard,sans-serif;color:#1c242d">Sohee</div>
+        <div style="font:600 13px ui-monospace,monospace;color:#1c242d;font-variant-numeric:tabular-nums">1/1</div>
+        <div style="display:flex;align-items:center;gap:8px"><div style="width:52px;height:4px;border-radius:2px;background:#e8ebee;overflow:hidden"><div style="width:4%;height:4px;background:#6b7785"></div></div><span style="font:12.5px ui-monospace,monospace;color:#4b5565">42MB</span></div>
+        <div style="font:12.5px Pretendard,sans-serif;color:#6b7785">Next.js</div>
+        <div style="text-align:right"><button style="height:30px;padding:0 12px;border:1px solid #cdd4dc;border-radius:6px;background:#fff;color:#1c242d;font:600 12.5px Pretendard,sans-serif;cursor:pointer">열기</button></div>
+      </div>
+    </div>
+
+    <div style="margin-top:16px;display:flex;align-items:center;gap:12px;padding:12px 16px;background:#fff;border:1px solid #e2e6ea;border-radius:8px">
+      <span style="width:20px;height:20px;border-radius:5px;background:#f4f2fb;border:1px solid #ddd7f0;display:grid;place-items:center;font:700 10px Pretendard,sans-serif;color:#5b4bb8">AI</span>
+      <span style="font:600 13px Pretendard,sans-serif;color:#1c242d">운영 AI</span>
+      <div style="display:inline-flex;border:1px solid #cdd4dc;border-radius:6px;overflow:hidden">
+        <span style="height:26px;padding:0 10px;display:inline-flex;align-items:center;font:600 12px Pretendard,sans-serif;color:#6b7785">프로젝트 선택</span>
+        <span style="height:26px;padding:0 10px;display:inline-flex;align-items:center;border-left:1px solid #cdd4dc;background:#f4f2fb;font:600 12px Pretendard,sans-serif;color:#5b4bb8">전체 서버</span>
+      </div>
+      <button style="margin-left:auto;height:30px;padding:0 12px;border:1px solid #cdd4dc;border-radius:6px;background:#fff;color:#1c242d;font:600 12.5px Pretendard,sans-serif;cursor:pointer">열기</button>
+    </div>
+  </div>
+</div>
+</div>
+
+<div class="dv-opt" id="2m">
+<div class="dv-olabel"><a class="dv-oid" href="#2m">2m</a><b>새 프로젝트.</b> 화면을 이동하지 않는다 — 이름 하나만 받는 모달이고, 프로젝트는 껍데기라 만든 직후 할 일은 항상 첫 서비스 배포다. 그래서 주 버튼이 <b>만들고 서비스 배포</b>로 이어진다.</div>
+<div style="display:flex;gap:20px;align-items:flex-start">
+  <div class="dv-card" style="width:760px;background:#f6f7f8;position:relative;overflow:hidden;height:430px">
+    <div style="display:flex;align-items:center;justify-content:space-between;height:50px;padding:0 22px;background:#fff;border-bottom:1px solid #e2e6ea">
+      <div style="display:flex;align-items:center;gap:11px"><div style="width:22px;height:22px;border-radius:5px;background:#0f1419;display:grid;place-items:center"><div style="width:8px;height:8px;border:1.6px solid #fff;border-radius:1px;transform:rotate(45deg)"></div></div><span style="font:600 14px Pretendard,sans-serif;color:#0f1419">Cloud Platform</span></div>
+      <span style="font:500 12.5px Pretendard,sans-serif;color:#a3aab4">Minjae · admin</span>
+    </div>
+    <div style="padding:24px 22px">
+      <div style="font:600 24px Pretendard,sans-serif;color:#0f1419;letter-spacing:-.015em">프로젝트</div>
+      <div style="margin-top:16px;height:52px;background:#fff;border:1px solid #e2e6ea;border-radius:8px"></div>
+      <div style="margin-top:10px;height:120px;background:#fff;border:1px solid #e2e6ea;border-radius:8px"></div>
+    </div>
+    <div style="position:absolute;inset:0;background:rgba(15,20,25,.34)"></div>
+    <div style="position:absolute;left:50%;top:70px;transform:translateX(-50%);width:360px;background:#fff;border:1px solid #d3d8de;border-radius:10px;box-shadow:0 20px 52px rgba(15,20,25,.26);padding:20px 20px 18px">
+      <div style="display:flex;align-items:center"><span style="font:600 15.5px Pretendard,sans-serif;color:#0f1419">새 프로젝트</span><span style="margin-left:auto;font:13px Pretendard,sans-serif;color:#a3aab4">✕</span></div>
+      <label style="display:block;font:600 12px Pretendard,sans-serif;color:#33404d;margin:16px 0 6px">이름</label>
+      <div style="height:36px;border:1px solid #cdd4dc;border-radius:6px;display:flex;align-items:center;gap:8px;padding:0 11px;font:13.5px ui-monospace,monospace;color:#1c242d">horse_race_v2<span style="margin-left:auto;flex:none;width:14px;height:14px;border-radius:50%;background:#067647;color:#fff;font:700 9px/14px Pretendard,sans-serif;text-align:center">✓</span></div>
+      <div style="font:11.5px Pretendard,sans-serif;color:#949daa;margin-top:6px">소문자·숫자·밑줄 · 나중에 바꿀 수 없습니다</div>
+      <button style="width:100%;height:38px;margin-top:16px;border:1px solid #2563eb;border-radius:6px;background:#2563eb;color:#fff;font:600 13.5px Pretendard,sans-serif;cursor:pointer">만들고 서비스 배포</button>
+      <button style="width:100%;height:34px;margin-top:8px;border:1px solid #cdd4dc;border-radius:6px;background:#fff;color:#1c242d;font:600 12.5px Pretendard,sans-serif;cursor:pointer">만들기만</button>
+    </div>
+  </div>
+  <div class="dv-card" style="width:400px;background:#f6f7f8;height:430px">
+    <div style="display:flex;align-items:center;gap:9px;padding:0 18px;height:50px;background:#fff;border-bottom:1px solid #e2e6ea;font:500 13px Pretendard,sans-serif;color:#6b7785">
+      <a href="#2b" style="color:#6b7785;text-decoration:none">프로젝트</a><span style="color:#cdd4dc">/</span><span style="font-weight:600;color:#1c242d">horse_race_v2</span>
+    </div>
+    <div style="padding:22px 18px">
+      <div style="font:600 22px Pretendard,sans-serif;color:#0f1419;letter-spacing:-.015em">horse_race_v2</div>
+      <div style="margin-top:8px;font:12.5px Pretendard,sans-serif;color:#6b7785">방금 만들어짐</div>
+      <div style="margin-top:18px;background:#fff;border:1px solid #e2e6ea;border-radius:8px;padding:32px 18px 30px;text-align:center">
+        <div style="width:34px;height:34px;margin:0 auto;border:1.5px dashed #cdd4dc;border-radius:7px"></div>
+        <div style="font:600 15px Pretendard,sans-serif;color:#1c242d;margin-top:14px">아직 서비스가 없습니다</div>
+        <div style="font:13px/1.6 Pretendard,sans-serif;color:#6b7785;margin-top:5px">GitHub 저장소 하나로 첫 서비스를 올립니다.</div>
+        <button style="height:34px;padding:0 14px;margin-top:16px;border:1px solid #2563eb;border-radius:6px;background:#2563eb;color:#fff;font:600 13px Pretendard,sans-serif;cursor:pointer">새 서비스 배포</button>
+      </div>
+    </div>
+  </div>
+</div>
+</div>
+
+</div>
+<p class="dv-next">이어서 볼 것: "<a href="#2h">2h</a>처럼 전체화면을 기본으로 하고 레일은 없애줘" · "<a href="#2c">2c</a>의 ··· 메뉴 대신 행 확장으로 바꿔줘" · "<a href="#2g">2g</a> 되묻기를 3단계로 더 잘게 쪼개줘"</p>
+</section>
+
+<section class="dv-turn" id="t1">
+<div class="dv-thd"><a class="dv-tid" href="#t1">1</a><span class="dv-tname">현재 상태 — 코드/스크린샷 재현 (비교용)</span></div>
+<div class="dv-opts">
+
+<div class="dv-opt" id="1a">
+<div class="dv-olabel"><a class="dv-oid" href="#1a">1a</a>현재 홈. 사이드바 3개 항목이 세로 공간의 1/3을 쓰고, 프로젝트 카드는 4열 균일 배치라 "어디를 먼저 봐야 하는지"가 없다. 루트 AI 패널이 홈 하단 전체를 차지한다.</div>
+<div class="dv-card" style="width:1180px;background:#f4f6f9">
+  <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 24px 14px;border-bottom:1px solid #d9e1ec;background:#f4f6f9">
+    <div style="display:flex;align-items:center;gap:11px">
+      <div style="width:30px;height:30px;border:1px solid #bed3ff;border-radius:8px;background:#fff;display:grid;place-items:center;color:#2563eb;font:14px Pretendard,sans-serif">◇</div>
+      <div><div style="font:700 15px Pretendard,sans-serif;color:#101828">Cloud Platform</div><div style="font:12px Pretendard,sans-serif;color:#667085">Deploy console</div></div>
+    </div>
+    <div style="display:flex;align-items:center;gap:10px">
+      <span style="font:700 13.5px Pretendard,sans-serif;color:#101828">Minjae</span><span style="font:13px Pretendard,sans-serif;color:#667085">admin</span>
+      <button style="height:36px;padding:0 14px;border:1px solid #d9e1ec;border-radius:8px;background:#fff;color:#253044;font:750 13px Pretendard,sans-serif">로그아웃</button>
+    </div>
+  </div>
+  <div style="display:grid;grid-template-columns:216px 1fr;gap:16px;padding:18px 24px 24px">
+    <div style="background:#fff;border:1px solid #d9e1ec;border-radius:12px;padding:14px 12px">
+      <div style="padding:9px 11px;font:700 13.5px Pretendard,sans-serif;color:#253044">전체 프로젝트</div>
+      <div style="padding:11px;border:1px solid #bed3ff;border-radius:8px;background:#eef4ff;font:750 13.5px Pretendard,sans-serif;color:#2563eb">내 프로젝트</div>
+      <div style="padding:11px;font:700 13.5px Pretendard,sans-serif;color:#253044">새 프로젝트</div>
+      <div style="margin-top:34px;padding:9px 11px;font:12.5px Pretendard,sans-serif;color:#667085">Minjae · admin</div>
+    </div>
+    <div>
+      <div style="background:#fff;border:1px solid #d9e1ec;border-radius:12px;padding:16px">
+        <div style="display:grid;grid-template-columns:1fr 210px 210px;gap:12px;align-items:center">
+          <div><div style="font:12.5px Pretendard,sans-serif;color:#667085">서버 용량</div><div style="font:700 18px Pretendard,sans-serif;color:#101828;margin-top:3px">성능 확인 필요</div><div style="font:13px Pretendard,sans-serif;color:#667085;margin-top:2px">8/9 컨테이너 실행</div></div>
+          <div style="display:flex;align-items:center;gap:11px;border:1px solid #e8edf4;border-radius:10px;padding:11px 13px"><div style="width:38px;height:38px;border-radius:50%;border:3px solid #2563eb;border-right-color:#e8edf4;display:grid;place-items:center;font:700 10px ui-monospace,monospace;color:#101828">59.1%</div><span style="font:700 13.5px Pretendard,sans-serif;color:#253044">메모리</span></div>
+          <div style="display:flex;align-items:center;gap:11px;border:1px solid #e8edf4;border-radius:10px;padding:11px 13px"><div style="width:38px;height:38px;border-radius:50%;border:3px solid #dc2626;border-top-color:#e8edf4;display:grid;place-items:center;font:700 10px ui-monospace,monospace;color:#101828">95.8%</div><span style="font:700 13.5px Pretendard,sans-serif;color:#253044">디스크</span></div>
+        </div>
+        <div style="margin-top:12px;padding:10px 13px;border:1px solid #fde68a;border-radius:8px;background:#fffbeb;font:13px Pretendard,sans-serif;color:#a16207">디스크 여유 394.8MB · 스왑 534.6MB 사용</div>
+      </div>
+      <div style="margin-top:18px"><div style="font:700 19px Pretendard,sans-serif;color:#101828">내 프로젝트</div><div style="font:13px Pretendard,sans-serif;color:#667085;margin-top:4px">운영할 프로젝트를 선택하고 바로 작업을 이어갑니다.</div></div>
+      <div style="margin-top:12px;background:#fff;border:1px solid #d9e1ec;border-radius:12px">
+        <div style="display:grid;grid-template-columns:1fr 200px 250px 74px;gap:14px;align-items:center;padding:16px 18px;border-bottom:1px solid #e8edf4">
+          <div><div style="display:flex;align-items:center;gap:8px"><span style="font:700 17px Pretendard,sans-serif;color:#101828">demoa</span><span style="height:21px;padding:0 8px;display:inline-flex;align-items:center;border-radius:999px;background:#ecfdf3;border:1px solid #bbf7d0;font:700 11px Pretendard,sans-serif;color:#15803d">정상</span></div><div style="display:flex;gap:7px;margin-top:8px"><span style="height:23px;padding:0 9px;display:inline-flex;align-items:center;border:1px solid #d9e1ec;border-radius:999px;font:12px Pretendard,sans-serif;color:#253044">demo-a</span><span style="height:23px;padding:0 9px;display:inline-flex;align-items:center;border:1px solid #d9e1ec;border-radius:999px;font:12px Pretendard,sans-serif;color:#253044">demo-b</span></div></div>
+          <div><div style="font:12.5px Pretendard,sans-serif;color:#667085">실행</div><div style="font:700 15px Pretendard,sans-serif;color:#101828;margin-top:2px">2/2 실행 중</div><div style="display:flex;gap:8px;margin-top:5px;font:12.5px Pretendard,sans-serif;color:#667085">13.1MB 사용 <a href="#1a" style="font-weight:700;text-decoration:none">demo-a 바로가기</a></div></div>
+          <div><div style="font:12.5px Pretendard,sans-serif;color:#667085">최근 배포</div><div style="font:700 13.5px Pretendard,sans-serif;color:#253044;margin-top:2px">기록 없음</div><div style="font:12.5px Pretendard,sans-serif;color:#667085;margin-top:7px">기술스택</div><div style="font:700 13.5px Pretendard,sans-serif;color:#253044;margin-top:2px">Express / NestJS · Django</div></div>
+          <div style="text-align:right"><button style="height:36px;padding:0 14px;border:1px solid #d9e1ec;border-radius:8px;background:#fff;color:#253044;font:750 13px Pretendard,sans-serif">열기</button></div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 200px 250px 74px;gap:14px;align-items:center;padding:16px 18px">
+          <div><div style="display:flex;align-items:center;gap:8px"><span style="font:700 17px Pretendard,sans-serif;color:#101828">horse_race</span><span style="height:21px;padding:0 8px;display:inline-flex;align-items:center;border-radius:999px;background:#ecfdf3;border:1px solid #bbf7d0;font:700 11px Pretendard,sans-serif;color:#15803d">정상</span></div><div style="display:flex;gap:7px;margin-top:8px"><span style="height:23px;padding:0 9px;display:inline-flex;align-items:center;border:1px solid #d9e1ec;border-radius:999px;font:12px Pretendard,sans-serif;color:#253044">horse_front</span></div></div>
+          <div><div style="font:12.5px Pretendard,sans-serif;color:#667085">실행</div><div style="font:700 15px Pretendard,sans-serif;color:#101828;margin-top:2px">1/1 실행 중</div><div style="display:flex;gap:8px;margin-top:5px;font:12.5px Pretendard,sans-serif;color:#667085">0.4MB 사용 <a href="#1a" style="font-weight:700;text-decoration:none">horse_front 바로가기</a></div></div>
+          <div><div style="font:12.5px Pretendard,sans-serif;color:#667085">최근 배포</div><div style="font:700 13.5px Pretendard,sans-serif;color:#253044;margin-top:2px">기록 없음</div><div style="font:12.5px Pretendard,sans-serif;color:#667085;margin-top:7px">기술스택</div><div style="font:700 13.5px Pretendard,sans-serif;color:#253044;margin-top:2px">Static HTML / JavaScript</div></div>
+          <div style="text-align:right"><button style="height:36px;padding:0 14px;border:1px solid #d9e1ec;border-radius:8px;background:#fff;color:#253044;font:750 13px Pretendard,sans-serif">열기</button></div>
+        </div>
+      </div>
+      <div style="margin-top:18px;border:1px solid #bed3ff;border-radius:12px;background:#f2f6ff;padding:16px">
+        <div style="font:700 17px Pretendard,sans-serif;color:#101828">루트 AI 에이전트</div>
+        <div style="display:flex;align-items:center;gap:11px;margin-top:12px">
+          <div style="width:32px;height:32px;border:1px solid #ddd7f0;border-radius:8px;background:#f4f2fb;display:grid;place-items:center;color:#5b4bb8">◫</div>
+          <div><div style="font:12.5px Pretendard,sans-serif;color:#2563eb">루트 범위</div><div style="font:700 15px Pretendard,sans-serif;color:#101828">서버 운영 AI</div><div style="font:12.5px Pretendard,sans-serif;color:#667085">전체 상태 점검 · 프로젝트 요약 · 루트 작업 승인</div></div>
+          <span style="margin-left:auto;height:26px;padding:0 10px;display:inline-flex;align-items:center;border:1px solid #bed3ff;border-radius:999px;background:#fff;font:700 12px Pretendard,sans-serif;color:#2563eb">Admin 전용</span>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:14px">
+          <div style="background:#fff;border:1px solid #bed3ff;border-radius:10px;padding:12px"><div style="font:700 13.5px Pretendard,sans-serif;color:#101828">서버 상태 점검</div><div style="font:12.5px Pretendard,sans-serif;color:#667085;margin-top:3px">디스크, 메모리, swap, 컨테이너 상태 확인</div></div>
+          <div style="background:#fff;border:1px solid #e8edf4;border-radius:10px;padding:12px"><div style="font:700 13.5px Pretendard,sans-serif;color:#101828">프로젝트 요약</div><div style="font:12.5px Pretendard,sans-serif;color:#667085;margin-top:3px">전체 프로젝트와 실행 중인 서비스 정리</div></div>
+          <div style="background:#fff;border:1px solid #e8edf4;border-radius:10px;padding:12px"><div style="font:700 13.5px Pretendard,sans-serif;color:#101828">느림 원인 확인</div><div style="font:12.5px Pretendard,sans-serif;color:#667085;margin-top:3px">디스크와 swap 기준으로 병목 확인</div></div>
+        </div>
+        <div style="margin-top:14px;background:#fff;border:1px solid #bed3ff;border-radius:10px;padding:14px">
+          <div style="font:700 15px Pretendard,sans-serif;color:#101828">전체 서버에서 무엇을 확인할까요?</div>
+          <div style="font:12.5px Pretendard,sans-serif;color:#667085;margin-top:3px">루트 AI는 서버와 모든 프로젝트를 볼 수 있습니다. 변경 작업은 승인 전까지 실행하지 않습니다.</div>
+          <div style="font:12.5px Pretendard,sans-serif;color:#667085;margin-top:12px">전체 점검</div>
+          <div style="display:flex;gap:8px;margin-top:6px"><span style="height:34px;padding:0 12px;display:inline-flex;align-items:center;border:1px solid #d9e1ec;border-radius:8px;font:700 13px Pretendard,sans-serif;color:#253044">서버 상태</span><span style="height:34px;padding:0 12px;display:inline-flex;align-items:center;border:1px solid #d9e1ec;border-radius:8px;font:700 13px Pretendard,sans-serif;color:#253044">확인 필요 컨테이너</span></div>
+          <div style="font:12.5px Pretendard,sans-serif;color:#667085;margin-top:12px">프로젝트 관리</div>
+          <div style="display:flex;gap:8px;margin-top:6px"><span style="height:34px;padding:0 12px;display:inline-flex;align-items:center;border:1px solid #d9e1ec;border-radius:8px;font:700 13px Pretendard,sans-serif;color:#253044">프로젝트 목록</span><span style="height:34px;padding:0 12px;display:inline-flex;align-items:center;border:1px solid #d9e1ec;border-radius:8px;font:700 13px Pretendard,sans-serif;color:#253044">프로젝트 생성 준비</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</div>
+
+<div class="dv-opt" id="1b">
+<div class="dv-olabel"><a class="dv-oid" href="#1b">1b</a>현재 워크스페이스. 우측 레일 3개 카드에서 "배포 요청서 / 상태 요약 / 운영 확인"이 2~4글자씩 잘려 내려간다. 실행 중인 서비스에 "시작"이 파랑 강조로 남아 있고, 재배포와 로그가 같은 무게다. 왼쪽 아래는 비어 있다.</div>
+<div class="dv-card" style="width:1180px;background:#f4f6f9">
+  <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 24px 14px;border-bottom:1px solid #d9e1ec">
+    <div style="display:flex;align-items:center;gap:11px">
+      <div style="width:30px;height:30px;border:1px solid #bed3ff;border-radius:8px;background:#fff;display:grid;place-items:center;color:#2563eb;font:14px Pretendard,sans-serif">◇</div>
+      <div><div style="font:700 15px Pretendard,sans-serif;color:#101828">Cloud Platform</div><div style="font:12px Pretendard,sans-serif;color:#667085">Deploy console</div></div>
+    </div>
+    <div style="display:flex;align-items:center;gap:10px"><span style="font:700 13.5px Pretendard,sans-serif;color:#101828">Minjae</span><span style="font:13px Pretendard,sans-serif;color:#667085">admin</span><button style="height:36px;padding:0 14px;border:1px solid #d9e1ec;border-radius:8px;background:#fff;color:#253044;font:750 13px Pretendard,sans-serif">로그아웃</button></div>
+  </div>
+  <div style="padding:18px 24px 24px">
+    <div style="background:#fff;border:1px solid #d9e1ec;border-radius:12px;padding:16px 18px">
+      <div style="font:700 13.5px Pretendard,sans-serif;color:#667085">← 프로젝트</div>
+      <div style="display:grid;grid-template-columns:1fr 300px;gap:16px;align-items:center;margin-top:8px">
+        <div>
+          <div style="font:700 26px Pretendard,sans-serif;color:#101828">demoa</div>
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:12px">
+            <div style="border:1px solid #e8edf4;border-radius:10px;padding:11px 13px"><div style="font:12px Pretendard,sans-serif;color:#667085">실행 상태</div><div style="font:700 16px Pretendard,sans-serif;color:#101828;margin-top:3px">2/2 실행 중</div></div>
+            <div style="border:1px solid #e8edf4;border-radius:10px;padding:11px 13px"><div style="font:12px Pretendard,sans-serif;color:#667085">메모리</div><div style="font:700 16px Pretendard,sans-serif;color:#101828;margin-top:3px">12.8MB</div></div>
+            <div style="border:1px solid #e8edf4;border-radius:10px;padding:11px 13px"><div style="font:12px Pretendard,sans-serif;color:#667085">외부 URL</div><div style="font:700 16px Pretendard,sans-serif;color:#101828;margin-top:3px">1개</div></div>
+          </div>
+        </div>
+        <div style="display:flex;gap:9px;justify-content:flex-end;align-self:flex-start">
+          <button style="height:38px;padding:0 13px;border:1px solid #2563eb;border-radius:8px;background:#2563eb;color:#fff;font:750 13px Pretendard,sans-serif">새 서비스 배포</button>
+          <button style="height:38px;padding:0 13px;border:1px solid #d9e1ec;border-radius:8px;background:#fff;color:#253044;font:750 13px Pretendard,sans-serif">프로젝트 목록</button>
+          <button style="height:38px;padding:0 13px;border:1px solid #d9e1ec;border-radius:8px;background:#fff;color:#253044;font:750 13px Pretendard,sans-serif">새로고침</button>
+        </div>
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 300px;gap:16px;margin-top:16px;align-items:start">
+      <div style="background:#fff;border:1px solid #d9e1ec;border-radius:12px;padding:16px 18px;min-height:330px">
+        <div style="display:flex;align-items:center;justify-content:space-between"><div><div style="font:700 19px Pretendard,sans-serif;color:#101828">서비스</div><div style="font:13px Pretendard,sans-serif;color:#667085;margin-top:4px">상태, 프론트 URL, 리소스와 시작/중지/재시작/재배포를 확인합니다.</div></div><span style="height:28px;padding:0 11px;display:inline-flex;align-items:center;border:1px solid #d9e1ec;border-radius:8px;font:700 12.5px Pretendard,sans-serif;color:#253044">2개 서비스</span></div>
+        <div style="display:grid;grid-template-columns:1fr 110px 90px 110px 1fr;gap:10px;padding:11px 0;margin-top:12px;border-top:1px solid #e8edf4;border-bottom:1px solid #e8edf4;font:700 12.5px Pretendard,sans-serif;color:#667085"><div>서비스</div><div>상태</div><div>프론트 URL</div><div>포트</div><div>운영</div></div>
+        <div style="display:grid;grid-template-columns:1fr 110px 90px 110px 1fr;gap:10px;align-items:center;padding:14px 0;border-bottom:1px solid #e8edf4">
+          <div><div style="font:700 15px Pretendard,sans-serif;color:#101828">demo-a</div><div style="font:12.5px Pretendard,sans-serif;color:#667085">공개 서비스</div></div>
+          <div><span style="height:24px;padding:0 9px;display:inline-flex;align-items:center;border-radius:999px;background:#ecfdf3;border:1px solid #bbf7d0;font:700 11.5px Pretendard,sans-serif;color:#15803d">실행 중 · 정상</span></div>
+          <div><a href="#1b" style="font:700 13px Pretendard,sans-serif;text-decoration:none">바로가기</a></div>
+          <div style="font:13px Pretendard,sans-serif;color:#253044">9000→3000</div>
+          <div style="display:flex;gap:6px;justify-content:flex-end">
+            <button style="height:32px;padding:0 10px;border:1px solid #2563eb;border-radius:8px;background:#fff;color:#2563eb;font:750 12.5px Pretendard,sans-serif">시작</button>
+            <button style="height:32px;padding:0 10px;border:1px solid #fecaca;border-radius:8px;background:#fff;color:#dc2626;font:750 12.5px Pretendard,sans-serif">중지</button>
+            <button style="height:32px;padding:0 10px;border:1px solid #d9e1ec;border-radius:8px;background:#fff;color:#253044;font:750 12.5px Pretendard,sans-serif">재시작</button>
+            <button style="height:32px;padding:0 10px;border:1px solid #d9e1ec;border-radius:8px;background:#fff;color:#253044;font:750 12.5px Pretendard,sans-serif">재배포</button>
+            <button style="height:32px;padding:0 10px;border:1px solid #d9e1ec;border-radius:8px;background:#fff;color:#253044;font:750 12.5px Pretendard,sans-serif">로그</button>
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 110px 90px 110px 1fr;gap:10px;align-items:center;padding:14px 0">
+          <div><div style="font:700 15px Pretendard,sans-serif;color:#101828">demo-b</div><div style="font:12.5px Pretendard,sans-serif;color:#667085">내부 서비스</div></div>
+          <div><span style="height:24px;padding:0 9px;display:inline-flex;align-items:center;border-radius:999px;background:#ecfdf3;border:1px solid #bbf7d0;font:700 11.5px Pretendard,sans-serif;color:#15803d">실행 중</span></div>
+          <div style="font:13px Pretendard,sans-serif;color:#667085">내부 통신</div>
+          <div style="font:13px Pretendard,sans-serif;color:#667085">내부 통신</div>
+          <div style="display:flex;gap:6px;justify-content:flex-end">
+            <button style="height:32px;padding:0 10px;border:1px solid #2563eb;border-radius:8px;background:#fff;color:#2563eb;font:750 12.5px Pretendard,sans-serif">시작</button>
+            <button style="height:32px;padding:0 10px;border:1px solid #fecaca;border-radius:8px;background:#fff;color:#dc2626;font:750 12.5px Pretendard,sans-serif">중지</button>
+            <button style="height:32px;padding:0 10px;border:1px solid #d9e1ec;border-radius:8px;background:#fff;color:#253044;font:750 12.5px Pretendard,sans-serif">재시작</button>
+            <button style="height:32px;padding:0 10px;border:1px solid #d9e1ec;border-radius:8px;background:#fff;color:#253044;font:750 12.5px Pretendard,sans-serif">재배포</button>
+            <button style="height:32px;padding:0 10px;border:1px solid #d9e1ec;border-radius:8px;background:#fff;color:#253044;font:750 12.5px Pretendard,sans-serif">로그</button>
+          </div>
+        </div>
+      </div>
+      <div style="border:1px solid #bed3ff;border-radius:12px;background:#f2f6ff;padding:12px">
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px">
+          <div style="background:#fff;border:1px solid #bed3ff;border-radius:10px;padding:9px"><div style="color:#2563eb;font:13px Pretendard,sans-serif">✈</div><div style="font:700 12.5px/1.35 Pretendard,sans-serif;color:#101828;margin-top:5px">배포 요<br>청서</div><div style="font:11.5px/1.35 Pretendard,sans-serif;color:#667085;margin-top:4px">repo와 프레임워<br>크를 검증한 뒤<br>승인 단계로 이<br>동</div></div>
+          <div style="background:#fff;border:1px solid #e8edf4;border-radius:10px;padding:9px"><div style="color:#2563eb;font:13px Pretendard,sans-serif">∿</div><div style="font:700 12.5px/1.35 Pretendard,sans-serif;color:#101828;margin-top:5px">상태 요<br>약</div><div style="font:11.5px/1.35 Pretendard,sans-serif;color:#667085;margin-top:4px">실행 중<br>인 서비<br>스와 확<br>인 필요<br>한 항목<br>정리</div></div>
+          <div style="background:#fff;border:1px solid #e8edf4;border-radius:10px;padding:9px"><div style="color:#2563eb;font:13px Pretendard,sans-serif">☑</div><div style="font:700 12.5px/1.35 Pretendard,sans-serif;color:#101828;margin-top:5px">운영 확<br>인</div><div style="font:11.5px/1.35 Pretendard,sans-serif;color:#667085;margin-top:4px">재시작·<br>재배포<br>전 영향<br>과 체크<br>리스트<br>확인</div></div>
+        </div>
+        <div style="margin-top:12px;display:flex;flex-direction:column;gap:9px">
+          <div style="align-self:flex-end;max-width:86%;background:#dbe6fb;border-radius:10px;padding:9px 11px;font:13px/1.5 Pretendard,sans-serif;color:#101828">서비스 목록 보여줘</div>
+          <div style="background:#fff;border:1px solid #d9e1ec;border-radius:10px;padding:9px 11px;font:13px/1.5 Pretendard,sans-serif;color:#253044">demoa 프로젝트에는 현재 demo-a와 demo-b 두 개의 서비스가 있습니다.</div>
+          <div style="align-self:flex-end;max-width:86%;background:#dbe6fb;border-radius:10px;padding:9px 11px;font:13px/1.5 Pretendard,sans-serif;color:#101828">서비스배포하고싶은데 어떻게해야하지?</div>
+          <div style="background:#fff;border:1px solid #d9e1ec;border-radius:10px;padding:9px 11px;font:13px/1.5 Pretendard,sans-serif;color:#253044">demoa 프로젝트에 새 서비스를 배포하려면 다음 정보가 필요합니다.<br><br>1. 서비스 이름: (예: my-app)<br>2. GitHub 저장소 URL: (예: https://github.com/user/repo)<br>3. 프레임워크: 아래 목록 중 선택해 주세요.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</div>
+
+</div>
+<p class="dv-next">비교용 재현입니다 — 개선안은 위 <a href="#t2">2</a>번 턴에 있습니다.</p>
+</section>
+</section>
+
+</x-dc>
+</body>
+</html>
