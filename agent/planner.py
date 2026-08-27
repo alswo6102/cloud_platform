@@ -13,7 +13,7 @@ import time
 from copy import deepcopy
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from zoneinfo import ZoneInfo
 
 import requests
@@ -214,7 +214,17 @@ def call_llm(
     skills: list[dict[str, Any]],
     context: dict[str, Any] | None = None,
     history: list[dict[str, str]] | None = None,
+    execute: Callable[..., dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    """Plan a turn, running read-only tools to see what is actually there.
+
+    `execute` runs one tool. The caller supplies it because the caller is the
+    one that knows who is asking: the control plane hands in an executor that
+    scopes every call to the caller's namespace. Defaulting to the unscoped
+    runtime is what let a project token read another project's services, so a
+    caller that has a namespace must not rely on the default.
+    """
+    run_tool = execute or execute_cli_skill
     if not llm_status()["configured"]:
         raise llm_not_configured()
     tool_names: dict[str, str] = {}
@@ -399,7 +409,7 @@ def call_llm(
                     )
                 else:
                     try:
-                        observation = execute_cli_skill(
+                        observation = run_tool(
                             skill,
                             arguments,
                             dry_run=False,

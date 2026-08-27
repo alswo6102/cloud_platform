@@ -787,6 +787,65 @@ def _template_version_covers_the_whole_agent():
     assert runtime.project_agent_template_version() == baseline
 
 
+# --- The planner's own tool calls are scoped too -----------------------------
+# chat scoped the mutation it hands to the approval gate, but the read-only
+# tools the planner runs to answer a question went straight to the runtime. A
+# project token could list every project's services just by asking.
+
+
+@check("the_planner_runs_tools_through_the_callers_executor")
+def _planner_takes_an_executor():
+    source = (ROOT / "agent" / "planner.py").read_text()
+    tree = ast.parse(source)
+    call_llm = next(
+        n for n in tree.body
+        if isinstance(n, ast.FunctionDef) and n.name == "call_llm"
+    )
+    parameters = {argument.arg for argument in call_llm.args.args}
+    parameters |= {argument.arg for argument in call_llm.args.kwonlyargs}
+    assert "execute" in parameters, sorted(parameters)
+
+    body = ast.get_source_segment(source, call_llm) or ""
+    observation = [line for line in body.splitlines() if "observation = " in line]
+    assert observation, body[-400:]
+    assert all("execute_cli_skill" not in line for line in observation), observation
+
+
+@check("chat_scopes_the_tools_the_planner_runs")
+def _chat_injects_the_scoped_executor():
+    source = (ROOT / "agent" / "app.py").read_text()
+    tree = ast.parse(source)
+    chat = next(
+        n for n in ast.walk(tree)
+        if isinstance(n, ast.FunctionDef) and n.name == "chat"
+    )
+    call = next(
+        n for n in ast.walk(chat)
+        if isinstance(n, ast.Call)
+        and isinstance(n.func, ast.Name)
+        and n.func.id == "call_llm"
+    )
+    executor = next(
+        (kw.value for kw in call.keywords if kw.arg == "execute"), None
+    )
+    assert isinstance(executor, ast.Name) and executor.id == "scoped_execute", \
+        ast.dump(call)[:300]
+
+
+@check("a_project_token_is_not_offered_root_tools")
+def _root_tools_are_withheld():
+    import skill_registry
+
+    everything = {item["name"] for item in app.available_skills(None)}
+    scoped = {item["name"] for item in app.available_skills("demoa")}
+    # project.ensure_agent is root-only and undocumented, so it was never on
+    # the tool list to begin with.
+    assert everything - scoped == set(skill_registry.root_only_skills()) & everything, \
+        sorted(everything - scoped)
+    assert "project.create" not in scoped, sorted(scoped)
+    assert "service.deploy" in scoped, sorted(scoped)
+
+
 # --- Permissions come from the skill documents ------------------------------
 
 

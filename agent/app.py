@@ -936,6 +936,19 @@ def project_summary_catalog(http_request: Request):
     return project_summaries(namespace)
 
 
+def available_skills(namespace: str | None) -> list[dict[str, Any]]:
+    """The tools this caller may be offered.
+
+    Handing a project agent the root-plane tools meant the planner would pick
+    one, call it, and hand back a 403 as its answer. Do not offer them.
+    """
+    documents = skill_documents()
+    if not namespace:
+        return documents
+    denied = root_only_skills()
+    return [item for item in documents if item["name"] not in denied]
+
+
 @app.post("/chat")
 def chat(request: ChatRequest, http_request: Request):
     namespace = authenticated_namespace(http_request)
@@ -977,9 +990,12 @@ def chat(request: ChatRequest, http_request: Request):
         try:
             plan = call_llm(
                 request.message,
-                skill_documents(),
+                available_skills(namespace),
                 request.context or None,
                 session_history,
+                # The planner runs read-only tools to answer questions. Those
+                # answers are the caller's own namespace or nothing.
+                execute=scoped_execute,
             )
         except Exception as exc:
             # There is no keyword router behind this any more. Guessing produced
