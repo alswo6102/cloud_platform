@@ -30,6 +30,10 @@ PROJECTS.mkdir(parents=True)
 os.environ["PROJECTS_ROOT"] = str(PROJECTS)
 os.environ["PLATFORM_ROOT_TOKEN"] = "review-root-token"
 os.environ["SKILLS_ROOT"] = str(ROOT / "agent" / "skills")
+# Both default to /var/log/skill-agent, which exists in the image and nowhere
+# else. Point them at the throwaway root so the suite runs off the server too.
+os.environ["SESSION_STORE"] = str(PROJECTS / "sessions.json")
+os.environ["AUDIT_LOG"] = str(PROJECTS / "audit.jsonl")
 os.environ.pop("PLATFORM_API", None)
 os.environ.pop("PLATFORM_NAMESPACE", None)
 os.environ.pop("LLM_API_KEY", None)
@@ -54,6 +58,13 @@ def check(label):
         return function
 
     return decorate
+
+
+def runtime_source_between(start: str, end: str) -> str:
+    source = (ROOT / "agent" / "runtime.py").read_text()
+    first = source.index(start)
+    last = source.index(end, first) + len(end)
+    return textwrap.dedent(source[first:last])
 
 
 def lift(path: Path, names: set[str], namespace: dict) -> dict:
@@ -171,13 +182,6 @@ def _environment_names_survive():
     except runtime.SkillError:
         return
     raise AssertionError("잘못된 환경변수 이름이 통과했다")
-
-
-def runtime_source_between(start: str, end: str) -> str:
-    source = (ROOT / "agent" / "runtime.py").read_text()
-    first = source.index(start)
-    last = source.index(end, first) + len(end)
-    return textwrap.dedent(source[first:last])
 
 
 # --- Chat scopes every skill call to the caller's namespace ------------------
@@ -594,18 +598,52 @@ def _trim_keeps_pairs():
 
 @check("an_early_return_closes_every_open_tool_call")
 def _no_unanswered_calls_in_source():
+    # A turn asks for several tools at once. Returning as soon as one of them
+    # decides the turn leaves the others unanswered, and the next request is
+    # rejected for referring to a tool call that never got a result. Every
+    # return that ends a turn while calls are open has to go through finish().
     source = (ROOT / "agent" / "planner.py").read_text()
     tree = ast.parse(source)
-    node = next(
-        n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "call_llm"
+    call_llm = next(
+        n for n in ast.walk(tree)
+        if isinstance(n, ast.FunctionDef) and n.name == "call_llm"
     )
-    body = ast.get_source_segment(source, node) or ""
-    assert "def finish(" in body, "조기 반환이 열린 도구 호출을 닫지 않음"
-    # Every return that carries a decision has to go through finish().
-    for marker in ('"kind": "answer"', '"explanation": f"Selected'):
-        index = body.index(marker)
-        window = body[max(0, index - 400):index]
-        assert "finish(" in window or "transcript()" in window, marker
+    finish = next(
+        (n for n in ast.walk(call_llm)
+         if isinstance(n, ast.FunctionDef) and n.name == "finish"),
+        None,
+    )
+    assert finish is not None, "조기 반환이 열린 도구 호출을 닫지 않음"
+
+    # The one branch with nothing open: the planner answered without calling
+    # any tool, so there is no result to supply.
+    no_tool_calls = next(
+        n for n in ast.walk(call_llm)
+        if isinstance(n, ast.If)
+        and isinstance(n.test, ast.UnaryOp)
+        and isinstance(n.test.op, ast.Not)
+        and isinstance(n.test.operand, ast.Name)
+        and n.test.operand.id == "tool_calls"
+    )
+    exempt = {id(n) for n in ast.walk(no_tool_calls) if isinstance(n, ast.Return)}
+
+    def returns_of(scope):
+        """Returns belonging to this function, not to helpers nested in it."""
+        for child in ast.iter_child_nodes(scope):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+                continue
+            if isinstance(child, ast.Return):
+                yield child
+            yield from returns_of(child)
+
+    for node in returns_of(call_llm):
+        if id(node) in exempt:
+            continue
+        assert (
+            isinstance(node.value, ast.Call)
+            and isinstance(node.value.func, ast.Name)
+            and node.value.func.id == "finish"
+        ), f"line {node.lineno}: 열린 도구 호출을 남긴 채 반환한다"
 
 
 # --- Permissions come from the skill documents ------------------------------
