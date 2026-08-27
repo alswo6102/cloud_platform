@@ -54,8 +54,34 @@ function AgentText({ text }: { text: string }) {
     bullets = [];
   };
 
+  let fence: string[] | null = null;
+
+  const flushFence = () => {
+    if (!fence) return;
+    blocks.push(
+      <pre key={`pre-${blocks.length}`} className="msgCode">
+        {fence.join("\n")}
+      </pre>
+    );
+    fence = null;
+  };
+
   lines.forEach((line, index) => {
     const trimmed = line.trim();
+    // The model quotes logs in fences. Rendered as prose they arrived as three
+    // literal backticks on a line of their own, above unwrapped log text.
+    if (trimmed.startsWith("```")) {
+      if (fence) flushFence();
+      else {
+        flush();
+        fence = [];
+      }
+      return;
+    }
+    if (fence) {
+      fence.push(line);
+      return;
+    }
     if (!trimmed) {
       flush();
       return;
@@ -76,6 +102,8 @@ function AgentText({ text }: { text: string }) {
     blocks.push(<p key={index}>{renderInline(trimmed, index)}</p>);
   });
   flush();
+  // An unterminated fence still has to render the lines it collected.
+  flushFence();
 
   return <>{blocks}</>;
 }
@@ -105,7 +133,9 @@ export function Message({
 
   return (
     <div className={message.tone === "error" ? "msgAgent msgAgent--error" : "msgAgent"}>
-      {message.tools?.map((call) => <ToolBlock key={call.skill + call.summary} call={call} />)}
+      {message.tools?.map((call, index) => (
+        <ToolBlock key={`${index}-${call.skill}`} call={call} />
+      ))}
       {shown && <AgentText text={shown} />}
       {streaming && !done && <span className="streamCursor" aria-hidden="true" />}
       {children}

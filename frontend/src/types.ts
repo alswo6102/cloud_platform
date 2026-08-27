@@ -125,7 +125,8 @@ export type ServiceAction =
   | "stop"
   | "restart"
   | "redeploy"
-  | "ports";
+  | "ports"
+  | "delete";
 
 export type FieldContract = {
   name?: string;
@@ -164,6 +165,8 @@ export type AgentResponse = {
   resume?: unknown;
   missing?: FieldContract[];
   ui?: UiHint | null;
+  /** Read-only skills the planner ran to build this reply, in order. */
+  tools?: Array<{ skill: string; arguments?: Record<string, unknown>; result?: unknown }>;
   field_errors?: Record<string, string>;
   error?: unknown;
 };

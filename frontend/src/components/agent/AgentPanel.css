@@ -189,6 +189,19 @@
   color: var(--danger);
 }
 
+/* Quoted logs. Scrolls inside itself so a long line cannot widen the rail. */
+.msgCode {
+  margin: 8px 0;
+  padding: 9px 10px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-sm);
+  background: var(--surface-mute);
+  font: 11.5px/1.55 var(--mono);
+  color: var(--muted-strong);
+  white-space: pre;
+  overflow-x: auto;
+}
+
 .msgAgent--error {
   color: var(--danger-body);
 }

@@ -843,6 +843,10 @@ def chat(request: ChatRequest, http_request: Request):
                 "kind": "clarification" if request.context else "help",
                 "message": plan["message"],
                 "model": plan.get("model"),
+                # The planner answers questions by running read-only skills in
+                # its own loop, then writes prose. Returning only the prose left
+                # the console unable to say the answer had been checked at all.
+                "tools": plan.get("steps") or None,
                 # The stored task stays on the server for the next turn, but it
                 # is not what this reply is about. Echoing its arguments handed
                 # the console values from an older request.
@@ -872,6 +876,7 @@ def chat(request: ChatRequest, http_request: Request):
                 "skill": skill,
                 "model": final.get("model"),
                 "result": final["result"],
+                "tools": plan.get("steps") or None,
                 "requires_approval": False,
             }, plan.get("transcript"))
 
@@ -933,6 +938,7 @@ def chat(request: ChatRequest, http_request: Request):
                 "model": final.get("model") or plan.get("model"),
                 "arguments": arguments,
                 "missing": preview["needs_input"],
+                "tools": plan.get("steps") or None,
                 "context": {
                     "original_request": original_request(),
                     "skill": skill,
@@ -963,6 +969,7 @@ def chat(request: ChatRequest, http_request: Request):
             "model": final.get("model") or plan.get("model"),
             "arguments": arguments,
             "preview": preview,
+            "tools": plan.get("steps") or None,
             "ui": ui_hint_for_response(
                 skill=skill,
                 arguments=arguments,

@@ -13,7 +13,7 @@ import type {
 } from "../../types";
 import { api, errorText, isRecord } from "../../lib/api";
 import { objectParticle, skillAction, skillLabel } from "../../lib/format";
-import { toolCallFrom } from "../../lib/toolCalls";
+import { toolCallsFrom } from "../../lib/toolCalls";
 import { ErrorPanel } from "../States";
 import { ApprovalCard } from "./ApprovalCard";
 import { AnsweredLine, FrameworkSuggestion, QuestionHint } from "./DeployQuestion";
@@ -176,8 +176,8 @@ export function AgentPanel({
           setContext(data.context as Record<string, unknown>);
         }
 
-        const tool = toolCallFrom(data);
-        const tools = tool ? [tool] : undefined;
+        const calls = toolCallsFrom(data);
+        const tools = calls.length ? calls : undefined;
 
         if (isApprovalResponse(data)) {
           const { plan } = await withPreview({
