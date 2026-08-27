@@ -26,11 +26,21 @@ const STEP_LABELS: Record<string, string> = {
 /** Redeploy replaces a running container; stop takes a service down. */
 function isDestructive(plan: ApprovalPlan) {
   if (plan.skill === "service.redeploy" || plan.skill === "port.manage") return true;
+  if (plan.skill === "service.delete") return true;
   if (plan.skill === "service.control") {
     const action = String(plan.arguments.action || "");
     return action === "stop" || action === "restart";
   }
   return false;
+}
+
+/**
+ * A delete is the one plan whose cost is not that it interrupts something. The
+ * dry run says so in `irreversible`; the card has to say it louder than the
+ * kicker every other destructive plan shares.
+ */
+function isIrreversible(plan: ApprovalPlan) {
+  return isRecord(plan.preview) && plan.preview.irreversible === true;
 }
 
 function previewList(preview: unknown, key: string): string[] {
@@ -67,6 +77,8 @@ export function ApprovalCard({
   onCancel: () => void;
 }) {
   const destructive = isDestructive(plan);
+  const irreversible = isIrreversible(plan);
+  const removes = previewList(plan.preview, "removes");
   const steps = previewList(plan.preview, "steps").map((step) => STEP_LABELS[step] || step);
   const impact = previewList(plan.preview, "impact");
   const checks = previewList(plan.preview, "checks");
@@ -89,12 +101,16 @@ export function ApprovalCard({
   const after = field("after");
   const diskFree = formatMb(summary?.disk_free_mb);
   const disabled = plan.status !== "pending";
+  const releasedPorts = Array.isArray(preview.released_host_ports)
+    ? (preview.released_host_ports as unknown[]).map(String).filter(Boolean)
+    : [];
+  const warning = typeof preview.warning === "string" ? preview.warning : "";
 
   return (
     <div className={destructive ? "approval approval--destructive" : "approval"}>
       <div className="approval__head">
         <span className="approval__kicker">
-          {destructive ? "파괴적 · 승인 필요" : "변경 · 승인 필요"}
+          {irreversible ? "복구 불가 · 승인 필요" : destructive ? "파괴적 · 승인 필요" : "변경 · 승인 필요"}
         </span>
         <span className="approval__status">{STATUS_LABEL[plan.status]}</span>
       </div>
@@ -150,7 +166,30 @@ export function ApprovalCard({
               <div className="approval__specValue">{dockerfileLabel(dockerfile)}</div>
             </>
           )}
+
+          {releasedPorts.length > 0 && (
+            <>
+              <div className="approval__specKey">회수</div>
+              <div className="approval__specValue approval__specValue--mono">
+                {releasedPorts.join(", ")}
+              </div>
+            </>
+          )}
         </div>
+
+        {removes.length > 0 && (
+          <>
+            <div className="approval__rule" />
+            <div className="approval__colTitle approval__colTitle--risk">삭제되는 항목</div>
+            <ul className="approval__removes">
+              {removes.map((item) => (
+                <li key={item}>{item}</li>
+              ))}
+            </ul>
+          </>
+        )}
+
+        {warning && <div className="approval__warning">{warning}</div>}
 
         {(impact.length > 0 || steps.length > 0) && (
           <>

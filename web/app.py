@@ -40,6 +40,7 @@ MUTATION_SKILLS = {
     "service.deploy",
     "service.redeploy",
     "service.control",
+    "service.delete",
     "port.manage",
 }
 PROJECT_AGENT_ENSURE_TTL = float(os.getenv("PROJECT_AGENT_ENSURE_TTL", "300"))

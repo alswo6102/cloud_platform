@@ -830,7 +830,16 @@ def _model_list_survives_a_dead_model():
 def _template_version_covers_the_whole_agent():
     baseline = runtime.project_agent_template_version()
     assert len(baseline) == 16, baseline
-    for relative in ("planner.py", "authz.py", "skill_registry.py", "prompts/planner.md"):
+    for relative in (
+        "planner.py",
+        "authz.py",
+        "skill_registry.py",
+        "prompts/planner.md",
+        # Permissions and the planner's tool list are read out of the skill
+        # documents, so markdown alone can change how an agent behaves.
+        "skills/service-delete/SKILL.md",
+        "skills/service-delete/schema.json",
+    ):
         path = ROOT / "agent" / relative
         original = path.read_bytes()
         path.write_bytes(original + b"\n")
@@ -909,7 +918,7 @@ def _permissions_are_declared():
     import skill_registry
 
     documents = skill_registry.skill_documents()
-    assert len(documents) == 16, len(documents)
+    assert len(documents) == 17, len(documents)
     for document in documents:
         assert document["access"] in {"read", "mutate"}, document["name"]
         assert document["plane"] in {"root", "project", "shared"}, document["name"]
@@ -943,7 +952,7 @@ def _sets_match_the_documents():
         "project.create", "project.ensure_agent", "server.health", "qa.run",
     }), sorted(root)
     assert project == frozenset({
-        "service.deploy", "service.redeploy", "service.status",
+        "service.deploy", "service.redeploy", "service.delete", "service.status",
         "service.logs", "service.control", "port.manage",
     }), sorted(project)
     # Root-plane skills stay refused for a namespace token.

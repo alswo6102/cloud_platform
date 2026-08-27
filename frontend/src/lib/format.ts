@@ -255,6 +255,7 @@ export function skillLabel(skill?: string) {
     "service.logs": "서비스 로그 확인",
     "service.status": "서비스 상태 확인",
     "service.control": "서비스 상태 변경",
+    "service.delete": "서비스 영구 삭제",
     "port.manage": "포트 변경",
     "repository.inspect": "저장소 확인",
     "framework.list": "프레임워크 목록",
@@ -275,6 +276,7 @@ export function skillAction(skill: string, args: Record<string, unknown> = {}) {
     "project.create": "생성",
     "service.deploy": "배포",
     "service.redeploy": "재배포",
+    "service.delete": "삭제",
     "port.manage": "포트 변경"
   };
   return actions[skill] || skillLabel(skill);
@@ -297,7 +299,8 @@ export function serviceActionLabel(action: string) {
     stop: "중지",
     restart: "재시작",
     redeploy: "재배포",
-    ports: "포트 변경"
+    ports: "포트 변경",
+    delete: "삭제"
   };
   return labels[action] || action;
 }

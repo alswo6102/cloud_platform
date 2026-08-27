@@ -139,3 +139,42 @@
     grid-template-columns: 1fr;
   }
 }
+
+/* --------------------------------------------------------- irreversible */
+.approval__removes {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text-strong);
+}
+
+.approval__removes > li {
+  position: relative;
+  padding-left: 13px;
+}
+
+.approval__removes > li::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 8px;
+  width: 5px;
+  height: 1.5px;
+  background: var(--danger);
+}
+
+.approval__warning {
+  margin-top: 12px;
+  padding: 9px 11px;
+  border: 1px solid var(--danger-line);
+  border-radius: var(--r-sm);
+  background: var(--danger-bg);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--danger-ink);
+}

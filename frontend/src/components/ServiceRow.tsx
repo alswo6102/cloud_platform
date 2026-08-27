@@ -28,7 +28,7 @@ export function actionsFor(state: ServiceState): RowActions {
       primary: "start",
       primaryTone: "primary",
       secondary: "logs",
-      menu: ["ports", "redeploy"]
+      menu: ["ports", "redeploy", "delete"]
     };
   }
   if (state === "restarting") {
@@ -37,7 +37,7 @@ export function actionsFor(state: ServiceState): RowActions {
       primary: "logs",
       primaryTone: "primary",
       secondary: "stop",
-      menu: ["ports", "restart", "redeploy"]
+      menu: ["ports", "restart", "redeploy", "delete"]
     };
   }
   if (state === "unknown") {
@@ -45,14 +45,14 @@ export function actionsFor(state: ServiceState): RowActions {
       primary: "logs",
       primaryTone: "quiet",
       secondary: null,
-      menu: ["ports", "restart", "redeploy"]
+      menu: ["ports", "restart", "redeploy", "delete"]
     };
   }
   return {
     primary: "logs",
     primaryTone: "quiet",
     secondary: "restart",
-    menu: ["ports", "stop", "redeploy"]
+    menu: ["ports", "stop", "redeploy", "delete"]
   };
 }
 
@@ -65,6 +65,15 @@ const MENU_META: Record<string, MenuItem> = {
     label: "재배포",
     section: "중단·교체",
     hint: "승인 필요",
+    danger: true
+  },
+  // Its own section, below the divider: everything above this line can be
+  // undone by pressing something else in the same menu. This cannot.
+  delete: {
+    id: "delete",
+    label: "영구 삭제",
+    section: "삭제",
+    hint: "복구 불가",
     danger: true
   }
 };

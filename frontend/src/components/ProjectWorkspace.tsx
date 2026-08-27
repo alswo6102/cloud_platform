@@ -23,8 +23,14 @@ type LogOutput = { service: string; text: string };
 
 /** Reversible enough to confirm in place; nothing here needs the AI panel. */
 const INLINE_CONFIRM: ServiceAction[] = ["stop"];
-/** Replaces a running container — always the approval card. */
-const NEEDS_APPROVAL: ServiceAction[] = ["redeploy"];
+/**
+ * Destroys or replaces something — always the approval card, which is the only
+ * place the dry run's real consequences are shown before anything runs.
+ */
+const APPROVAL_SKILLS: Partial<Record<ServiceAction, string>> = {
+  redeploy: "service.redeploy",
+  delete: "service.delete"
+};
 
 export function ProjectWorkspace({
   auth,
@@ -147,8 +153,9 @@ export function ProjectWorkspace({
       onAskAgent(`${service} 서비스의 호스트 포트를 바꾸고 싶어`);
       return;
     }
-    if (NEEDS_APPROVAL.includes(action)) {
-      onRequestApproval("service.redeploy", { project: projectName, service });
+    const approvalSkill = APPROVAL_SKILLS[action];
+    if (approvalSkill) {
+      onRequestApproval(approvalSkill, { project: projectName, service });
       return;
     }
     if (INLINE_CONFIRM.includes(action)) {

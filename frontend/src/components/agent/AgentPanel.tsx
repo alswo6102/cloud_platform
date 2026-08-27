@@ -71,6 +71,18 @@ function summarizeExecution(data: unknown, skill: string) {
   const done = `${label}${objectParticle(label)} 실행했습니다.`;
   if (!isRecord(data)) return done;
   const result = isRecord(data.result) ? data.result : data;
+  if (skill === "service.delete") {
+    // Nothing is left to link to or look at, so the only useful confirmation
+    // is what came back: the service is gone and the port is free again.
+    const ports = Array.isArray(result.released_host_ports)
+      ? (result.released_host_ports as unknown[]).map(String).filter(Boolean)
+      : [];
+    const service = result.service ? String(result.service) : "";
+    const removed = service ? `${service}${objectParticle(service)} 삭제했습니다.` : done;
+    // Numbers take 이 or 가 by how the last digit is read aloud, so the port
+    // is stated rather than made the subject of a sentence.
+    return ports.length ? `${removed} 회수한 포트: ${ports.join(", ")}` : removed;
+  }
   const status = result.status || result.message || result.action;
   return status ? `${done} ${String(status)}` : done;
 }
