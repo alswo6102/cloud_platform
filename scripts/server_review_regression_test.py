@@ -646,6 +646,28 @@ def _no_unanswered_calls_in_source():
         ), f"line {node.lineno}: 열린 도구 호출을 남긴 채 반환한다"
 
 
+# --- A repository's own image decides its port -------------------------------
+# Deploying with `existing` published the preset's default port. A repository
+# whose Dockerfile exposes 80 was published on 3000: the container ran, docker
+# reported it healthy, and the public URL answered nothing.
+
+
+@check("an_existing_dockerfile_decides_the_container_port")
+def _existing_uses_the_dockerfiles_port():
+    root = PROJECTS / "dockerfile-port"
+    root.mkdir(parents=True, exist_ok=True)
+
+    (root / "Dockerfile").write_text("FROM nginx\nEXPOSE 80\nCMD nginx\n")
+    assert runtime.dockerfile_exposed_ports(root / "Dockerfile") == [80]
+
+    (root / "Dockerfile").write_text(
+        "FROM x\n# EXPOSE 9999\nexpose 8080/tcp 8443\nEXPOSE $PORT\n"
+    )
+    assert runtime.dockerfile_exposed_ports(root / "Dockerfile") == [8080, 8443]
+
+    assert runtime.dockerfile_exposed_ports(root / "Missing") == []
+
+
 # --- A question the user answered is not asked again ------------------------
 # Answering "static" does not repeat the service name, and answering the
 # service name does not repeat the framework, so judging each turn on its own

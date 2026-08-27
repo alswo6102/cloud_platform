@@ -896,12 +896,53 @@ def clone_and_inspect_repository(repo_url: str) -> dict[str, Any]:
             )
 
         candidates = list(dict.fromkeys(candidates))
+        dockerfile_ports = dockerfile_exposed_ports(root / "Dockerfile")
+        if dockerfile_ports:
+            evidence.append(
+                "repository Dockerfile exposes "
+                + ", ".join(str(port) for port in dockerfile_ports)
+            )
         return {
             "repo_url": repo_url,
             "candidates": candidates,
             "evidence": evidence,
             "has_dockerfile": (root / "Dockerfile").is_file(),
+            "dockerfile_ports": dockerfile_ports,
         }
+
+
+def dockerfile_exposed_ports(path: Path) -> list[int]:
+    """Ports a repository's own Dockerfile says it listens on.
+
+    Deploying with `existing` published the preset's default port instead, so a
+    repository whose image listens on 80 was published on a port nothing was
+    bound to. The container ran, reported healthy, and answered nothing.
+    """
+    try:
+        lines = path.read_text(errors="replace").splitlines()
+    except OSError:
+        return []
+    ports: list[int] = []
+    for line in lines:
+        stripped = line.strip()
+        if not stripped.upper().startswith("EXPOSE "):
+            continue
+        for token in stripped[len("EXPOSE "):].split():
+            number = token.split("/")[0]
+            # Build arguments such as EXPOSE $PORT cannot be resolved here.
+            if number.isdigit() and 1 <= int(number) <= 65535:
+                ports.append(int(number))
+    return list(dict.fromkeys(ports))
+
+
+def repository_container_port(repo_url: str) -> int | None:
+    """First port the repository's Dockerfile exposes, if it names one."""
+    try:
+        ports = inspect_repository(repo_url).get("dockerfile_ports") or []
+    except Exception:
+        # A deploy must not fail because the port could not be guessed.
+        return None
+    return int(ports[0]) if ports else None
 
 
 def wait_stable(project: str, service: str, seconds: int = 4) -> dict[str, Any]:
@@ -1613,11 +1654,14 @@ def service_deploy(
     service = str(service)
     repo_url = str(repo_url)
     framework = validate_framework(str(framework))
-    container_port = (
-        int(container_port)
-        if container_port is not None
-        else DEFAULT_CONTAINER_PORT
-    )
+    if container_port is not None:
+        container_port = int(container_port)
+    elif framework == "existing":
+        # The repository's own image decides the port. Presets are built to
+        # listen on DEFAULT_CONTAINER_PORT; an arbitrary repository is not.
+        container_port = repository_container_port(repo_url) or DEFAULT_CONTAINER_PORT
+    else:
+        container_port = DEFAULT_CONTAINER_PORT
     requested_environment_names = environment_names or []
     environment_names = []
     for raw_name in requested_environment_names:
