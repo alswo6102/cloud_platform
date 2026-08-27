@@ -30,6 +30,18 @@ AUTO_ENSURE_PROJECT_AGENT = os.getenv("AUTO_ENSURE_PROJECT_AGENT", "1").lower() 
 AUTH_STORE = Path(os.getenv("AUTH_STORE", "/var/lib/cloud-platform/auth.json"))
 FRONTEND_DIST = Path(os.getenv("FRONTEND_DIST", "/var/www/cloud-platform-console"))
 REQUEST_TIMEOUT = float(os.getenv("WEB_REQUEST_TIMEOUT", "120"))
+# A deploy clones, builds an image, and waits for the container to settle. The
+# runtime allows 900s for the build alone, so the read timeout has to outlast it
+# or the console gives up on work the server is still doing.
+MUTATION_REQUEST_TIMEOUT = float(os.getenv("WEB_MUTATION_TIMEOUT", "960"))
+MUTATION_SKILLS = {
+    "project.create",
+    "project.ensure_agent",
+    "service.deploy",
+    "service.redeploy",
+    "service.control",
+    "port.manage",
+}
 PROJECT_AGENT_ENSURE_TTL = float(os.getenv("PROJECT_AGENT_ENSURE_TTL", "300"))
 SESSION_TOKEN_TTL = float(os.getenv("SESSION_TOKEN_TTL", str(60 * 60 * 12)))
 PROJECT_SUMMARY_CACHE_TTL = float(os.getenv("WEB_PROJECT_SUMMARY_CACHE_TTL", "10"))
@@ -358,6 +370,7 @@ def agent_request(
     path: str,
     *,
     json_body: dict[str, Any] | None = None,
+    timeout: float | None = None,
 ) -> dict[str, Any]:
     try:
         response = requests.request(
@@ -365,7 +378,7 @@ def agent_request(
             f"{SKILL_AGENT_URL}{path}",
             json=json_body,
             headers=control_plane_headers(),
-            timeout=REQUEST_TIMEOUT,
+            timeout=timeout or REQUEST_TIMEOUT,
         )
     except requests.RequestException as exc:
         raise HTTPException(
@@ -406,9 +419,11 @@ def project_agent_request(
     path: str,
     *,
     json_body: dict[str, Any] | None = None,
+    timeout: float | None = None,
 ) -> dict[str, Any]:
     url = f"{project_agent_url(project).rstrip('/')}{path}"
     headers = project_agent_headers(project)
+    read_timeout = timeout or REQUEST_TIMEOUT
     if AUTO_ENSURE_PROJECT_AGENT:
         ensure_project_agent(project)
     try:
@@ -417,9 +432,23 @@ def project_agent_request(
             url,
             json=json_body,
             headers=headers,
-            timeout=REQUEST_TIMEOUT,
+            timeout=read_timeout,
         )
+    except requests.Timeout as exc:
+        # A build outlives this timeout routinely. Retrying here recreated the
+        # agent mid-redeploy and sent the same mutation again, which failed on
+        # the half-finished workspace and reported a deploy that had actually
+        # succeeded as an error. A slow answer is not an unreachable agent.
+        raise HTTPException(
+            status_code=504,
+            detail={
+                "message": f"{project} 작업이 아직 끝나지 않았습니다.",
+                "hint": "서버에서 계속 진행 중일 수 있습니다. 목록을 새로고침해 결과를 확인하세요.",
+            },
+        ) from exc
     except requests.RequestException as first_exc:
+        # Connection-level failures mean the request never landed, so resending
+        # it cannot duplicate work.
         ensure_project_agent(project, force=True)
         wait_project_agent_ready(project)
         try:
@@ -428,7 +457,7 @@ def project_agent_request(
                 url,
                 json=json_body,
                 headers=headers,
-                timeout=REQUEST_TIMEOUT,
+                timeout=read_timeout,
             )
         except requests.RequestException as exc:
             raise HTTPException(
@@ -861,21 +890,20 @@ def admin_execute(
 ) -> dict[str, Any]:
     user_id, role = authenticated_user(authorization)
     require_admin(role)
-    result = agent_request("POST", "/execute", json_body={
-        "skill": payload.skill,
-        "arguments": payload.arguments,
-        "approved": payload.approved,
-        "session_id": conversation_session_id(user_id, "admin"),
-        "resume": payload.resume,
-    })
-    if payload.approved and payload.skill in {
-        "project.create",
-        "project.ensure_agent",
-        "service.deploy",
-        "service.redeploy",
-        "service.control",
-        "port.manage",
-    }:
+    mutating = payload.approved and payload.skill in MUTATION_SKILLS
+    result = agent_request(
+        "POST",
+        "/execute",
+        json_body={
+            "skill": payload.skill,
+            "arguments": payload.arguments,
+            "approved": payload.approved,
+            "session_id": conversation_session_id(user_id, "admin"),
+            "resume": payload.resume,
+        },
+        timeout=MUTATION_REQUEST_TIMEOUT if mutating else None,
+    )
+    if mutating:
         invalidate_read_cache()
     return result
 
@@ -946,14 +974,15 @@ def project_execute(
             generated_at=generated_at,
         )
         return data
-    result = project_agent_request(project, "POST", "/execute", json_body=body)
-    if payload.approved and payload.skill in {
-        "project.create",
-        "service.deploy",
-        "service.redeploy",
-        "service.control",
-        "port.manage",
-    }:
+    mutating = payload.approved and payload.skill in MUTATION_SKILLS
+    result = project_agent_request(
+        project,
+        "POST",
+        "/execute",
+        json_body=body,
+        timeout=MUTATION_REQUEST_TIMEOUT if mutating else None,
+    )
+    if mutating:
         invalidate_read_cache()
     return result
 

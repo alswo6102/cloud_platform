@@ -23,8 +23,8 @@ type LogOutput = { service: string; text: string };
 
 /** Reversible enough to confirm in place; nothing here needs the AI panel. */
 const INLINE_CONFIRM: ServiceAction[] = ["stop"];
-/** Replaces or re-binds a running container — always the approval card. */
-const NEEDS_APPROVAL: ServiceAction[] = ["redeploy", "ports"];
+/** Replaces a running container — always the approval card. */
+const NEEDS_APPROVAL: ServiceAction[] = ["redeploy"];
 
 export function ProjectWorkspace({
   auth,
@@ -34,6 +34,8 @@ export function ProjectWorkspace({
   onRefreshProjects,
   onDeploy,
   onRequestApproval,
+  onAskAgent,
+  refreshToken,
   railSlot,
   railCollapsed,
   dock,
@@ -46,6 +48,9 @@ export function ProjectWorkspace({
   onRefreshProjects: () => Promise<void>;
   onDeploy: () => void;
   onRequestApproval: (skill: string, args: Record<string, unknown>) => void;
+  onAskAgent: (text: string) => void;
+  /** Bumped when the agent panel executes a change, to re-read service state. */
+  refreshToken: number;
   railSlot?: React.ReactNode;
   railCollapsed?: boolean;
   dock?: React.ReactNode;
@@ -102,6 +107,12 @@ export function ProjectWorkspace({
     void refreshRuntime();
   }, [refreshRuntime]);
 
+  // An approved port change rewrites the compose mapping; without this the
+  // table kept showing the port the service no longer listens on.
+  useEffect(() => {
+    if (refreshToken > 0) void refreshRuntime(true);
+  }, [refreshToken, refreshRuntime]);
+
   async function run(service: string, action: ServiceAction) {
     setBusyAction(`${service}:${action}`);
     setLog(null);
@@ -129,9 +140,15 @@ export function ProjectWorkspace({
   }
 
   function handleAction(service: string, action: ServiceAction) {
+    // A port change needs a number the row cannot supply. Hand it to the
+    // conversation, which already knows how to ask for one missing field and
+    // comes back with a real plan; a redeploy needs nothing but the service.
+    if (action === "ports") {
+      onAskAgent(`${service} 서비스의 호스트 포트를 바꾸고 싶어`);
+      return;
+    }
     if (NEEDS_APPROVAL.includes(action)) {
-      const skill = action === "redeploy" ? "service.redeploy" : "port.manage";
-      onRequestApproval(skill, { project: projectName, service });
+      onRequestApproval("service.redeploy", { project: projectName, service });
       return;
     }
     if (INLINE_CONFIRM.includes(action)) {

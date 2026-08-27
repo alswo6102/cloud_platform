@@ -11,8 +11,6 @@ import {
 } from "../lib/format";
 import { ActionMenu, type MenuItem } from "./ActionMenu";
 
-const RESTART_LOOP_AT = 5;
-
 type RowActions = {
   primary: ServiceAction;
   primaryTone: "primary" | "quiet" | "secondary";
@@ -24,7 +22,7 @@ type RowActions = {
  * The state decides which actions exist. Nothing is rendered and then blocked —
  * a running service simply has no `시작` button to press.
  */
-export function actionsFor(state: ServiceState, restartCount: number): RowActions {
+export function actionsFor(state: ServiceState): RowActions {
   if (state === "exited") {
     return {
       primary: "start",
@@ -33,7 +31,7 @@ export function actionsFor(state: ServiceState, restartCount: number): RowAction
       menu: ["ports", "redeploy"]
     };
   }
-  if (state === "restarting" || restartCount >= RESTART_LOOP_AT) {
+  if (state === "restarting") {
     // Looking at the cause has to come before restarting into the same failure.
     return {
       primary: "logs",
@@ -97,13 +95,13 @@ export function ServiceRow({
   const container = runtime?.container;
   const restartCount = container?.restart_count ?? 0;
   const state = serviceStateOf(runtime);
-  const badge = statusBadge(state, restartCount);
-  const actions = actionsFor(state, restartCount);
+  const badge = statusBadge(state);
+  const actions = actionsFor(state);
   const url = publicUrl(runtime);
   const ports = formatPorts(runtime, summary);
   const memory = formatServiceMemory(container?.memory);
   const framework = summary?.framework_label || summary?.framework;
-  const attention = state !== "running" || restartCount >= RESTART_LOOP_AT;
+  const attention = state !== "running";
   const busy = Boolean(busyAction);
 
   const toneClass =
@@ -134,7 +132,8 @@ export function ServiceRow({
               <ArrowUpRight size={11} aria-hidden="true" />
             </a>
           )}
-          {restartCount >= RESTART_LOOP_AT && (
+          {/* Only worth saying while it is the reason logs took over the row. */}
+          {state === "restarting" && restartCount > 0 && (
             <span className="serviceRow__restarts">재시작 {restartCount}회</span>
           )}
         </div>

@@ -3,6 +3,17 @@ import { isRecord } from "../../lib/api";
 import { DASH, formatMb, skillAction, skillLabel } from "../../lib/format";
 import "./ApprovalCard.css";
 
+const DOCKERFILE_LABELS: Record<string, string> = {
+  "use repository Dockerfile": "저장소의 Dockerfile 사용"
+};
+
+/** `regenerate the <framework> preset Dockerfile` — the name varies. */
+function dockerfileLabel(value: string) {
+  if (DOCKERFILE_LABELS[value]) return DOCKERFILE_LABELS[value];
+  const preset = value.match(/^regenerate the (.+) preset Dockerfile$/);
+  return preset ? `${preset[1]} 프리셋 Dockerfile 재생성` : value;
+}
+
 const STEP_LABELS: Record<string, string> = {
   "clone the latest default branch into a temporary directory": "최신 코드를 임시 공간에 내려받기",
   "validate the new root-level Dockerfile": "Dockerfile 검증",
@@ -59,11 +70,23 @@ export function ApprovalCard({
   const steps = previewList(plan.preview, "steps").map((step) => STEP_LABELS[step] || step);
   const impact = previewList(plan.preview, "impact");
   const checks = previewList(plan.preview, "checks");
-  const repoUrl = plan.arguments.repo_url ? String(plan.arguments.repo_url) : "";
-  const project = plan.arguments.project ? String(plan.arguments.project) : "";
-  const service = plan.arguments.service ? String(plan.arguments.service) : "";
-  const framework = plan.arguments.framework ? String(plan.arguments.framework) : "";
-  const hostPort = plan.arguments.host_port;
+  // A redeploy is asked for with nothing but a service name; the repository,
+  // framework, and Dockerfile decision come back from the dry run. Read the
+  // plan first and fall back to what the request carried.
+  const preview = isRecord(plan.preview) ? plan.preview : {};
+  const field = (key: string) => {
+    const value = plan.arguments[key] ?? preview[key];
+    return value === undefined || value === null || value === "" ? "" : String(value);
+  };
+  const repoUrl = field("repo_url");
+  const project = field("project");
+  const service = field("service");
+  const framework = field("framework");
+  const dockerfile = field("dockerfile");
+  const hostPort = plan.arguments.host_port ?? preview.host_port;
+  // A port change is the mapping it replaces; the new number alone hides that.
+  const before = field("before");
+  const after = field("after");
   const diskFree = formatMb(summary?.disk_free_mb);
   const disabled = plan.status !== "pending";
 
@@ -102,10 +125,29 @@ export function ApprovalCard({
             </>
           )}
 
-          {hostPort != null && hostPort !== "" && (
+          {before && after ? (
             <>
               <div className="approval__specKey">포트</div>
-              <div className="approval__specValue approval__specValue--mono">{String(hostPort)}</div>
+              <div className="approval__specValue approval__specValue--mono">
+                {before} → {after}
+              </div>
+            </>
+          ) : (
+            hostPort != null &&
+            hostPort !== "" && (
+              <>
+                <div className="approval__specKey">포트</div>
+                <div className="approval__specValue approval__specValue--mono">
+                  {String(hostPort)}
+                </div>
+              </>
+            )
+          )}
+
+          {dockerfile && (
+            <>
+              <div className="approval__specKey">빌드</div>
+              <div className="approval__specValue">{dockerfileLabel(dockerfile)}</div>
             </>
           )}
         </div>

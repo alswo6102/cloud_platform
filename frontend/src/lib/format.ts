@@ -100,15 +100,16 @@ export function serviceStateOf(runtime?: ServiceRuntime): ServiceState {
 
 export type BadgeShape = "dot" | "diamond" | "bar" | "ring";
 
+/**
+ * Docker's RestartCount is a lifetime total, not a rate. demo-a has restarted
+ * 13 times and has also been up and healthy for two months — reading that count
+ * as "restarting in a loop" put a red badge on a service that is fine. Only the
+ * restarting status says a container is failing right now.
+ */
 export function statusBadge(
-  state: ServiceState,
-  restartCount = 0
+  state: ServiceState
 ): { label: string; tone: "ok" | "warn" | "danger" | "neutral"; glyph: BadgeShape } {
-  if (state === "running") {
-    // A container that keeps coming back is running right now and still wrong.
-    if (restartCount >= 5) return { label: "재시작 반복", tone: "warn", glyph: "diamond" };
-    return { label: "실행 중", tone: "ok", glyph: "dot" };
-  }
+  if (state === "running") return { label: "실행 중", tone: "ok", glyph: "dot" };
   if (state === "restarting") return { label: "재시작 중", tone: "warn", glyph: "diamond" };
   if (state === "exited") return { label: "중지됨", tone: "danger", glyph: "bar" };
   return { label: "확인 전", tone: "neutral", glyph: "ring" };
@@ -277,6 +278,16 @@ export function skillAction(skill: string, args: Record<string, unknown> = {}) {
     "port.manage": "포트 변경"
   };
   return actions[skill] || skillLabel(skill);
+}
+
+/**
+ * 을/를 depends on whether the last syllable has a final consonant, so the
+ * particle cannot be baked into a sentence template.
+ */
+export function objectParticle(word: string) {
+  const code = word.charCodeAt(word.length - 1);
+  if (Number.isNaN(code) || code < 0xac00 || code > 0xd7a3) return "를";
+  return (code - 0xac00) % 28 === 0 ? "를" : "을";
 }
 
 export function serviceActionLabel(action: string) {

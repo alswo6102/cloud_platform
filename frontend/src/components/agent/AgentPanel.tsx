@@ -12,7 +12,7 @@ import type {
   SystemSummary
 } from "../../types";
 import { api, errorText, isRecord } from "../../lib/api";
-import { skillAction, skillLabel } from "../../lib/format";
+import { objectParticle, skillAction, skillLabel } from "../../lib/format";
 import { toolCallFrom } from "../../lib/toolCalls";
 import { ErrorPanel } from "../States";
 import { ApprovalCard } from "./ApprovalCard";
@@ -67,12 +67,12 @@ function answeredEntries(args: Record<string, unknown> | undefined) {
 }
 
 function summarizeExecution(data: unknown, skill: string) {
-  if (!isRecord(data)) return `${skillLabel(skill)}를 실행했습니다.`;
+  const label = skillLabel(skill);
+  const done = `${label}${objectParticle(label)} 실행했습니다.`;
+  if (!isRecord(data)) return done;
   const result = isRecord(data.result) ? data.result : data;
   const status = result.status || result.message || result.action;
-  return status
-    ? `${skillLabel(skill)}를 실행했습니다. ${String(status)}`
-    : `${skillLabel(skill)}를 실행했습니다.`;
+  return status ? `${done} ${String(status)}` : done;
 }
 
 export function AgentPanel({
@@ -180,7 +180,7 @@ export function AgentPanel({
         const tools = tool ? [tool] : undefined;
 
         if (isApprovalResponse(data)) {
-          const plan = await withPreview({
+          const { plan } = await withPreview({
             skill: String(data.skill),
             arguments: data.arguments as Record<string, unknown>,
             preview: data.preview,
@@ -230,18 +230,23 @@ export function AgentPanel({
     [addMessage, auth, busy, chatPath, context]
   );
 
-  /** Ask the agent for the dry run behind a plan, so the card is not a guess. */
+  /**
+   * Ask the agent for the dry run behind a plan, so the card is not a guess.
+   * A failed dry run means there is no plan to approve: swallowing the error
+   * here once produced an empty card whose approve button would have sent the
+   * same rejected arguments again.
+   */
   const withPreview = useCallback(
-    async (plan: ApprovalPlan): Promise<ApprovalPlan> => {
-      if (plan.preview) return plan;
+    async (plan: ApprovalPlan): Promise<{ plan?: ApprovalPlan; error?: string }> => {
+      if (plan.preview) return { plan };
       try {
         const data = await api<Record<string, unknown>>(previewPath, auth, {
           method: "POST",
           body: JSON.stringify({ skill: plan.skill, arguments: plan.arguments })
         });
-        return { ...plan, preview: isRecord(data.preview) ? data.preview : data };
-      } catch {
-        return plan;
+        return { plan: { ...plan, preview: isRecord(data.preview) ? data.preview : data } };
+      } catch (err) {
+        return { error: errorText(err) };
       }
     },
     [auth, previewPath]
@@ -260,15 +265,25 @@ export function AgentPanel({
 
     void (async () => {
       setFailure("");
-      const plan = await withPreview({
+      const { plan, error } = await withPreview({
         skill: request.skill,
         arguments: request.arguments,
         status: "pending"
       });
       const target = request.arguments.service ? `${request.arguments.service} ` : "";
+      const action = skillAction(request.skill, request.arguments);
+      if (!plan) {
+        const id = addMessage({
+          from: "agent",
+          text: `${target}${action} 계획을 세우지 못했습니다. ${error || ""}`.trim(),
+          tone: "error"
+        });
+        setStreamingId(id);
+        return;
+      }
       const id = addMessage({
         from: "agent",
-        text: `${target}${skillAction(request.skill, request.arguments)} 전에 확인이 필요합니다. 아직 실행하지 않았습니다.`,
+        text: `${target}${action} 전에 확인이 필요합니다. 아직 실행하지 않았습니다.`,
         approval: plan
       });
       setStreamingId(id);

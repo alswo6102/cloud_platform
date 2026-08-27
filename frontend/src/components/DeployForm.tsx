@@ -1,6 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { X } from "lucide-react";
-import type { AuthHeaders, FrameworkPreset, Project, SystemSummary } from "../types";
+import type {
+  AuthHeaders,
+  FieldContract,
+  FrameworkPreset,
+  Project,
+  SystemSummary
+} from "../types";
 import { api, errorText, isRecord } from "../lib/api";
 import { DASH, formatMb, nextFreePort } from "../lib/format";
 import { Field, FieldError } from "./Modal";
@@ -10,12 +16,21 @@ const NAME_PATTERN = /^[A-Za-z0-9._-]{1,64}$/;
 const REPO_PATTERN = /^https:\/\/github\.com\/[^/\s]+\/[^/\s]+?(?:\.git)?\/?$/;
 const ENV_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
+/**
+ * The agent's steps are English and finer-grained than the summary needs.
+ * Several map to one line on purpose: the list is deduplicated after mapping,
+ * which collapses them into the three phases a reader cares about.
+ */
 const STEP_LABELS: Record<string, string> = {
-  "clone the repository into the project directory": "저장소 클론 및 구조 검증",
-  "generate a Dockerfile from the framework preset": "compose 생성 · 이미지 빌드",
-  "add the service to docker-compose.yml": "compose 생성 · 이미지 빌드",
-  "build the image and start the container": "컨테이너 실행 · 헬스 확인",
-  "verify the container stays running": "컨테이너 실행 · 헬스 확인"
+  "clone the public GitHub repository": "저장소 클론 및 구조 검증",
+  "use the repository root Dockerfile": "저장소 클론 및 구조 검증",
+  "generate the selected framework Dockerfile in the server clone": "compose 생성 · 이미지 빌드",
+  "add the service to the project app-net namespace": "compose 생성 · 이미지 빌드",
+  "build and start only the new service": "컨테이너 실행 · 헬스 확인",
+  "verify the container stays running and publishes the requested port":
+    "컨테이너 실행 · 헬스 확인",
+  "verify the internal-only container stays running on the app network":
+    "컨테이너 실행 · 헬스 확인"
 };
 
 const CATEGORY_ORDER = ["Backend", "Frontend", "Fullstack", "Custom"];
@@ -70,6 +85,13 @@ export function DeployForm({
   const [envDraft, setEnvDraft] = useState("");
 
   const [preview, setPreview] = useState<unknown>(null);
+  // A dry run can come back asking for a field the form does not have — an
+  // `existing` image whose Dockerfile declares no EXPOSE has to be told which
+  // port it listens on. That answer is not a plan, so it must not arm the
+  // submit button.
+  const [question, setQuestion] = useState<FieldContract | null>(null);
+  const [questionNote, setQuestionNote] = useState("");
+  const [answers, setAnswers] = useState<Record<string, string>>({});
   const [previewing, setPreviewing] = useState(false);
   const [error, setError] = useState("");
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
@@ -89,6 +111,16 @@ export function DeployForm({
   const portValid = !isWeb || /^\d{4,5}$/.test(hostPort.trim());
   const ready = serviceValid && repoValid && Boolean(framework) && portValid;
 
+  const answered = useMemo(() => {
+    const extra: Record<string, unknown> = {};
+    for (const [field, value] of Object.entries(answers)) {
+      const trimmed = value.trim();
+      if (!trimmed) continue;
+      extra[field] = /^\d+$/.test(trimmed) ? Number(trimmed) : trimmed;
+    }
+    return extra;
+  }, [answers]);
+
   const args = useMemo(
     () => ({
       service: service.trim(),
@@ -96,9 +128,10 @@ export function DeployForm({
       framework,
       is_web: isWeb,
       ...(isWeb && hostPort.trim() ? { host_port: Number(hostPort.trim()) } : {}),
-      ...(envNames.length ? { environment_names: envNames } : {})
+      ...(envNames.length ? { environment_names: envNames } : {}),
+      ...answered
     }),
-    [service, repoUrl, framework, isWeb, hostPort, envNames]
+    [service, repoUrl, framework, isWeb, hostPort, envNames, answered]
   );
 
   // The plan follows the form. Change anything and it is fetched again, so the
@@ -120,10 +153,21 @@ export function DeployForm({
           { method: "POST", body: JSON.stringify({ skill: "service.deploy", arguments: args }) }
         );
         if (cancelled) return;
-        setPreview(isRecord(data.preview) ? data.preview : data);
+        const plan = isRecord(data.preview) ? data.preview : data;
+        const missing = Array.isArray(plan.needs_input) ? (plan.needs_input as FieldContract[]) : [];
+        if (plan.status === "needs_input" && missing.length) {
+          setPreview(null);
+          setQuestion(missing[0]);
+          setQuestionNote(typeof plan.message === "string" ? plan.message : "");
+          return;
+        }
+        setQuestion(null);
+        setQuestionNote("");
+        setPreview(plan);
       } catch (err) {
         if (cancelled) return;
         setPreview(null);
+        setQuestion(null);
         setError(errorText(err));
       } finally {
         if (!cancelled) setPreviewing(false);
@@ -359,22 +403,48 @@ export function DeployForm({
           </div>
 
           <div className="planCard__rule" />
-          <div className="planCard__stepsLabel">진행 순서</div>
-          <div className="planCard__steps">
-            {uniqueSteps.length ? (
-              uniqueSteps.map((step, index) => (
-                <div key={step}>
-                  {index + 1} · {step}
-                </div>
-              ))
-            ) : (
-              <div>
-                {previewing
-                  ? "실행 계획을 확인하는 중입니다."
-                  : "필수 항목을 채우면 실행 계획을 확인합니다."}
+
+          {question ? (
+            <div className="planQuestion">
+              <div className="planQuestion__label">{question.label || "추가 정보"}</div>
+              {questionNote && <div className="planQuestion__note">{questionNote}</div>}
+              <div className="planQuestion__ask">{question.question}</div>
+              <div className="portControl">
+                <input
+                  className="portControl__input"
+                  value={answers[question.field || question.name || ""] || ""}
+                  onChange={(event) =>
+                    setAnswers((current) => ({
+                      ...current,
+                      [question.field || question.name || ""]: event.target.value
+                    }))
+                  }
+                  inputMode={question.type === "integer" ? "numeric" : "text"}
+                  placeholder={question.examples?.[0] != null ? String(question.examples[0]) : ""}
+                  aria-label={question.label || "추가 정보"}
+                />
               </div>
-            )}
-          </div>
+            </div>
+          ) : (
+            <>
+              <div className="planCard__stepsLabel">진행 순서</div>
+              <div className="planCard__steps">
+                {uniqueSteps.length ? (
+                  uniqueSteps.map((step, index) => (
+                    <div key={step}>
+                      {index + 1} · {step}
+                    </div>
+                  ))
+                ) : (
+                  <div>
+                    {previewing
+                      ? "실행 계획을 확인하는 중입니다."
+                      : "필수 항목을 채우면 실행 계획을 확인합니다."}
+                  </div>
+                )}
+              </div>
+            </>
+          )}
 
           {diskLow && diskFree && (
             <div className="planCard__warn">
@@ -392,7 +462,9 @@ export function DeployForm({
             {deploying ? "배포 중..." : "배포 실행"}
           </button>
           <div className="planCard__note">
-            이 계획 그대로 실행합니다. 실행 전 마지막 확인입니다.
+            {question
+              ? "답하면 실행 계획을 다시 확인합니다."
+              : "이 계획 그대로 실행합니다. 실행 전 마지막 확인입니다."}
           </div>
         </div>
       </div>

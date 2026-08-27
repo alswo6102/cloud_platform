@@ -76,6 +76,7 @@ export function App() {
   const [panelOpen, setPanelOpen] = useState(true);
   const [railWidth, setRailWidth] = useState(() => loadRailWidth(RAIL_MIN));
   const [agentRequest, setAgentRequest] = useState<AgentRequest | null>(null);
+  const [mutationCount, setMutationCount] = useState(0);
 
   // Below this the rail has no room; the panel becomes a bottom button that
   // opens fullscreen, per 2k.
@@ -158,6 +159,12 @@ export function App() {
   const refreshAll = useCallback(async () => {
     await Promise.all([refreshProjects(), refreshCatalog(), refreshSummary()]);
   }, [refreshProjects, refreshCatalog, refreshSummary]);
+
+  /** A change the agent executed invalidates the summaries and the live rows. */
+  const handleMutationDone = useCallback(() => {
+    setMutationCount((count) => count + 1);
+    void refreshAll();
+  }, [refreshAll]);
 
   useEffect(() => {
     void refreshAll();
@@ -334,7 +341,7 @@ export function App() {
           setPanelMode("rail");
         }}
         request={agentRequest}
-        onMutationDone={() => void refreshAll()}
+        onMutationDone={handleMutationDone}
         frameworks={frameworks}
       />
     ) : null;
@@ -348,6 +355,8 @@ export function App() {
         onRefreshProjects={refreshAll}
         onDeploy={() => navigate({ kind: "deploy", project: page.project })}
         onRequestApproval={requestApproval}
+        onAskAgent={askAgent}
+        refreshToken={mutationCount}
         railCollapsed={panelMode === "full" || narrow || !panelOpen}
         railSlot={panel}
         dock={
@@ -419,7 +428,7 @@ export function App() {
             setPanelMode("rail");
           }}
           request={agentRequest}
-          onMutationDone={() => void refreshAll()}
+          onMutationDone={handleMutationDone}
           frameworks={frameworks}
         />
       )}
