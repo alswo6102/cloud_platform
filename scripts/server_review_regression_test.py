@@ -796,8 +796,21 @@ def _model_list_survives_a_dead_model():
         assert model == "live-model", model
         assert calls == ["dead-model", "live-model"], calls
         assert message["content"] == "ok", message
-        # And it is not retried on the next turn.
+        # And it is not retried while a working model is available.
         assert "dead-model" in planner.MODEL_COOLDOWNS
+        calls.clear()
+        planner.llm_chat_completion([{"role": "user", "content": "hi"}])
+        assert calls == ["live-model"], calls
+
+        # But a cooldown is a preference, not a prohibition: with every model
+        # cooling down, sending nothing answers nothing.
+        calls.clear()
+        planner.MODEL_COOLDOWNS.update({"dead-model": 1e9, "live-model": 1e9})
+        message, model = planner.llm_chat_completion([{"role": "user", "content": "hi"}])
+        assert model == "live-model", model
+        assert calls, "쿨다운뿐일 때 한 번도 시도하지 않았다"
+        # A model that answered is no longer cooling down.
+        assert "live-model" not in planner.MODEL_COOLDOWNS
     finally:
         planner.requests.post = original_post
         planner.MODEL_COOLDOWNS.clear()

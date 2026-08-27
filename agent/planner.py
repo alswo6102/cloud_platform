@@ -165,14 +165,23 @@ def llm_chat_completion(
     if timeout is None:
         timeout = float(os.getenv("LLM_REQUEST_TIMEOUT", "60"))
 
+    def cooldown_of(name: str) -> float:
+        with MODEL_COOLDOWN_LOCK:
+            return MODEL_COOLDOWNS.get(name, 0.0)
+
+    # A cooldown says "prefer another model", not "never ask this one". With
+    # every model cooling down there is no other model, and refusing to send
+    # anything at all answered "지금은 요청을 처리하지 못했습니다" with
+    # Attempted: none -- while a model whose cooldown had been computed from a
+    # single Retry-After header was answering normally. Try them anyway, least
+    # recently limited first.
+    now = time.monotonic()
+    ready = [name for name in models if cooldown_of(name) <= now]
+    order = ready or sorted(models, key=cooldown_of)
+
     attempted: list[str] = []
     failures: list[str] = []
-    for model in models:
-        now = time.monotonic()
-        with MODEL_COOLDOWN_LOCK:
-            cooldown_until = MODEL_COOLDOWNS.get(model, 0)
-        if cooldown_until > now:
-            continue
+    for model in order:
         attempted.append(model)
         payload: dict[str, Any] = {
             "model": model,
@@ -211,10 +220,14 @@ def llm_chat_completion(
             failures.append(f"{model}: {response.status_code}")
             continue
         try:
-            return response.json()["choices"][0]["message"], model
+            message = response.json()["choices"][0]["message"]
         except (ValueError, KeyError, IndexError):
             failures.append(f"{model}: unreadable response")
             continue
+        # It answered, so whatever the cooldown was based on has passed.
+        with MODEL_COOLDOWN_LOCK:
+            MODEL_COOLDOWNS.pop(model, None)
+        return message, model
 
     cooling = llm_status()["cooldowns"]
     raise SkillError(
