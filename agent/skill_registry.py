@@ -32,6 +32,7 @@ API_SKILL_NAMES = {
     "project-list": "project.list",
     "service-deploy": "service.deploy",
     "service-redeploy": "service.redeploy",
+    "service-delete": "service.delete",
     "repository-inspect": "repository.inspect",
     "service-status": "service.status",
     "service-logs": "service.logs",

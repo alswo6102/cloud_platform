@@ -1,0 +1,171 @@
+.appHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  height: var(--header-h);
+  padding: 0 var(--gutter);
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+}
+
+.appHeader__left {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  min-width: 0;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  color: var(--ink);
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+
+.brand__mark {
+  width: 22px;
+  height: 22px;
+  flex: none;
+  border-radius: 5px;
+  background: var(--ink);
+  display: grid;
+  place-items: center;
+}
+
+.brand__mark i {
+  width: 8px;
+  height: 8px;
+  border: 1.6px solid #fff;
+  border-radius: 1px;
+  transform: rotate(45deg);
+}
+
+.brand__name {
+  font-weight: 600;
+  font-size: 14px;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+}
+
+.crumbSep {
+  color: var(--line-strong);
+  font-size: 13px;
+}
+
+.crumbLink {
+  font-weight: 500;
+  font-size: 13px;
+  color: var(--muted);
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+
+.crumbLink:hover {
+  color: var(--text);
+}
+
+.crumbCurrent {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--ink-soft);
+  min-width: 0;
+}
+
+.appHeader__right {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.appHeader__note {
+  font-weight: 500;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+.appHeader__divider {
+  width: 1px;
+  height: 16px;
+  background: var(--line);
+}
+
+.appHeader__user {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.appHeader__userName {
+  font-weight: 600;
+  font-size: 12.5px;
+  color: var(--ink-soft);
+}
+
+.roleBadge {
+  display: inline-flex;
+  align-items: center;
+  height: 19px;
+  padding: 0 6px;
+  border-radius: var(--r-xs);
+  background: var(--agent-bg);
+  border: 1px solid var(--agent-line);
+  font: 600 10.5px var(--mono);
+  color: var(--agent);
+}
+
+.linkButton {
+  background: none;
+  border: 0;
+  padding: 0;
+  font-weight: 500;
+  font-size: 12.5px;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.linkButton:hover {
+  color: var(--text);
+}
+
+@media (max-width: 820px) {
+  /* The path matters more than the wordmark on a phone, and the wordmark is
+     what pushes everything else into two lines. */
+  .appHeader {
+    gap: 10px;
+  }
+
+  .appHeader__note,
+  .appHeader__divider,
+  .brand__name,
+  .appHeader__userName {
+    display: none;
+  }
+
+  .appHeader__left {
+    flex: 1;
+    overflow: hidden;
+  }
+
+  .crumbLink,
+  .crumbSep {
+    flex: none;
+  }
+
+  .appHeader__right {
+    gap: 10px;
+    flex: none;
+  }
+
+  .linkButton,
+  .crumbLink,
+  .crumbCurrent {
+    white-space: nowrap;
+  }
+}

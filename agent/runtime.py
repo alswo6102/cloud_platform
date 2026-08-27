@@ -71,6 +71,11 @@ def project_agent_template_version() -> str:
         if "__pycache__" not in path.parts
     )
     sources += sorted((root / "prompts").glob("*.md"))
+    # Permissions and the planner's tool list are read out of these, so a skill
+    # added or re-scoped in markdown alone changes how a project agent behaves
+    # without touching a single .py file.
+    sources += sorted((root / "skills").glob("*/SKILL.md"))
+    sources += sorted((root / "skills").glob("*/schema.json"))
     presets = root / "deployment_presets.py"
     if not presets.exists():
         sources.append(root.parent / "deployment_presets.py")
@@ -1063,11 +1068,22 @@ def rollback_compose(project: str, backup: Path) -> None:
         backup.replace(compose_path(project))
 
 
-def audit(skill: str, arguments: dict[str, Any], status: str, result: Any) -> None:
+def audit(
+    skill: str,
+    arguments: dict[str, Any],
+    status: str,
+    result: Any,
+    *,
+    dry_run: bool | None = None,
+) -> None:
     AUDIT_LOG.parent.mkdir(parents=True, exist_ok=True)
     record = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "skill": skill,
+        # Whether anything actually happened. `arguments` never carried it, so
+        # a rehearsal and the deletion it rehearsed wrote the same line, and the
+        # log could not answer the one question it exists to answer.
+        "dry_run": dry_run,
         "arguments": arguments,
         "status": status,
         "result": result,
@@ -2094,6 +2110,153 @@ def service_redeploy(
         raise
 
 
+def service_images(project: str, service: str) -> list[str]:
+    """Image tags built for this service and nothing else.
+
+    Compose names what it builds `<project>-<service>`, but the same image can
+    be pulled by name and shared. Only tags carrying this project's and this
+    service's own prefix are safe to remove; anything else may be another
+    service's runtime.
+    """
+    prefixes = (f"{project}-{service}:", f"{project}_{service}:")
+    tags: list[str] = []
+    try:
+        for image in docker_client().images.list():
+            for tag in image.tags or []:
+                if tag.startswith(prefixes):
+                    tags.append(tag)
+    except Exception:
+        return []
+    return sorted(set(tags))
+
+
+def service_delete(
+    project: str | None,
+    service: str | None,
+    dry_run: bool,
+) -> dict[str, Any]:
+    incomplete = missing_input(
+        "service.delete",
+        [
+            ("project", "서비스를 보유한 프로젝트 이름"),
+            ("service", "삭제할 서비스 이름"),
+        ],
+        {"project": project, "service": service},
+    )
+    if incomplete:
+        if project:
+            try:
+                incomplete["available_services"] = [
+                    name
+                    for name in load_compose(str(project))["services"]
+                    if name != "agent"
+                ]
+            except SkillError:
+                pass
+        return incomplete
+
+    project = str(project)
+    service = str(service)
+    if service == "agent":
+        raise SkillError(
+            "프로젝트 에이전트는 삭제할 수 없습니다.",
+            code="service_is_project_agent",
+            field="service",
+            hint="agent는 이 프로젝트를 관리하는 컨테이너입니다. 다른 서비스를 지정하세요.",
+        )
+
+    config = service_config(project, service)
+    source = service_source_path(project, service, config)
+    ports = config.get("ports") or []
+    released = [
+        port
+        for port in (parse_published_port(value) for value in ports)
+        if port is not None
+    ]
+    images = service_images(project, service)
+    metadata = load_service_metadata(project)
+
+    removes = ["컨테이너 중지 및 삭제", "docker-compose.yml에서 서비스 항목 제거"]
+    if source is not None:
+        removes.append(f"서버의 소스 사본 {source.name}/ 삭제")
+    if service in metadata:
+        removes.append("배포 기록 삭제")
+    if images:
+        removes.append(f"이 서비스 전용 이미지 {len(images)}개 삭제")
+
+    plan = {
+        "project": project,
+        "service": service,
+        "removes": removes,
+        "released_host_ports": released,
+        "images": images,
+        "repo_url": labels_as_dict(config.get("labels")).get("cloud.platform.repo_url"),
+        "irreversible": True,
+        "warning": (
+            "삭제한 서비스는 플랫폼에서 복구할 수 없습니다. "
+            "다시 사용하려면 GitHub 저장소에서 새로 배포해야 합니다."
+        ),
+    }
+    if dry_run:
+        return {"dry_run": True, **plan}
+
+    # The container goes first, while Compose still declares it. Rewriting the
+    # file first leaves `rm` with nothing to name and the container running.
+    compose_command(project, "rm", "-s", "-f", service)
+    container = find_container(project, service)
+    if container is not None:
+        try:
+            container.remove(force=True)
+        except Exception:
+            pass
+
+    data = load_compose(project)
+    data["services"].pop(service, None)
+    backup = write_compose_atomic(project, data)
+    try:
+        # Compose must still parse without the service; a project whose file no
+        # longer loads cannot start, stop, or redeploy anything else either.
+        compose_command(project, "config", "--quiet")
+    except Exception:
+        rollback_compose(project, backup)
+        try:
+            compose_command(project, "up", "-d", "--no-build", service)
+        except Exception:
+            pass
+        raise
+
+    removed_images: list[str] = []
+    for tag in images:
+        try:
+            docker_client().images.remove(tag, force=True)
+            removed_images.append(tag)
+        except Exception:
+            continue
+
+    if service in metadata:
+        metadata.pop(service)
+        save_service_metadata(project, metadata)
+
+    source_removed = False
+    if source is not None and source.is_dir():
+        # Last, because it is the one step no rollback above can undo.
+        shutil.rmtree(source, ignore_errors=True)
+        source_removed = not source.exists()
+
+    backup.unlink(missing_ok=True)
+    trigger_safe_docker_cleanup("service.delete")
+    return {
+        "dry_run": False,
+        **plan,
+        "verified": {
+            "container_removed": find_container(project, service) is None,
+            "compose_entry_removed": service not in load_compose(project)["services"],
+            "source_removed": source_removed,
+            "removed_images": removed_images,
+        },
+    }
+
+
 def port_manage(
     project: str,
     service: str | None,
@@ -2259,6 +2422,12 @@ def execute_skill(skill: str, arguments: dict[str, Any], dry_run: bool) -> dict[
                 arguments.get("service"),
                 dry_run,
             )
+        elif skill == "service.delete":
+            result = service_delete(
+                arguments.get("project"),
+                arguments.get("service"),
+                dry_run,
+            )
         elif skill == "service.status":
             result = service_status(required_argument(arguments, "project", skill), arguments.get("service"))
         elif skill == "service.logs":
@@ -2282,10 +2451,10 @@ def execute_skill(skill: str, arguments: dict[str, Any], dry_run: bool) -> dict[
             result = qa_run()
         else:
             raise SkillError(f"Unknown skill: {skill}")
-        audit(skill, arguments, "ok", result)
+        audit(skill, arguments, "ok", result, dry_run=dry_run)
         return result
     except Exception as exc:
-        audit(skill, arguments, "error", str(exc))
+        audit(skill, arguments, "error", str(exc), dry_run=dry_run)
         raise
 
 

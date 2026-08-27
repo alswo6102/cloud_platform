@@ -527,14 +527,27 @@ def _catalog_projection_is_narrow():
 
 @check("console_framework_options_match_the_platform")
 def _console_is_not_behind():
+    """The console must not be able to fall behind the platform's presets.
+
+    It used to hold its own copy of the list, so this compared the two. The
+    console now asks /api/frameworks and renders whatever comes back, which is
+    a stronger guarantee than any comparison -- so what is checked is that the
+    copy has not come back.
+    """
     from deployment_presets import FRAMEWORK_PRESETS
 
-    console = (ROOT / "frontend" / "src" / "main.tsx").read_text()
-    options = console[console.index("const frameworkOptions") :]
-    options = options[: options.index("];")]
-    listed = set(re.findall(r'\{ id: "([a-z-]+)"', options))
-    missing = set(FRAMEWORK_PRESETS) - listed
-    assert not missing, f"콘솔에서 고를 수 없는 프리셋: {sorted(missing)}"
+    source_root = ROOT / "frontend" / "src"
+    app_source = (source_root / "App.tsx").read_text()
+    assert "/api/frameworks" in app_source, "콘솔이 프리셋 목록을 플랫폼에서 받지 않음"
+
+    preset_ids = set(FRAMEWORK_PRESETS)
+    for path in sorted(source_root.rglob("*.tsx")) + sorted(source_root.rglob("*.ts")):
+        listed = set(re.findall(r'"(' + "|".join(sorted(map(re.escape, preset_ids))) + r')"', path.read_text()))
+        # One or two named presets are guidance, not a menu; a file naming most
+        # of them has gone back to keeping its own list.
+        assert len(listed) < len(preset_ids) - 2, (
+            f"{path.name}이 프리셋 목록을 다시 들고 있음: {sorted(listed)}"
+        )
 
 
 # --- The planner remembers what it looked up --------------------------------
@@ -830,7 +843,16 @@ def _model_list_survives_a_dead_model():
 def _template_version_covers_the_whole_agent():
     baseline = runtime.project_agent_template_version()
     assert len(baseline) == 16, baseline
-    for relative in ("planner.py", "authz.py", "skill_registry.py", "prompts/planner.md"):
+    for relative in (
+        "planner.py",
+        "authz.py",
+        "skill_registry.py",
+        "prompts/planner.md",
+        # Permissions and the planner's tool list are read out of the skill
+        # documents, so markdown alone can change how an agent behaves.
+        "skills/service-delete/SKILL.md",
+        "skills/service-delete/schema.json",
+    ):
         path = ROOT / "agent" / relative
         original = path.read_bytes()
         path.write_bytes(original + b"\n")
@@ -909,7 +931,7 @@ def _permissions_are_declared():
     import skill_registry
 
     documents = skill_registry.skill_documents()
-    assert len(documents) == 16, len(documents)
+    assert len(documents) == 17, len(documents)
     for document in documents:
         assert document["access"] in {"read", "mutate"}, document["name"]
         assert document["plane"] in {"root", "project", "shared"}, document["name"]
@@ -943,7 +965,7 @@ def _sets_match_the_documents():
         "project.create", "project.ensure_agent", "server.health", "qa.run",
     }), sorted(root)
     assert project == frozenset({
-        "service.deploy", "service.redeploy", "service.status",
+        "service.deploy", "service.redeploy", "service.delete", "service.status",
         "service.logs", "service.control", "port.manage",
     }), sorted(project)
     # Root-plane skills stay refused for a namespace token.

@@ -109,7 +109,7 @@ check_cli() {
     docker exec cloud-platform-skill-agent cloud-platform skills | python3 -c '
 import json, sys
 data=json.load(sys.stdin)
-assert len(data["skills"]) == 16
+assert len(data["skills"]) == 17
 '
     docker exec cloud-platform-skill-agent cloud-platform projects >/dev/null
     docker exec cloud-platform-skill-agent cloud-platform frameworks | python3 -c '

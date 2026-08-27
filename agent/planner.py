@@ -38,6 +38,9 @@ PROMPT_CACHE_LOCK = threading.Lock()
 # How many planner turns one message may take. Read-only lookups, a correction
 # after a validation error, and the final answer all come out of this budget.
 LLM_MAX_STEPS = int(os.getenv("LLM_MAX_STEPS", "12"))
+# How many of the planner's own lookups travel back to the console as tool
+# blocks. Twelve steps of raw skill results is a payload, not evidence.
+STEP_REPORT_LIMIT = int(os.getenv("LLM_STEP_REPORT_LIMIT", "6"))
 
 MODEL_COOLDOWNS: dict[str, float] = {}
 
@@ -329,6 +332,15 @@ def call_llm(
         # Everything after the system prompt, which is rebuilt each turn.
         return messages[1:]
 
+    # The read-only skills this turn actually ran. The transcript already holds
+    # them, but as opaque OpenAI tool frames mixed with every earlier turn --
+    # which is why an answer built from three lookups used to arrive at the
+    # console looking like the model had simply known.
+    steps: list[dict[str, Any]] = []
+
+    def with_steps(payload: dict[str, Any]) -> dict[str, Any]:
+        return {**payload, "steps": steps[-STEP_REPORT_LIMIT:]} if steps else payload
+
     last_model = None
     for _ in range(LLM_MAX_STEPS):
         response_message, last_model = llm_chat_completion(messages, tools=tools)
@@ -340,12 +352,12 @@ def call_llm(
             messages.append(response_message)
             reply = str(response_message.get("content") or "").strip()
             if reply:
-                return {
+                return with_steps({
                     "kind": "answer",
                     "message": reply,
                     "model": last_model,
                     "transcript": transcript(),
-                }
+                })
             continue
 
         messages.append(response_message)
@@ -375,7 +387,7 @@ def call_llm(
                     }
                 )
                 answered.add(identifier)
-            return {**payload, "transcript": transcript()}
+            return with_steps({**payload, "transcript": transcript()})
 
         for tool_call in tool_calls:
             function = tool_call.get("function") or {}
@@ -434,6 +446,11 @@ def call_llm(
                             arguments,
                             dry_run=False,
                         )
+                        steps.append({
+                            "skill": skill,
+                            "arguments": arguments,
+                            "result": observation,
+                        })
                     except Exception as exc:
                         # Errors are observations, not dead ends: the planner
                         # reads the validation message and corrects itself.

@@ -30,6 +30,19 @@ AUTO_ENSURE_PROJECT_AGENT = os.getenv("AUTO_ENSURE_PROJECT_AGENT", "1").lower() 
 AUTH_STORE = Path(os.getenv("AUTH_STORE", "/var/lib/cloud-platform/auth.json"))
 FRONTEND_DIST = Path(os.getenv("FRONTEND_DIST", "/var/www/cloud-platform-console"))
 REQUEST_TIMEOUT = float(os.getenv("WEB_REQUEST_TIMEOUT", "120"))
+# A deploy clones, builds an image, and waits for the container to settle. The
+# runtime allows 900s for the build alone, so the read timeout has to outlast it
+# or the console gives up on work the server is still doing.
+MUTATION_REQUEST_TIMEOUT = float(os.getenv("WEB_MUTATION_TIMEOUT", "960"))
+MUTATION_SKILLS = {
+    "project.create",
+    "project.ensure_agent",
+    "service.deploy",
+    "service.redeploy",
+    "service.control",
+    "service.delete",
+    "port.manage",
+}
 PROJECT_AGENT_ENSURE_TTL = float(os.getenv("PROJECT_AGENT_ENSURE_TTL", "300"))
 SESSION_TOKEN_TTL = float(os.getenv("SESSION_TOKEN_TTL", str(60 * 60 * 12)))
 PROJECT_SUMMARY_CACHE_TTL = float(os.getenv("WEB_PROJECT_SUMMARY_CACHE_TTL", "10"))
@@ -358,6 +371,7 @@ def agent_request(
     path: str,
     *,
     json_body: dict[str, Any] | None = None,
+    timeout: float | None = None,
 ) -> dict[str, Any]:
     try:
         response = requests.request(
@@ -365,7 +379,7 @@ def agent_request(
             f"{SKILL_AGENT_URL}{path}",
             json=json_body,
             headers=control_plane_headers(),
-            timeout=REQUEST_TIMEOUT,
+            timeout=timeout or REQUEST_TIMEOUT,
         )
     except requests.RequestException as exc:
         raise HTTPException(
@@ -406,9 +420,11 @@ def project_agent_request(
     path: str,
     *,
     json_body: dict[str, Any] | None = None,
+    timeout: float | None = None,
 ) -> dict[str, Any]:
     url = f"{project_agent_url(project).rstrip('/')}{path}"
     headers = project_agent_headers(project)
+    read_timeout = timeout or REQUEST_TIMEOUT
     if AUTO_ENSURE_PROJECT_AGENT:
         ensure_project_agent(project)
     try:
@@ -417,9 +433,23 @@ def project_agent_request(
             url,
             json=json_body,
             headers=headers,
-            timeout=REQUEST_TIMEOUT,
+            timeout=read_timeout,
         )
+    except requests.Timeout as exc:
+        # A build outlives this timeout routinely. Retrying here recreated the
+        # agent mid-redeploy and sent the same mutation again, which failed on
+        # the half-finished workspace and reported a deploy that had actually
+        # succeeded as an error. A slow answer is not an unreachable agent.
+        raise HTTPException(
+            status_code=504,
+            detail={
+                "message": f"{project} 작업이 아직 끝나지 않았습니다.",
+                "hint": "서버에서 계속 진행 중일 수 있습니다. 목록을 새로고침해 결과를 확인하세요.",
+            },
+        ) from exc
     except requests.RequestException as first_exc:
+        # Connection-level failures mean the request never landed, so resending
+        # it cannot duplicate work.
         ensure_project_agent(project, force=True)
         wait_project_agent_ready(project)
         try:
@@ -428,7 +458,7 @@ def project_agent_request(
                 url,
                 json=json_body,
                 headers=headers,
-                timeout=REQUEST_TIMEOUT,
+                timeout=read_timeout,
             )
         except requests.RequestException as exc:
             raise HTTPException(
@@ -528,6 +558,27 @@ def add_project_membership(project: str, user_id: str, role: str = "owner") -> N
     save_auth_store(store)
 
 
+def project_owners(projects: list[dict[str, Any]]) -> dict[str, str]:
+    # The console lists other people's projects for admins, so a row has to say
+    # whose it is. Membership lives here, not in the agent, so the name is
+    # attached on the way out instead of asking the agent for something it
+    # cannot know.
+    store = load_auth_store()
+    memberships = store.get("memberships", {})
+    users = store.get("users", {})
+    owners: dict[str, str] = {}
+    for project in projects:
+        name = str(project.get("name") or "")
+        members = memberships.get(name, {})
+        owner_id = next(
+            (member for member, role in members.items() if role == "owner"),
+            next(iter(members), ""),
+        )
+        if owner_id:
+            owners[name] = str(users.get(owner_id, {}).get("name") or owner_id)
+    return owners
+
+
 @app.get("/api/health")
 def health() -> dict[str, Any]:
     agent = agent_request("GET", "/health")
@@ -595,10 +646,22 @@ def list_projects(
         ttl=cache_ttl,
         generated_at=generated_at,
     )
-    projects = visible_projects(role, user_id, data.get("projects", []))
+    all_projects = data.get("projects", [])
+    projects = visible_projects(role, user_id, all_projects)
+    owners = project_owners(all_projects)
+    # Membership, not visibility. An admin sees every project but is a member of
+    # only their own, and the console's "내 프로젝트" filter means the latter.
+    memberships = load_auth_store().get("memberships", {})
+    member_of = [
+        str(item.get("name"))
+        for item in projects
+        if user_id in memberships.get(str(item.get("name")), {})
+    ]
     return {
         "user": {"id": user_id, "role": role},
-        "projects": projects,
+        "projects": [{**item, "owner": owners.get(str(item.get("name")))} for item in projects],
+        "member_of": member_of,
+        "owners": owners,
         "incomplete_projects": data.get("incomplete_projects", []),
         "membership_mode": "json-table",
     }
@@ -709,6 +772,39 @@ def system_summary(
     return data
 
 
+# The signed-out home shows the same server strip as the signed-in one, so the
+# two capacity numbers on it have to be readable without a session. Everything
+# else server.health returns — free bytes, swap, container names, warnings —
+# stays behind the login.
+@app.get("/api/system/public")
+def public_system_summary(request: Request, response: Response) -> dict[str, Any]:
+    data, cache_state, cache_ttl, generated_at = cached_read(
+        "system-summary",
+        SYSTEM_SUMMARY_CACHE_TTL,
+        lambda: agent_request("POST", "/execute", json_body={
+            "skill": "server.health",
+            "arguments": {},
+            "approved": True,
+        }),
+        bypass=request_bypasses_cache(request),
+    )
+    apply_api_cache_headers(
+        response,
+        state=cache_state,
+        ttl=cache_ttl,
+        generated_at=generated_at,
+    )
+    result = data.get("result") if isinstance(data, dict) else None
+    result = result if isinstance(result, dict) else {}
+    return {
+        "result": {
+            "memory_percent": result.get("memory_percent"),
+            "disk_percent": result.get("disk_percent"),
+        },
+        "visibility": "capacity-only",
+    }
+
+
 @app.get("/api/frameworks")
 def frameworks() -> dict[str, Any]:
     return agent_request("GET", "/frameworks")
@@ -795,23 +891,54 @@ def admin_execute(
 ) -> dict[str, Any]:
     user_id, role = authenticated_user(authorization)
     require_admin(role)
-    result = agent_request("POST", "/execute", json_body={
-        "skill": payload.skill,
-        "arguments": payload.arguments,
-        "approved": payload.approved,
-        "session_id": conversation_session_id(user_id, "admin"),
-        "resume": payload.resume,
-    })
-    if payload.approved and payload.skill in {
-        "project.create",
-        "project.ensure_agent",
-        "service.deploy",
-        "service.redeploy",
-        "service.control",
-        "port.manage",
-    }:
+    mutating = payload.approved and payload.skill in MUTATION_SKILLS
+    result = agent_request(
+        "POST",
+        "/execute",
+        json_body={
+            "skill": payload.skill,
+            "arguments": payload.arguments,
+            "approved": payload.approved,
+            "session_id": conversation_session_id(user_id, "admin"),
+            "resume": payload.resume,
+        },
+        timeout=MUTATION_REQUEST_TIMEOUT if mutating else None,
+    )
+    if mutating:
         invalidate_read_cache()
     return result
+
+
+# Approval cards and the deploy summary have to show a real dry run, not a
+# guess assembled in the browser. The agent already refuses /execute without
+# approval, so the plan has to come from /preview.
+@app.post("/api/projects/{project}/preview")
+def project_preview(
+    project: str,
+    payload: ExecuteRequest,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    user_id, role = authenticated_user(authorization)
+    ensure_project_access(role, user_id, project)
+    arguments = dict(payload.arguments)
+    arguments["project"] = project
+    return project_agent_request(project, "POST", "/preview", json_body={
+        "skill": payload.skill,
+        "arguments": arguments,
+    })
+
+
+@app.post("/api/admin/preview")
+def admin_preview(
+    payload: ExecuteRequest,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    _, role = authenticated_user(authorization)
+    require_admin(role)
+    return agent_request("POST", "/preview", json_body={
+        "skill": payload.skill,
+        "arguments": payload.arguments,
+    })
 
 
 @app.post("/api/projects/{project}/execute")
@@ -848,14 +975,15 @@ def project_execute(
             generated_at=generated_at,
         )
         return data
-    result = project_agent_request(project, "POST", "/execute", json_body=body)
-    if payload.approved and payload.skill in {
-        "project.create",
-        "service.deploy",
-        "service.redeploy",
-        "service.control",
-        "port.manage",
-    }:
+    mutating = payload.approved and payload.skill in MUTATION_SKILLS
+    result = project_agent_request(
+        project,
+        "POST",
+        "/execute",
+        json_body=body,
+        timeout=MUTATION_REQUEST_TIMEOUT if mutating else None,
+    )
+    if mutating:
         invalidate_read_cache()
     return result
 

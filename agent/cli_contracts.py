@@ -38,6 +38,10 @@ COMMAND_FIELD_ORDER: dict[str, dict[str, list[str]]] = {
         "required": ["project", "service", "action"],
         "optional": [],
     },
+    "service.delete": {
+        "required": ["project", "service"],
+        "optional": [],
+    },
     "service.status": {
         "required": ["project"],
         "optional": ["service"],
@@ -192,6 +196,47 @@ COMMAND_HELP: dict[str, dict[str, Any]] = {
         "security": [
             *COMMON_SECURITY,
             "A project-scoped agent can control only services inside its own namespace.",
+        ],
+    },
+    "service.delete": {
+        "title": "서비스 영구 삭제",
+        "role": (
+            "배포된 서비스를 프로젝트에서 완전히 제거합니다. 컨테이너, Compose 항목, "
+            "서버의 소스 사본, 전용 이미지, 배포 기록이 모두 사라집니다."
+        ),
+        "use_when": [
+            "더 이상 쓰지 않는 서비스를 정리할 때",
+            "잘못 만든 서비스를 없애고 포트를 회수할 때",
+            "사용자가 삭제·제거·내리기를 명시적으로 요청했을 때",
+        ],
+        "not_for": [
+            "잠시 내려두기만 하는 작업(중지를 사용하세요)",
+            "최신 코드로 다시 빌드하는 작업",
+            "프로젝트 자체를 없애는 작업",
+        ],
+        "ambiguous_with": ["service.control"],
+        "clarification_question": (
+            "이 서비스를 완전히 삭제할까요, 아니면 잠시 중지만 할까요? "
+            "삭제하면 플랫폼에서는 복구할 수 없습니다."
+        ),
+        "examples": [
+            "qa_probe 서비스 삭제해줘",
+            "안 쓰는 nowsale 내려주고 포트도 회수해줘",
+            "이 서비스 완전히 제거해줘",
+        ],
+        "flow": [
+            "대상 project/service가 실제 존재하는지 CLI가 검증합니다.",
+            "프로젝트 agent 서비스는 삭제 대상에서 거부됩니다.",
+            "preview가 삭제될 항목과 회수되는 호스트 포트를 모두 나열합니다.",
+            "승인 후 컨테이너를 먼저 제거하고 Compose를 다시 씁니다.",
+            "Compose가 다시 파싱되지 않으면 이전 파일로 복구합니다.",
+            "소스 사본은 되돌릴 수 없는 단계이므로 가장 마지막에 삭제합니다.",
+        ],
+        "security": [
+            *COMMON_SECURITY,
+            "A project-scoped agent can delete only services inside its own namespace.",
+            "The project agent service is never deletable.",
+            "Only images tagged for this project and service are removed; shared images are left alone.",
         ],
     },
     "port.manage": {

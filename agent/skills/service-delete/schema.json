@@ -1,0 +1,14 @@
+{
+  "type": "object",
+  "properties": {
+    "project": {
+      "type": "string",
+      "description": "Managed Compose project holding the service. Omit when unknown."
+    },
+    "service": {
+      "type": "string",
+      "description": "Service to remove permanently. Omit when unknown."
+    }
+  },
+  "additionalProperties": false
+}
