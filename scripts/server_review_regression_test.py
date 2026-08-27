@@ -527,14 +527,27 @@ def _catalog_projection_is_narrow():
 
 @check("console_framework_options_match_the_platform")
 def _console_is_not_behind():
+    """The console must not be able to fall behind the platform's presets.
+
+    It used to hold its own copy of the list, so this compared the two. The
+    console now asks /api/frameworks and renders whatever comes back, which is
+    a stronger guarantee than any comparison -- so what is checked is that the
+    copy has not come back.
+    """
     from deployment_presets import FRAMEWORK_PRESETS
 
-    console = (ROOT / "frontend" / "src" / "main.tsx").read_text()
-    options = console[console.index("const frameworkOptions") :]
-    options = options[: options.index("];")]
-    listed = set(re.findall(r'\{ id: "([a-z-]+)"', options))
-    missing = set(FRAMEWORK_PRESETS) - listed
-    assert not missing, f"콘솔에서 고를 수 없는 프리셋: {sorted(missing)}"
+    source_root = ROOT / "frontend" / "src"
+    app_source = (source_root / "App.tsx").read_text()
+    assert "/api/frameworks" in app_source, "콘솔이 프리셋 목록을 플랫폼에서 받지 않음"
+
+    preset_ids = set(FRAMEWORK_PRESETS)
+    for path in sorted(source_root.rglob("*.tsx")) + sorted(source_root.rglob("*.ts")):
+        listed = set(re.findall(r'"(' + "|".join(sorted(map(re.escape, preset_ids))) + r')"', path.read_text()))
+        # One or two named presets are guidance, not a menu; a file naming most
+        # of them has gone back to keeping its own list.
+        assert len(listed) < len(preset_ids) - 2, (
+            f"{path.name}이 프리셋 목록을 다시 들고 있음: {sorted(listed)}"
+        )
 
 
 # --- The planner remembers what it looked up --------------------------------

@@ -73,6 +73,7 @@ RSYNC_EXCLUDES=(
   ".platform.env"
   "data/"
   "output/"
+  ".claude/"
   ".codex"
   ".codex_refs/"
   ".agents/"

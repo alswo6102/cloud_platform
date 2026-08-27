@@ -21,3 +21,4 @@ output/
 frontend/tsconfig.tsbuildinfo
 .platform.env
 .agent.env.bak.*
+.claude/
