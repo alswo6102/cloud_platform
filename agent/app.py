@@ -678,12 +678,20 @@ def deploy_confirmations(
     message: str,
     skill: str,
     arguments: dict[str, Any],
+    asked: frozenset[str] = frozenset(),
 ) -> list[dict[str, Any]]:
     """Choices the planner made for the user that the user should make.
 
     This is not a second guess at what the user meant -- the planner's reading
     stands. It only checks whether a value in a deploy plan was ever the user's
     to begin with, and turns the ones that were not into questions.
+
+    A question is asked once. `asked` carries the fields the previous turn put
+    to the user: their answer arrives as the next message, and the planner
+    reads it back into the arguments, but the answer is rarely a repetition of
+    the value -- "static 으로 해줘" does not name the service, and answering
+    the service name does not name the framework. Judging each turn on its own
+    text asked both questions forever and no preset deploy could be approved.
     """
     if skill != "service.deploy":
         return []
@@ -701,7 +709,7 @@ def deploy_confirmations(
             lowered,
         )
     )
-    if service and not named:
+    if service and not named and "service" not in asked:
         items.append({
             "field": "service",
             "label": "서비스 이름",
@@ -720,8 +728,9 @@ def deploy_confirmations(
     # question. Two entries for the same field drew the field twice in the form.
     reasons: list[str] = []
     options: list[str] = []
+    ask_framework = "framework" not in asked
 
-    if framework in SOURCE_BUILD_FRAMEWORKS and not source_build_is_affordable():
+    if ask_framework and framework in SOURCE_BUILD_FRAMEWORKS and not source_build_is_affordable():
         reasons.append(
             f"`{framework}`는 서버에서 소스를 직접 빌드합니다. 이 서버는 메모리가 "
             "부족해 프론트엔드 빌드가 시간 초과로 실패할 가능성이 높습니다. "
@@ -730,7 +739,7 @@ def deploy_confirmations(
         )
         options.append("static")
 
-    if repo_url and framework and framework != "existing":
+    if ask_framework and repo_url and framework and framework != "existing":
         try:
             repository = execute_cli_skill(
                 "repository.inspect",
@@ -756,6 +765,33 @@ def deploy_confirmations(
             "examples": list(dict.fromkeys(options)),
         })
     return items
+
+
+def already_asked(
+    context: dict[str, Any] | None,
+    skill: str,
+    arguments: dict[str, Any],
+) -> frozenset[str]:
+    """Fields the previous turn asked about, while it is still the same task.
+
+    A user who abandons a deploy and starts a different one must be asked
+    again, so the stored questions only count for the same skill and the same
+    subject.
+    """
+    if not isinstance(context, dict) or context.get("skill") != skill:
+        return frozenset()
+    stored = context.get("arguments")
+    if not isinstance(stored, dict):
+        return frozenset()
+    for field in ("project", "service"):
+        before, now = stored.get(field), arguments.get(field)
+        if before and now and str(before) != str(now):
+            return frozenset()
+    return frozenset(
+        str(item["field"])
+        for item in (context.get("missing") or [])
+        if isinstance(item, dict) and item.get("field")
+    )
 
 
 def deploy_form_hint(
@@ -1009,8 +1045,15 @@ def chat(request: ChatRequest, http_request: Request):
 
         if not preview.get("needs_input"):
             # A choice the user never made becomes a question rather than
-            # something waiting behind an approve button.
-            unconfirmed = deploy_confirmations(request.message, skill, arguments)
+            # something waiting behind an approve button. Asked once: the
+            # fields the last turn put to the user are answered by this
+            # message, whether or not it repeats their values.
+            unconfirmed = deploy_confirmations(
+                request.message,
+                skill,
+                arguments,
+                already_asked(request.context, skill, arguments),
+            )
             if unconfirmed:
                 preview = dict(preview)
                 preview["needs_input"] = unconfirmed

@@ -646,6 +646,55 @@ def _no_unanswered_calls_in_source():
         ), f"line {node.lineno}: 열린 도구 호출을 남긴 채 반환한다"
 
 
+# --- A question the user answered is not asked again ------------------------
+# Answering "static" does not repeat the service name, and answering the
+# service name does not repeat the framework, so judging each turn on its own
+# text asked both questions forever and no preset deploy could be approved.
+
+
+@check("a_deploy_question_is_asked_once")
+def _confirmations_do_not_repeat():
+    arguments = {
+        "project": "qa",
+        "service": "hello",
+        "repo_url": "https://github.com/crccheck/docker-hello-world",
+        "framework": "static",
+        "is_web": True,
+    }
+    first = app.deploy_confirmations("배포해줘", "service.deploy", arguments)
+    fields = {item["field"] for item in first}
+    assert "framework" in fields, first
+    assert "service" in fields, first
+
+    answered = app.deploy_confirmations(
+        "static 으로 해줘", "service.deploy", arguments, frozenset(fields)
+    )
+    assert answered == [], answered
+
+
+@check("a_different_deploy_is_asked_again")
+def _confirmations_reset_on_a_new_task():
+    context = {
+        "skill": "service.deploy",
+        "arguments": {"project": "qa", "service": "hello"},
+        "missing": [{"field": "framework"}, {"field": "service"}],
+    }
+    same = app.already_asked(
+        context, "service.deploy", {"project": "qa", "service": "hello"}
+    )
+    assert same == frozenset({"framework", "service"}), same
+
+    other_service = app.already_asked(
+        context, "service.deploy", {"project": "qa", "service": "blog"}
+    )
+    assert other_service == frozenset(), other_service
+
+    other_skill = app.already_asked(
+        context, "service.redeploy", {"project": "qa", "service": "hello"}
+    )
+    assert other_skill == frozenset(), other_skill
+
+
 # --- A project agent notices when the agent's code changed -------------------
 # The version stamped into each project's compose file is what tells the
 # platform to rebuild that project's agent. It was a hand-written list of five
