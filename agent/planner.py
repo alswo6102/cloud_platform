@@ -123,14 +123,6 @@ def tool_description_for_llm(document: dict[str, Any]) -> str:
         "requires_approval": contract.get("requires_approval"),
         "security": contract.get("security", []),
         "ui": contract.get("ui", {}),
-        "runtime_rule": (
-            "Select this tool when the latest user intent matches. "
-            "If required fields are missing, omit or partially fill them; the CLI dry-run "
-            "will return needs_input. Never invent values. Never copy examples or placeholders "
-            "such as https://github.com/example/repo, owner/repository, frontend, or backend "
-            "unless the user actually provided that value. Never use conversation-reply "
-            "instead of a matching operation just to ask for fields."
-        ),
     }
     return json.dumps(payload, ensure_ascii=False, default=str)
 
@@ -257,15 +249,8 @@ def call_llm(
             "function": {
                 "name": "conversation-reply",
                 "description": (
-                    "Reply naturally to the user after using discovery tools. "
-                    "Use for explanations, choices, and follow-up questions. "
-                    "Do not use this to answer live facts that require the CLI, such as current "
-                    "project services, Docker status, logs, health, ports, or public URLs. "
-                    "Do not use this when the latest user message intends a supported operation "
-                    "such as deploy, redeploy, status, logs, start, stop, restart, or port changes. "
-                    "For supported operations, select the matching operation tool even if fields are "
-                    "missing; the CLI dry-run will ask for missing inputs. "
-                    "Do not claim an operation was executed."
+                    "Say something to the user: an explanation, a question, or an "
+                    "answer built from what the other tools returned."
                 ),
                 "parameters": {
                     "type": "object",

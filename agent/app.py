@@ -3,7 +3,6 @@ from __future__ import annotations
 import os
 import re
 import json
-import psutil
 import threading
 import time
 from copy import deepcopy
@@ -651,178 +650,6 @@ def naturalize_mutation_message(
 
 # Presets that compile the repository on this host rather than serving files
 # it already contains.
-SOURCE_BUILD_FRAMEWORKS = {
-    "vite",
-    "react",
-    "nextjs",
-    "spring-maven",
-    "spring-gradle",
-    "go",
-}
-# Roughly what a frontend toolchain needs before it starts swapping.
-SOURCE_BUILD_MEMORY_MB = int(os.getenv("SOURCE_BUILD_MEMORY_MB", "2048"))
-
-
-def source_build_is_affordable() -> bool:
-    # Read the host's memory directly. server.health would answer this too, but
-    # it is root-plane only: a project agent asking gets a 403, which this would
-    # read as "capacity unknown" and never warn anyone.
-    try:
-        return psutil.virtual_memory().total / 1024 / 1024 >= SOURCE_BUILD_MEMORY_MB
-    except Exception:
-        # Unknown capacity is not a reason to warn.
-        return True
-
-
-def deploy_confirmations(
-    message: str,
-    skill: str,
-    arguments: dict[str, Any],
-    asked: frozenset[str] = frozenset(),
-) -> list[dict[str, Any]]:
-    """Choices the planner made for the user that the user should make.
-
-    This is not a second guess at what the user meant -- the planner's reading
-    stands. It only checks whether a value in a deploy plan was ever the user's
-    to begin with, and turns the ones that were not into questions.
-
-    A question is asked once. `asked` carries the fields the previous turn put
-    to the user: their answer arrives as the next message, and the planner
-    reads it back into the arguments, but the answer is rarely a repetition of
-    the value -- "static 으로 해줘" does not name the service, and answering
-    the service name does not name the framework. Judging each turn on its own
-    text asked both questions forever and no preset deploy could be approved.
-    """
-    if skill != "service.deploy":
-        return []
-    items: list[dict[str, Any]] = []
-    lowered = message.lower()
-
-    service = str(arguments.get("service") or "").strip()
-    # Match on a word boundary. A substring test counted "blog" as confirmed
-    # because the repository URL happened to contain "blogapp", which is the
-    # planner naming the service, not the user.
-    named = bool(
-        service
-        and re.search(
-            r"(?<![A-Za-z0-9_.-])" + re.escape(service.lower()) + r"(?![A-Za-z0-9_-])",
-            lowered,
-        )
-    )
-    if service and not named and "service" not in asked:
-        items.append({
-            "field": "service",
-            "label": "서비스 이름",
-            "question": f"서비스 이름을 `{service}`로 할까요? 다른 이름을 원하시면 알려주세요.",
-            "examples": [service],
-        })
-
-    framework = str(arguments.get("framework") or "").strip()
-    repo_url = str(arguments.get("repo_url") or "").strip()
-
-    # Compiling from source on this host does not finish. A frontend build wants
-    # gigabytes of RAM; the box has under one, so it swaps until the fifteen
-    # minute build timeout kills it -- fifteen minutes the user spent waiting
-    # for a failure that was certain from the start. Say so before the wait.
-    # Both checks below are about the same decision, so they become one
-    # question. Two entries for the same field drew the field twice in the form.
-    repository: dict[str, Any] = {}
-    if repo_url:
-        try:
-            repository = execute_cli_skill(
-                "repository.inspect",
-                {"repo_url": repo_url},
-                dry_run=False,
-            )
-        except Exception:
-            repository = {}
-
-    # `existing` runs the repository's own image, and only that image knows
-    # which port it listens on. When its Dockerfile declares one the deploy
-    # reads it; when it does not -- commented out, or taken from an environment
-    # variable -- the default is a guess, and a wrong guess publishes a URL
-    # that answers nothing while docker calls the container healthy.
-    if (
-        "container_port" not in asked
-        and framework == "existing"
-        and repository.get("has_dockerfile")
-        and not repository.get("dockerfile_ports")
-        and arguments.get("container_port") is None
-    ):
-        items.append({
-            "field": "container_port",
-            "label": "컨테이너 포트",
-            "question": (
-                "저장소의 Dockerfile이 포트를 선언하지 않습니다. 이미지가 실제로 "
-                "듣는 포트를 알려주세요. 틀리면 컨테이너는 떠 있는데 주소는 "
-                "응답하지 않습니다."
-            ),
-            "examples": ["3000", "8000", "80"],
-        })
-
-    reasons: list[str] = []
-    options: list[str] = []
-    ask_framework = "framework" not in asked
-
-    if ask_framework and framework in SOURCE_BUILD_FRAMEWORKS and not source_build_is_affordable():
-        reasons.append(
-            f"`{framework}`는 서버에서 소스를 직접 빌드합니다. 이 서버는 메모리가 "
-            "부족해 프론트엔드 빌드가 시간 초과로 실패할 가능성이 높습니다. "
-            "로컬에서 빌드한 결과물을 저장소에 올린 뒤 `static`으로 배포하시는 "
-            "편을 권합니다."
-        )
-        options.append("static")
-
-    if ask_framework and repo_url and framework and framework != "existing":
-        if repository.get("has_dockerfile"):
-            reasons.append(
-                "저장소에 이미 Dockerfile이 있습니다. 그대로 사용하려면 "
-                "`existing`을 고르세요. 프리셋을 고르면 저장소의 Dockerfile은 "
-                "사용되지 않습니다."
-            )
-            options.append("existing")
-
-    if reasons:
-        options.append(framework)
-        items.append({
-            "field": "framework",
-            "label": "빌드 방식",
-            "question": "\n".join(reasons) + "\n어떻게 할까요?",
-            "examples": list(dict.fromkeys(options)),
-        })
-    return items
-
-
-def already_asked(
-    context: dict[str, Any] | None,
-    skill: str,
-    arguments: dict[str, Any],
-) -> frozenset[str]:
-    """Fields the previous turn asked about, while it is still the same task.
-
-    A user who abandons a deploy and starts a different one must be asked
-    again, so the stored questions only count for the same skill and the same
-    subject.
-    """
-    if not isinstance(context, dict) or context.get("skill") != skill:
-        return frozenset()
-    stored = context.get("arguments")
-    if not isinstance(stored, dict):
-        return frozenset()
-    for field in ("project", "service"):
-        before, now = stored.get(field), arguments.get(field)
-        if before and now and str(before) != str(now):
-            return frozenset()
-    asked = context.get("asked")
-    if isinstance(asked, list):
-        return frozenset(str(field) for field in asked if field)
-    return frozenset(
-        str(item["field"])
-        for item in (context.get("missing") or [])
-        if isinstance(item, dict) and item.get("field")
-    )
-
-
 def deploy_form_hint(
     arguments: dict[str, Any] | None,
     missing: list[dict[str, Any]] | None,
@@ -1088,31 +915,6 @@ def chat(request: ChatRequest, http_request: Request):
                 "requires_approval": False,
             }, plan.get("transcript"))
 
-        # Asked once, for the whole task: a user who answers the framework
-        # question is then asked the service question, and answering that must
-        # not bring the framework question back.
-        asked_before = already_asked(request.context, skill, arguments)
-        confirmed_fields: set[str] = set()
-        if not preview.get("needs_input"):
-            # A choice the user never made becomes a question rather than
-            # something waiting behind an approve button.
-            unconfirmed = deploy_confirmations(
-                request.message,
-                skill,
-                arguments,
-                asked_before,
-            )
-            if unconfirmed:
-                confirmed_fields = {
-                    str(item["field"]) for item in unconfirmed if item.get("field")
-                }
-                preview = dict(preview)
-                preview["needs_input"] = unconfirmed
-                preview.setdefault(
-                    "message",
-                    "\n".join(str(item["question"]) for item in unconfirmed),
-                )
-
         if preview.get("needs_input"):
             final = naturalize_mutation_message(
                 purpose="missing",
@@ -1136,10 +938,6 @@ def chat(request: ChatRequest, http_request: Request):
                     "skill": skill,
                     "arguments": arguments,
                     "missing": preview["needs_input"],
-                    # Only the questions this step raised. A field the preview
-                    # itself reported missing is a value that was never given,
-                    # and supplying it still deserves its confirmation.
-                    "asked": sorted(asked_before | confirmed_fields),
                 },
                 "ui": ui_hint_for_response(
                     skill=skill,

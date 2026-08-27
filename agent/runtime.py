@@ -935,14 +935,64 @@ def dockerfile_exposed_ports(path: Path) -> list[int]:
     return list(dict.fromkeys(ports))
 
 
-def repository_container_port(repo_url: str) -> int | None:
-    """First port the repository's Dockerfile exposes, if it names one."""
+SOURCE_BUILD_FRAMEWORKS = {
+    "vite", "react", "next", "nuxt", "vue", "svelte", "angular",
+    "spring", "spring-gradle", "go",
+}
+# Roughly what a frontend toolchain needs before it starts swapping.
+SOURCE_BUILD_MEMORY_MB = int(os.getenv("SOURCE_BUILD_MEMORY_MB", "2048"))
+
+
+def host_memory_mb() -> int | None:
     try:
-        ports = inspect_repository(repo_url).get("dockerfile_ports") or []
+        return int(psutil.virtual_memory().total / 1024 / 1024)
     except Exception:
-        # A deploy must not fail because the port could not be guessed.
         return None
-    return int(ports[0]) if ports else None
+
+
+def build_capacity(framework: str) -> dict[str, Any] | None:
+    """Whether this host can finish the build the chosen framework implies.
+
+    The planner cannot know how much memory this machine has, and a frontend
+    build on a machine that does not have it swaps until the build times out --
+    fifteen minutes spent on a failure that was certain from the start. This is
+    a fact about the host, handed over with the plan rather than turned into a
+    question the planner is forced through.
+    """
+    if framework not in SOURCE_BUILD_FRAMEWORKS:
+        return None
+    total = host_memory_mb()
+    return {
+        "builds_from_source": True,
+        "host_memory_mb": total,
+        "recommended_memory_mb": SOURCE_BUILD_MEMORY_MB,
+        "likely_to_fail": total is not None and total < SOURCE_BUILD_MEMORY_MB,
+    }
+
+
+def repository_facts(repo_url: str, framework: str) -> dict[str, Any]:
+    """What the repository itself says, handed over with the plan.
+
+    The planner reads these and tells the user what they are approving. They
+    are facts, not a verdict: nothing here overrules the framework the planner
+    and the user settled on.
+    """
+    try:
+        info = inspect_repository(repo_url)
+    except Exception:
+        # A plan must not fail because the repository could not be read here.
+        return {}
+    has_dockerfile = bool(info.get("has_dockerfile"))
+    facts: dict[str, Any] = {
+        "has_dockerfile": has_dockerfile,
+        "dockerfile_ports": info.get("dockerfile_ports") or [],
+    }
+    if has_dockerfile and framework != "existing":
+        facts["preset_replaces_dockerfile"] = (
+            "이 저장소에는 Dockerfile이 있습니다. 프리셋으로 배포하면 그 파일 대신 "
+            "생성된 Dockerfile이 사용됩니다."
+        )
+    return facts
 
 
 def wait_stable(project: str, service: str, seconds: int = 4) -> dict[str, Any]:
@@ -1654,14 +1704,30 @@ def service_deploy(
     service = str(service)
     repo_url = str(repo_url)
     framework = validate_framework(str(framework))
+    repository = repository_facts(repo_url, framework)
     if container_port is not None:
         container_port = int(container_port)
-    elif framework == "existing":
-        # The repository's own image decides the port. Presets are built to
-        # listen on DEFAULT_CONTAINER_PORT; an arbitrary repository is not.
-        container_port = repository_container_port(repo_url) or DEFAULT_CONTAINER_PORT
-    else:
+    elif framework != "existing":
+        # Presets are built to listen on this port, so it is not a guess.
         container_port = DEFAULT_CONTAINER_PORT
+    elif repository.get("dockerfile_ports"):
+        container_port = int(repository["dockerfile_ports"][0])
+    else:
+        # `existing` runs the repository's own image and that image decides the
+        # port. Its Dockerfile declares none, so there is nothing to read and
+        # nothing to infer -- guessing publishes a URL that answers nothing
+        # while docker reports the container healthy.
+        needed = missing_input(
+            "service.deploy",
+            [("container_port", "컨테이너 포트")],
+            {"container_port": None},
+        )
+        needed["repository"] = repository
+        needed["message"] = (
+            "저장소의 Dockerfile이 리슨 포트를 선언하지 않아 이미지가 어떤 포트를 "
+            "쓰는지 알 수 없습니다."
+        )
+        return needed
     requested_environment_names = environment_names or []
     environment_names = []
     for raw_name in requested_environment_names:
@@ -1760,6 +1826,8 @@ def service_deploy(
             if framework == "existing"
             else f"generate {FRAMEWORK_PRESETS[framework]['label']} preset"
         ),
+        "repository": repository,
+        "build_capacity": build_capacity(framework),
         "environment_names": environment_names,
         "suggested_environment_names": FRAMEWORK_PRESETS[framework]["environment"],
         "environment_note": (

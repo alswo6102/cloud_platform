@@ -373,7 +373,11 @@ def field_contracts(port_start: int, port_end: int) -> dict[str, dict[str, Any]]
         "container_port": {
             "type": "integer",
             "label": "컨테이너 포트",
-            "rules": "1~65535 사이 정수입니다. 생략하면 프레임워크 기본값 3000을 사용합니다.",
+            "rules": (
+                "1~65535 사이 정수입니다. 프리셋으로 배포하면 생략해도 되고 3000을 씁니다. "
+                "`existing`으로 배포하면 저장소 Dockerfile의 EXPOSE를 읽고, 선언이 없으면 "
+                "물어봅니다."
+            ),
             "question": "앱이 컨테이너 내부에서 리슨하는 포트를 알려주세요.",
             "examples": [3000, 8000],
         },

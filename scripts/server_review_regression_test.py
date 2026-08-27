@@ -668,100 +668,89 @@ def _existing_uses_the_dockerfiles_port():
     assert runtime.dockerfile_exposed_ports(root / "Missing") == []
 
 
-@check("a_silent_port_guess_becomes_a_question")
-def _existing_without_expose_is_asked():
-    base = {
-        "project": "qa",
-        "service": "hello",
-        "repo_url": "https://github.com/crccheck/docker-hello-world",
-        "framework": "existing",
-        "is_web": True,
-    }
-    original = app.execute_cli_skill
+# --- A plan hands over facts, and never overrules the planner -----------------
+# The app layer used to re-open a finished plan and turn the planner's own
+# choices back into questions. Permission separation is what makes a mutation
+# safe; what the user still needs is to know what they are approving. So the
+# facts travel with the plan, and a value nobody can know stays a missing field
+# in the skill's own contract.
+
+
+@check("a_plan_carries_facts_not_verdicts")
+def _plan_carries_repository_and_host_facts():
+    source = (ROOT / "agent" / "app.py").read_text()
+    for gone in ("def deploy_confirmations(", "def already_asked(", "SOURCE_BUILD_FRAMEWORKS"):
+        assert gone not in source, gone
+
+    original = runtime.inspect_repository
     try:
-        app.execute_cli_skill = lambda *a, **k: {
-            "has_dockerfile": True, "dockerfile_ports": []
+        runtime.inspect_repository = lambda url: {
+            "has_dockerfile": True, "dockerfile_ports": [8080]
         }
-        silent = app.deploy_confirmations("hello 배포해줘", "service.deploy", base)
-        assert {item["field"] for item in silent} == {"container_port"}, silent
+        preset = runtime.repository_facts("https://github.com/a/b", "static")
+        assert preset["has_dockerfile"] is True, preset
+        assert preset["dockerfile_ports"] == [8080], preset
+        assert "preset_replaces_dockerfile" in preset, preset
 
-        # Answering the port does not name the service, so the service question
-        # still stands -- what must not come back is the port question.
-        answered = app.deploy_confirmations(
-            "8000번이야", "service.deploy", base, frozenset({"container_port"})
-        )
-        assert "container_port" not in {item["field"] for item in answered}, answered
+        existing = runtime.repository_facts("https://github.com/a/b", "existing")
+        assert "preset_replaces_dockerfile" not in existing, existing
 
-        given = app.deploy_confirmations(
-            "hello 배포해줘", "service.deploy", {**base, "container_port": 8000}
-        )
-        assert given == [], given
+        def unreachable(url):
+            raise RuntimeError("no network")
 
-        app.execute_cli_skill = lambda *a, **k: {
-            "has_dockerfile": True, "dockerfile_ports": [80]
-        }
-        declared = app.deploy_confirmations("hello 배포해줘", "service.deploy", base)
-        assert declared == [], declared
+        runtime.inspect_repository = unreachable
+        assert runtime.repository_facts("https://github.com/a/b", "static") == {}
     finally:
-        app.execute_cli_skill = original
+        runtime.inspect_repository = original
+
+    assert runtime.build_capacity("static") is None
+    assert runtime.build_capacity("existing") is None
+    vite = runtime.build_capacity("vite")
+    assert vite["builds_from_source"] is True, vite
+    assert set(vite) >= {"host_memory_mb", "recommended_memory_mb", "likely_to_fail"}, vite
 
 
-# --- A question the user answered is not asked again ------------------------
-# Answering "static" does not repeat the service name, and answering the
-# service name does not repeat the framework, so judging each turn on its own
-# text asked both questions forever and no preset deploy could be approved.
-
-
-@check("a_deploy_question_is_asked_once")
-def _confirmations_do_not_repeat():
-    arguments = {
-        "project": "qa",
-        "service": "hello",
-        "repo_url": "https://github.com/crccheck/docker-hello-world",
-        "framework": "static",
-        "is_web": True,
-    }
-    first = app.deploy_confirmations("배포해줘", "service.deploy", arguments)
-    fields = {item["field"] for item in first}
-    assert "framework" in fields, first
-    assert "service" in fields, first
-
-    answered = app.deploy_confirmations(
-        "static 으로 해줘", "service.deploy", arguments, frozenset(fields)
+@check("an_unknowable_port_is_a_missing_field")
+def _port_is_asked_by_the_contract_not_by_the_app():
+    source = (ROOT / "agent" / "runtime.py").read_text()
+    tree = ast.parse(source)
+    deploy = next(
+        n for n in tree.body
+        if isinstance(n, ast.FunctionDef) and n.name == "service_deploy"
     )
-    assert answered == [], answered
+    body = ast.get_source_segment(source, deploy) or ""
+    assert "dockerfile_ports" in body, "배포가 저장소가 선언한 포트를 읽지 않는다"
+    tail = body[body.index("dockerfile_ports"):]
+    assert "missing_input(" in tail, "선언이 없을 때 물어보지 않고 추측한다"
+    assert '"container_port"' in tail, tail[:200]
 
 
-@check("a_different_deploy_is_asked_again")
-def _confirmations_reset_on_a_new_task():
-    context = {
-        "skill": "service.deploy",
-        "arguments": {"project": "qa", "service": "hello"},
-        "missing": [{"field": "framework"}, {"field": "service"}],
-    }
-    same = app.already_asked(
-        context, "service.deploy", {"project": "qa", "service": "hello"}
+@check("tool_descriptions_carry_a_contract_not_a_lecture")
+def _no_prohibition_boilerplate():
+    import skill_registry
+
+    # What a skill refuses is part of its own contract and stays. What went is
+    # the identical paragraph that was appended to all sixteen of them, telling
+    # the planner not to invent values and not to answer with the reply tool --
+    # rules the system prompt already states once.
+    boilerplate = (
+        "runtime_rule",
+        "Never invent values",
+        "Never copy examples",
+        "Never use conversation-reply",
+        "Select this tool when the latest user intent matches",
     )
-    assert same == frozenset({"framework", "service"}), same
+    for document in skill_registry.skill_documents():
+        description = planner.tool_description_for_llm(document)
+        for phrase in boilerplate:
+            assert phrase not in description, f"{document['name']}: {phrase}"
 
-    other_service = app.already_asked(
-        context, "service.deploy", {"project": "qa", "service": "blog"}
-    )
-    assert other_service == frozenset(), other_service
-
-    other_skill = app.already_asked(
-        context, "service.redeploy", {"project": "qa", "service": "hello"}
-    )
-    assert other_skill == frozenset(), other_skill
-
-    # Accumulated across the task, so answering one question does not bring an
-    # earlier one back.
-    accumulated = app.already_asked(
-        {**context, "asked": ["framework", "service"], "missing": [{"field": "service"}]},
-        "service.deploy",
-        {"project": "qa", "service": "hello"},
-    )
-    assert accumulated == frozenset({"framework", "service"}), accumulated
+    # The reply tool is built inline, so read it where it is written.
+    source = (ROOT / "agent" / "planner.py").read_text()
+    reply = source[source.index('"name": "conversation-reply"'):]
+    reply = reply[:reply.index('"parameters"')]
+    for scold in ("Never ", "Do not "):
+        assert scold not in reply, reply
 
 
 # --- A project agent notices when the agent's code changed -------------------
