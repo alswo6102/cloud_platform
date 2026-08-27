@@ -42,6 +42,8 @@ LLM_MAX_STEPS = int(os.getenv("LLM_MAX_STEPS", "12"))
 MODEL_COOLDOWNS: dict[str, float] = {}
 
 MODEL_COOLDOWN_LOCK = threading.Lock()
+# A retired model stays retired; do not pay a round trip for it every turn.
+DEAD_MODEL_COOLDOWN = float(os.getenv("DEAD_MODEL_COOLDOWN", "600"))
 
 def llm_models() -> list[str]:
     configured = os.getenv("LLM_MODELS", "")
@@ -164,6 +166,7 @@ def llm_chat_completion(
         timeout = float(os.getenv("LLM_REQUEST_TIMEOUT", "60"))
 
     attempted: list[str] = []
+    failures: list[str] = []
     for model in models:
         now = time.monotonic()
         with MODEL_COOLDOWN_LOCK:
@@ -179,26 +182,45 @@ def llm_chat_completion(
         if tools:
             payload["tools"] = tools
             payload["tool_choice"] = "auto"
-        response = requests.post(
-            api_url.rstrip("/") + "/chat/completions",
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            },
-            json=payload,
-            timeout=timeout,
-        )
+        try:
+            response = requests.post(
+                api_url.rstrip("/") + "/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+                timeout=timeout,
+            )
+        except requests.RequestException as exc:
+            failures.append(f"{model}: {type(exc).__name__}")
+            continue
         if response.status_code == 429:
             with MODEL_COOLDOWN_LOCK:
                 MODEL_COOLDOWNS[model] = time.monotonic() + rate_limit_cooldown(response)
+            failures.append(f"{model}: 429")
             continue
-        response.raise_for_status()
-        return response.json()["choices"][0]["message"], model
+        if response.status_code >= 400:
+            # A model gets retired, renamed, or withdrawn from a key without
+            # warning, and the list exists so the next one gets its turn. This
+            # used to raise here: a dead model in the middle of the list killed
+            # every request, while working models sat untried behind it.
+            if response.status_code < 500:
+                with MODEL_COOLDOWN_LOCK:
+                    MODEL_COOLDOWNS[model] = time.monotonic() + DEAD_MODEL_COOLDOWN
+            failures.append(f"{model}: {response.status_code}")
+            continue
+        try:
+            return response.json()["choices"][0]["message"], model
+        except (ValueError, KeyError, IndexError):
+            failures.append(f"{model}: unreadable response")
+            continue
 
     cooling = llm_status()["cooldowns"]
     raise SkillError(
-        "All configured LLM models are rate-limited or cooling down. "
-        f"Attempted: {attempted or 'none'}; cooldowns: {cooling}"
+        "No configured LLM model answered. "
+        f"Attempted: {attempted or 'none'}; "
+        f"failures: {failures or 'none'}; cooldowns: {cooling}"
     )
 
 def call_llm(

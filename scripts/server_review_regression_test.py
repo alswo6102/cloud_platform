@@ -753,6 +753,59 @@ def _no_prohibition_boilerplate():
         assert scold not in reply, reply
 
 
+# --- A dead model does not take the whole request down -----------------------
+# gemini-2.5-flash was retired and answered 404. Only 429 fell through to the
+# next model, so every request died on it while a working model sat untried
+# behind it in the same list.
+
+
+@check("a_failing_model_falls_through_to_the_next")
+def _model_list_survives_a_dead_model():
+    source = (ROOT / "agent" / "planner.py").read_text()
+    tree = ast.parse(source)
+    transport = next(
+        n for n in tree.body
+        if isinstance(n, ast.FunctionDef) and n.name == "llm_chat_completion"
+    )
+    body = ast.get_source_segment(source, transport) or ""
+    assert "raise_for_status" not in body, "첫 실패에서 요청 전체가 죽는다"
+    assert "status_code >= 400" in body, body[-400:]
+
+    calls = []
+    def fake_post(url, **kwargs):
+        model = kwargs["json"]["model"]
+        calls.append(model)
+        class Response:
+            status_code = 404 if model == "dead-model" else 200
+            text = "retired"
+            headers: dict = {}
+            @staticmethod
+            def json():
+                return {"choices": [{"message": {"content": "ok"}}]}
+        return Response()
+
+    original_post = planner.requests.post
+    original_models = os.environ.get("LLM_MODELS", "")
+    try:
+        planner.MODEL_COOLDOWNS.clear()
+        os.environ["LLM_MODELS"] = "dead-model,live-model"
+        os.environ["LLM_API_KEY"] = "k"
+        os.environ["LLM_API_URL"] = "https://example.invalid"
+        planner.requests.post = fake_post
+        message, model = planner.llm_chat_completion([{"role": "user", "content": "hi"}])
+        assert model == "live-model", model
+        assert calls == ["dead-model", "live-model"], calls
+        assert message["content"] == "ok", message
+        # And it is not retried on the next turn.
+        assert "dead-model" in planner.MODEL_COOLDOWNS
+    finally:
+        planner.requests.post = original_post
+        planner.MODEL_COOLDOWNS.clear()
+        os.environ["LLM_MODELS"] = original_models
+        os.environ.pop("LLM_API_KEY", None)
+        os.environ.pop("LLM_API_URL", None)
+
+
 # --- A project agent notices when the agent's code changed -------------------
 # The version stamped into each project's compose file is what tells the
 # platform to rebuild that project's agent. It was a hand-written list of five
@@ -967,10 +1020,17 @@ def _single_transport():
     source = (ROOT / "agent" / "planner.py").read_text()
     posts = source.count("chat/completions")
     assert posts == 1, f"전송 구현이 {posts}벌"
-    cooldowns = source.count("MODEL_COOLDOWNS[model]")
-    assert cooldowns == 1, f"쿨다운 기록이 {cooldowns}곳"
-    # Both roles have to go through it.
+    # Cooldowns are written for a rate limit and for a model that answered an
+    # error; what matters is that both live inside the one transport.
     tree = ast.parse(source)
+    transport = next(
+        n for n in tree.body
+        if isinstance(n, ast.FunctionDef) and n.name == "llm_chat_completion"
+    )
+    inside = (ast.get_source_segment(source, transport) or "").count("MODEL_COOLDOWNS[model]")
+    assert inside == source.count("MODEL_COOLDOWNS[model]"), "전송 밖에서 쿨다운을 기록함"
+
+    # Both roles have to go through it.
     for name in ("call_llm", "call_llm_text"):
         node = next(
             n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == name
