@@ -1,0 +1,362 @@
+.workspace {
+  display: grid;
+  grid-template-columns: 1fr var(--rail-w, 420px);
+  align-items: stretch;
+  min-height: calc(100vh - var(--header-h));
+}
+
+/* The panel keeps its mount so the conversation survives the mode change; the
+   grid just stops reserving a column for it. */
+.workspace--noRail {
+  grid-template-columns: 1fr;
+}
+
+.workspace--noRail > .agentPanel {
+  display: none;
+}
+
+.workspaceHead__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.workspace__main {
+  padding: 26px var(--gutter) 40px;
+  min-width: 0;
+}
+
+.workspaceHead {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.workspaceHead__ident {
+  min-width: 0;
+}
+
+.workspaceHead__title {
+  font: 600 26px/1.15 var(--sans);
+  letter-spacing: -0.02em;
+  color: var(--ink);
+}
+
+.workspaceMeta {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-top: 9px;
+  font-size: 12.5px;
+  color: var(--muted);
+  flex-wrap: wrap;
+}
+
+.workspaceMeta__dot {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.workspaceMeta__dot i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ok);
+}
+
+.workspaceMeta__dot--warn i {
+  background: var(--warn);
+}
+
+.workspaceMeta__dot--idle i {
+  background: var(--faint);
+}
+
+.workspaceMeta__sep {
+  color: #dfe3e7;
+}
+
+.workspaceMeta b {
+  font-weight: 600;
+  color: var(--ink-soft);
+}
+
+.workspaceMeta .num {
+  font-weight: 600;
+  font-size: 12.5px;
+}
+
+.workspaceMeta__soft {
+  color: var(--faint);
+}
+
+/* ------------------------------------------------------- service table */
+.serviceTable {
+  margin-top: 22px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  overflow: visible;
+}
+
+.serviceTable__head,
+.serviceRow {
+  display: grid;
+  grid-template-columns: 1fr 122px 116px 172px 186px;
+  gap: 14px;
+  align-items: center;
+}
+
+.serviceTable__head {
+  padding: 9px 18px;
+  background: var(--surface-sunk);
+  border-bottom: 1px solid var(--line);
+  border-radius: var(--r-md) var(--r-md) 0 0;
+  font: 600 10.5px var(--mono);
+  letter-spacing: 0.07em;
+  color: var(--muted-strong);
+}
+
+.serviceRow {
+  position: relative;
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.serviceRow:last-child {
+  border-bottom: 0;
+}
+
+.serviceRow--attention {
+  background: #fffdfd;
+}
+
+.serviceRow__name {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+}
+
+.serviceRow__name > strong {
+  font-weight: 600;
+  font-size: 15px;
+  color: var(--ink);
+  min-width: 0;
+}
+
+.serviceRow__link {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font: 500 12px var(--mono);
+  color: var(--primary);
+  flex: none;
+}
+
+.serviceRow__restarts {
+  font-weight: 500;
+  font-size: 11.5px;
+  color: var(--danger);
+  flex: none;
+}
+
+.serviceRow__sub {
+  margin-top: 4px;
+  font-size: 12.5px;
+  line-height: 1.4;
+  color: var(--muted);
+}
+
+.serviceRow__facts {
+  display: contents;
+}
+
+.serviceRow__port {
+  font: 12.5px var(--mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-soft);
+}
+
+.serviceRow__memory {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.serviceRow__memoryValue {
+  font: 12.5px var(--mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-strong);
+}
+
+.serviceRow__actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 7px;
+}
+
+.tableNote {
+  margin-top: 11px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--faint);
+}
+
+.tableNote b {
+  font-weight: 600;
+  color: var(--text-strong);
+}
+
+.workspaceAlert {
+  margin-top: 16px;
+}
+
+/* -------------------------------------------------------- log output */
+.logPanel {
+  margin-top: 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.logPanel__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  background: var(--surface-sunk);
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.logPanel__title {
+  font-weight: 600;
+  font-size: 12.5px;
+  color: var(--ink-soft);
+}
+
+.logPanel__meta {
+  font: 11.5px var(--mono);
+  color: var(--faint);
+}
+
+.logPanel__close {
+  margin-left: auto;
+}
+
+.logPanel__body {
+  margin: 0;
+  padding: 12px 14px;
+  max-height: 320px;
+  overflow: auto;
+  font: 12px/1.7 var(--mono);
+  color: var(--text-strong);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* ---------------------------------------------------- mobile agent tab */
+.agentDock {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 30;
+  padding: 10px var(--gutter) calc(10px + env(safe-area-inset-bottom));
+  background: var(--surface);
+  border-top: 1px solid var(--line);
+}
+
+@media (max-width: 1100px) {
+  .workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .workspace > .agentPanel {
+    display: none;
+  }
+}
+
+@media (max-width: 820px) {
+  .workspace__main {
+    padding: 20px var(--gutter) 96px;
+  }
+
+  /* Wrapped meta leaves separators stranded at the end of a line. */
+  .workspaceMeta {
+    gap: 4px 16px;
+  }
+
+  .workspaceMeta__sep {
+    display: none;
+  }
+
+  .serviceTable {
+    margin-top: 18px;
+    background: transparent;
+    border: 0;
+    border-radius: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .serviceTable__head {
+    display: none;
+  }
+
+  .serviceRow {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    grid-template-areas:
+      "name badge"
+      "facts facts"
+      "actions actions";
+    align-items: start;
+    gap: 0;
+    padding: 13px 14px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--r-md);
+  }
+
+  .serviceRow > :first-child {
+    grid-area: name;
+  }
+
+  .serviceRow > :nth-child(2) {
+    grid-area: badge;
+  }
+
+  .serviceRow__facts {
+    grid-area: facts;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin-top: 9px;
+    flex-wrap: wrap;
+  }
+
+  .serviceRow__actions {
+    grid-area: actions;
+    margin-top: 12px;
+    justify-content: stretch;
+  }
+
+  .serviceRow__actions > .btn {
+    flex: 1;
+    height: 34px;
+  }
+
+  .serviceRow__actions .actionMenu,
+  .serviceRow__actions .actionMenu > .btn {
+    flex: none;
+    width: 44px;
+    height: 34px;
+  }
+}

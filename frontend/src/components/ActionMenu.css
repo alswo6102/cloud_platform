@@ -1,0 +1,70 @@
+.actionMenu {
+  position: relative;
+  display: inline-flex;
+}
+
+.actionMenu__pop {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 20;
+  width: 196px;
+  padding: 5px;
+  background: var(--surface);
+  border: 1px solid var(--line-pop);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-pop);
+}
+
+.actionMenu__pop--up {
+  top: auto;
+  bottom: calc(100% + 6px);
+}
+
+.actionMenu__section {
+  padding: 6px 9px 4px;
+  font: 600 10.5px var(--mono);
+  letter-spacing: 0.07em;
+  color: var(--faint);
+}
+
+.actionMenu__item {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  padding: 7px 9px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  font-weight: 500;
+  font-size: 13px;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.actionMenu__item:hover,
+.actionMenu__item:focus-visible {
+  background: var(--bg);
+}
+
+.actionMenu__item--danger {
+  font-weight: 600;
+  color: var(--danger);
+}
+
+.actionMenu__hint {
+  margin-left: auto;
+  font: 11px var(--mono);
+  color: var(--faint);
+}
+
+.actionMenu__item--danger .actionMenu__hint {
+  color: #c98d87;
+}
+
+.actionMenu__divider {
+  height: 1px;
+  background: var(--line-soft);
+  margin: 5px 0;
+}

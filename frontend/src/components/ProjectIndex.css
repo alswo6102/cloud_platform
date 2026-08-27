@@ -1,0 +1,338 @@
+.indexTitleRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.indexTitleRow__left {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.indexTitle {
+  font: 600 24px/1.2 var(--sans);
+  letter-spacing: -0.015em;
+  color: var(--ink);
+}
+
+.scopeBadge {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: var(--r-xs);
+  background: var(--surface-mute);
+  border: 1px solid var(--line);
+  font: 600 11px var(--mono);
+  color: var(--muted);
+}
+
+.segmented {
+  display: inline-flex;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-sm);
+  overflow: hidden;
+  background: var(--surface);
+}
+
+.segmented > button {
+  height: 30px;
+  padding: 0 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  border-left: 1px solid var(--line-strong);
+  background: transparent;
+  font-weight: 600;
+  font-size: 12.5px;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.segmented > button:first-child {
+  border-left: 0;
+}
+
+.segmented > button:hover:not(.is-active) {
+  background: var(--surface-sunk);
+}
+
+.segmented > button.is-active {
+  background: var(--ink-soft);
+  color: #fff;
+}
+
+.segmented__count {
+  font: 11.5px var(--mono);
+  color: var(--faint-soft);
+}
+
+.segmented > button.is-active .segmented__count {
+  color: inherit;
+  opacity: 0.7;
+}
+
+/* --------------------------------------------------------------- table */
+.projectTable {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-top: none;
+  border-radius: 0 0 var(--r-md) var(--r-md);
+  overflow: hidden;
+}
+
+.projectTable__head,
+.projectRow {
+  display: grid;
+  grid-template-columns: 1fr 96px 168px 150px 82px;
+  gap: 16px;
+  align-items: center;
+}
+
+.projectTable--admin .projectTable__head,
+.projectTable--admin .projectRow {
+  grid-template-columns: 1fr 108px 88px 158px 140px 82px;
+}
+
+.projectTable__head {
+  padding: 9px 18px;
+  background: var(--surface-sunk);
+  border-bottom: 1px solid var(--line);
+  font: 600 10.5px var(--mono);
+  letter-spacing: 0.07em;
+  color: var(--muted-strong);
+}
+
+.projectRow {
+  padding: 15px 18px 15px 16px;
+  border-bottom: 1px solid var(--line-soft);
+  border-left: 2px solid transparent;
+}
+
+.projectRow:last-child {
+  border-bottom: 0;
+}
+
+.projectRow--warn {
+  border-left-color: var(--warn-line);
+}
+
+.projectRow--danger {
+  border-left-color: var(--danger);
+  background: #fffdfd;
+}
+
+.projectRow__name {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+}
+
+.projectRow__name > strong {
+  font-weight: 600;
+  font-size: 15px;
+  color: var(--ink);
+  min-width: 0;
+}
+
+.projectRow__link {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font: 500 12.5px var(--mono);
+  color: var(--primary);
+  flex: none;
+}
+
+.projectRow__sub {
+  margin-top: 4px;
+  font-size: 12.5px;
+  line-height: 1.4;
+  color: var(--muted);
+}
+
+.projectRow__sub--danger {
+  color: var(--danger);
+}
+
+.projectRow__sub--warn {
+  color: var(--warn);
+}
+
+.projectRow__owner {
+  font-size: 12.5px;
+  color: var(--ink-soft);
+}
+
+.projectRow__running {
+  font: 600 13px var(--mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-soft);
+}
+
+.projectRow__running--idle {
+  color: var(--faint);
+}
+
+.projectRow__memory {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.projectRow__memoryValue {
+  font: 12.5px var(--mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-strong);
+}
+
+.projectRow__stack {
+  font-size: 12.5px;
+  line-height: 1.4;
+  color: var(--muted);
+}
+
+.cellEmpty {
+  font: 12.5px var(--mono);
+  color: var(--faint);
+}
+
+.projectRow__action {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 9px;
+}
+
+/* ------------------------------------------------- visitor public list */
+.publicList {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-top: none;
+  border-radius: 0 0 var(--r-md) var(--r-md);
+}
+
+.publicRow {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 15px 16px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.publicRow:last-child {
+  border-bottom: 0;
+}
+
+.publicRow > strong {
+  font-weight: 600;
+  font-size: 15px;
+  color: var(--ink);
+}
+
+.publicRow__count {
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+.publicRow__link {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font: 500 12.5px var(--mono);
+}
+
+.indexFootnote {
+  margin-top: 12px;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--faint);
+}
+
+/* --------------------------------------------------- root agent launcher */
+.agentLauncher {
+  margin-top: 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  flex-wrap: wrap;
+}
+
+.agentMark {
+  width: 20px;
+  height: 20px;
+  flex: none;
+  border-radius: 5px;
+  background: var(--agent-bg);
+  border: 1px solid var(--agent-line);
+  display: grid;
+  place-items: center;
+  font-weight: 700;
+  font-size: 10px;
+  color: var(--agent);
+}
+
+.agentLauncher__title {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--ink-soft);
+}
+
+.agentLauncher .segmented > button {
+  height: 26px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+.agentLauncher .segmented > button.is-active {
+  background: var(--agent-bg);
+  color: var(--agent);
+}
+
+.agentLauncher__open {
+  margin-left: auto;
+}
+
+@media (max-width: 820px) {
+  .projectTable__head {
+    display: none;
+  }
+
+  .projectTable,
+  .projectTable--admin {
+    border-radius: 0 0 var(--r-md) var(--r-md);
+  }
+
+  .projectRow,
+  .projectTable--admin .projectRow {
+    grid-template-columns: 1fr auto;
+    gap: 8px 12px;
+    padding: 14px 14px 14px 12px;
+  }
+
+  .projectRow__owner,
+  .projectRow__stack {
+    grid-column: 1 / -1;
+  }
+
+  .projectRow__running,
+  .projectRow__memory {
+    grid-column: 1;
+  }
+
+  .projectRow__action {
+    grid-row: 1;
+    grid-column: 2;
+  }
+}

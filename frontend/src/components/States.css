@@ -1,0 +1,134 @@
+.skeletonRow {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 15px 18px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.skeletonRow:last-of-type {
+  border-bottom: 0;
+}
+
+.sk {
+  height: 12px;
+  border-radius: 3px;
+  background: var(--surface-mute);
+}
+
+.sk--strong {
+  background: var(--line-soft);
+}
+
+.sk--btn {
+  width: 56px;
+  height: 26px;
+  border-radius: var(--r-sm);
+}
+
+.skeletonNote {
+  padding: 0 18px 16px;
+  font-size: 12px;
+  color: var(--faint-soft);
+}
+
+/* --------------------------------------------------------- empty state */
+.emptyState {
+  padding: 34px 18px 30px;
+  text-align: center;
+}
+
+.emptyState__mark {
+  width: 34px;
+  height: 34px;
+  margin: 0 auto;
+  border: 1.5px dashed var(--line-strong);
+  border-radius: 7px;
+}
+
+.emptyState__title {
+  margin-top: 14px;
+  font-weight: 600;
+  font-size: 15px;
+  color: var(--ink-soft);
+}
+
+.emptyState__body {
+  margin-top: 5px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+
+.emptyState__action {
+  margin-top: 16px;
+}
+
+/* --------------------------------------------------------------- errors */
+.errorPanel {
+  padding: 13px 14px;
+  border: 1px solid var(--danger-line);
+  border-radius: 7px;
+  background: var(--danger-tint);
+}
+
+.errorPanel__title {
+  font-weight: 600;
+  font-size: 13.5px;
+  color: var(--danger-ink);
+}
+
+.errorPanel__body {
+  margin-top: 5px;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--danger-body);
+}
+
+.errorPanel__actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.inlineConfirm {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 13px;
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  flex-wrap: wrap;
+}
+
+.inlineConfirm__text {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-right: auto;
+  font-size: 12.5px;
+  color: var(--muted);
+  min-width: 0;
+}
+
+.inlineConfirm__text b {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--ink-soft);
+}
+
+.staleNotice {
+  padding: 11px 13px;
+  border: 1px solid var(--warn-line);
+  border-radius: 7px;
+  background: var(--warn-bg);
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--warn-ink);
+}
+
+.staleNotice b {
+  font-weight: 600;
+}

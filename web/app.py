@@ -528,6 +528,27 @@ def add_project_membership(project: str, user_id: str, role: str = "owner") -> N
     save_auth_store(store)
 
 
+def project_owners(projects: list[dict[str, Any]]) -> dict[str, str]:
+    # The console lists other people's projects for admins, so a row has to say
+    # whose it is. Membership lives here, not in the agent, so the name is
+    # attached on the way out instead of asking the agent for something it
+    # cannot know.
+    store = load_auth_store()
+    memberships = store.get("memberships", {})
+    users = store.get("users", {})
+    owners: dict[str, str] = {}
+    for project in projects:
+        name = str(project.get("name") or "")
+        members = memberships.get(name, {})
+        owner_id = next(
+            (member for member, role in members.items() if role == "owner"),
+            next(iter(members), ""),
+        )
+        if owner_id:
+            owners[name] = str(users.get(owner_id, {}).get("name") or owner_id)
+    return owners
+
+
 @app.get("/api/health")
 def health() -> dict[str, Any]:
     agent = agent_request("GET", "/health")
@@ -595,10 +616,22 @@ def list_projects(
         ttl=cache_ttl,
         generated_at=generated_at,
     )
-    projects = visible_projects(role, user_id, data.get("projects", []))
+    all_projects = data.get("projects", [])
+    projects = visible_projects(role, user_id, all_projects)
+    owners = project_owners(all_projects)
+    # Membership, not visibility. An admin sees every project but is a member of
+    # only their own, and the console's "내 프로젝트" filter means the latter.
+    memberships = load_auth_store().get("memberships", {})
+    member_of = [
+        str(item.get("name"))
+        for item in projects
+        if user_id in memberships.get(str(item.get("name")), {})
+    ]
     return {
         "user": {"id": user_id, "role": role},
-        "projects": projects,
+        "projects": [{**item, "owner": owners.get(str(item.get("name")))} for item in projects],
+        "member_of": member_of,
+        "owners": owners,
         "incomplete_projects": data.get("incomplete_projects", []),
         "membership_mode": "json-table",
     }
@@ -709,6 +742,39 @@ def system_summary(
     return data
 
 
+# The signed-out home shows the same server strip as the signed-in one, so the
+# two capacity numbers on it have to be readable without a session. Everything
+# else server.health returns — free bytes, swap, container names, warnings —
+# stays behind the login.
+@app.get("/api/system/public")
+def public_system_summary(request: Request, response: Response) -> dict[str, Any]:
+    data, cache_state, cache_ttl, generated_at = cached_read(
+        "system-summary",
+        SYSTEM_SUMMARY_CACHE_TTL,
+        lambda: agent_request("POST", "/execute", json_body={
+            "skill": "server.health",
+            "arguments": {},
+            "approved": True,
+        }),
+        bypass=request_bypasses_cache(request),
+    )
+    apply_api_cache_headers(
+        response,
+        state=cache_state,
+        ttl=cache_ttl,
+        generated_at=generated_at,
+    )
+    result = data.get("result") if isinstance(data, dict) else None
+    result = result if isinstance(result, dict) else {}
+    return {
+        "result": {
+            "memory_percent": result.get("memory_percent"),
+            "disk_percent": result.get("disk_percent"),
+        },
+        "visibility": "capacity-only",
+    }
+
+
 @app.get("/api/frameworks")
 def frameworks() -> dict[str, Any]:
     return agent_request("GET", "/frameworks")
@@ -812,6 +878,38 @@ def admin_execute(
     }:
         invalidate_read_cache()
     return result
+
+
+# Approval cards and the deploy summary have to show a real dry run, not a
+# guess assembled in the browser. The agent already refuses /execute without
+# approval, so the plan has to come from /preview.
+@app.post("/api/projects/{project}/preview")
+def project_preview(
+    project: str,
+    payload: ExecuteRequest,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    user_id, role = authenticated_user(authorization)
+    ensure_project_access(role, user_id, project)
+    arguments = dict(payload.arguments)
+    arguments["project"] = project
+    return project_agent_request(project, "POST", "/preview", json_body={
+        "skill": payload.skill,
+        "arguments": arguments,
+    })
+
+
+@app.post("/api/admin/preview")
+def admin_preview(
+    payload: ExecuteRequest,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    _, role = authenticated_user(authorization)
+    require_admin(role)
+    return agent_request("POST", "/preview", json_body={
+        "skill": payload.skill,
+        "arguments": payload.arguments,
+    })
 
 
 @app.post("/api/projects/{project}/execute")
