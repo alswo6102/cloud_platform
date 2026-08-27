@@ -61,6 +61,9 @@ rsync_base() {
       --exclude ".git/" \
       --exclude ".idea/" \
       --exclude ".env.local" \
+      --exclude ".agent.env" \
+      --exclude "data/" \
+      --exclude "output/" \
       --exclude ".DS_Store" \
       --exclude "__pycache__/" \
       --exclude ".pytest_cache/" \
@@ -77,6 +80,9 @@ rsync_base() {
       --exclude ".git/" \
       --exclude ".idea/" \
       --exclude ".env.local" \
+      --exclude ".agent.env" \
+      --exclude "data/" \
+      --exclude "output/" \
       --exclude ".DS_Store" \
       --exclude "__pycache__/" \
       --exclude ".pytest_cache/" \
