@@ -1,6 +1,8 @@
 ---
 name: project-create
 description: Create a new empty managed Docker Compose project. Use when the user wants to add or create a project. If the project name is missing, omit it so the application can ask a follow-up question. Always require preview and approval.
+access: mutate
+plane: root
 ---
 
 # Project Create

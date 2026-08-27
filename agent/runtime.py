@@ -22,6 +22,11 @@ import psutil
 import requests
 import yaml
 import cli_contracts
+from skill_registry import (
+    SKILLS_ROOT,
+    read_only_skills,
+    skill_documents,
+)
 from deployment_presets import (
     DEFAULT_CONTAINER_PORT,
     FRAMEWORK_PRESETS,
@@ -32,7 +37,6 @@ from deployment_presets import (
 )
 
 PROJECTS_ROOT = Path(os.getenv("PROJECTS_ROOT", "/srv/projects"))
-SKILLS_ROOT = Path(os.getenv("SKILLS_ROOT", "/app/skills"))
 DOCS_ROOT = Path(os.getenv("DOCS_ROOT", "/app/docs"))
 AUDIT_LOG = Path(os.getenv("AUDIT_LOG", "/var/log/skill-agent/audit.jsonl"))
 NAMESPACE_TOKEN_STORE = Path(
@@ -75,25 +79,6 @@ def project_agent_template_version() -> str:
     return digest.hexdigest()[:16]
 NAME_PATTERN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$")
 ENV_NAME_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
-API_SKILL_NAMES = {
-    "entity-resolve": "entity.resolve",
-    "framework-list": "framework.list",
-    "help-search": "help.search",
-    "platform-help": "platform.help",
-    "server-health": "server.health",
-    "project-create": "project.create",
-    "project-list": "project.list",
-    "service-deploy": "service.deploy",
-    "service-redeploy": "service.redeploy",
-    "repository-inspect": "repository.inspect",
-    "service-status": "service.status",
-    "service-logs": "service.logs",
-    "service-control": "service.control",
-    "port-suggest": "port.suggest",
-    "port-manage": "port.manage",
-    "qa-run": "qa.run",
-}
-SKILL_API_NAMES = {value: key for key, value in API_SKILL_NAMES.items()}
 GITHUB_HTTPS_PATTERN = re.compile(
     r"^https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:\.git)?$"
 )
@@ -994,25 +979,6 @@ def audit(skill: str, arguments: dict[str, Any], status: str, result: Any) -> No
         file.write(json.dumps(record, ensure_ascii=True, default=str) + "\n")
 
 
-def skill_documents() -> list[dict[str, Any]]:
-    documents = []
-    for path in sorted(SKILLS_ROOT.glob("*/SKILL.md")):
-        text = path.read_text()
-        match = re.match(r"^---\n(.*?)\n---\n(.*)$", text, re.DOTALL)
-        if not match:
-            continue
-        metadata = yaml.safe_load(match.group(1)) or {}
-        schema_path = path.parent / "schema.json"
-        documents.append(
-            {
-                "name": API_SKILL_NAMES.get(path.parent.name, metadata.get("name", path.parent.name)),
-                "document_name": metadata.get("name", path.parent.name),
-                "description": metadata.get("description", ""),
-                "instructions": match.group(2).strip(),
-                "schema": json.loads(schema_path.read_text()) if schema_path.exists() else {},
-            }
-        )
-    return documents
 
 
 
@@ -1124,7 +1090,7 @@ def field_contract(field: str, *, required: bool, label: str | None = None) -> d
 def command_contract(skill: str) -> dict[str, Any]:
     document = next((item for item in skill_documents() if item["name"] == skill), None)
     schema = document.get("schema", {}) if document else {}
-    read_only = skill in READ_ONLY_SKILLS
+    read_only = skill in read_only_skills()
     return cli_contracts.build_command_contract(
         skill,
         document=document,
@@ -2114,19 +2080,6 @@ def qa_run() -> dict[str, Any]:
     return {"passed": all(checks.values()), "checks": checks, "details": health, "duplicate_ports": duplicates}
 
 
-READ_ONLY_SKILLS = {
-    "entity.resolve",
-    "framework.list",
-    "help.search",
-    "platform.help",
-    "server.health",
-    "project.list",
-    "repository.inspect",
-    "service.status",
-    "service.logs",
-    "port.suggest",
-    "qa.run",
-}
 
 
 def required_argument(arguments: dict[str, Any], field: str, skill: str) -> Any:
@@ -2236,7 +2189,7 @@ def call_platform_api_skill(
         headers["Authorization"] = f"Bearer {token}"
     payload: dict[str, Any] = {"skill": skill, "arguments": arguments}
     if not dry_run:
-        payload["approved"] = approved or skill in READ_ONLY_SKILLS
+        payload["approved"] = approved or skill in read_only_skills()
     response = requests.post(
         base + ("/preview" if dry_run else "/execute"),
         headers=headers,
@@ -2277,10 +2230,10 @@ def execute_cli_skill(
             platform_api, skill, arguments, dry_run=dry_run, approved=approved
         )
     if dry_run:
-        if skill in READ_ONLY_SKILLS:
+        if skill in read_only_skills():
             raise SkillError("Read-only skills do not require preview")
         return execute_skill(skill, arguments, dry_run=True)
-    if skill not in READ_ONLY_SKILLS and not approved:
+    if skill not in read_only_skills() and not approved:
         raise SkillError("Mutation skills require approval")
     return execute_skill(skill, arguments, dry_run=False)
 

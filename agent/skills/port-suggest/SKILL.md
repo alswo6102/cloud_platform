@@ -1,6 +1,8 @@
 ---
 name: port-suggest
 description: Suggest the first unused host port from 9000 through 9100 by inspecting every managed Compose file. Use before deploying or changing a published port.
+access: read
+plane: shared
 ---
 
 # Port Suggest

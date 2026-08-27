@@ -1,6 +1,8 @@
 ---
 name: repository-inspect
 description: Inspect a public GitHub repository read-only and return framework candidates with file and dependency evidence. Use before recommending a deployment preset.
+access: read
+plane: shared
 ---
 
 # Repository Inspect

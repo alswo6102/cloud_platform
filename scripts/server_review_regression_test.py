@@ -608,19 +608,77 @@ def _no_unanswered_calls_in_source():
         assert "finish(" in window or "transcript()" in window, marker
 
 
+# --- Permissions come from the skill documents ------------------------------
+
+
+@check("every_skill_declares_its_own_permissions")
+def _permissions_are_declared():
+    import skill_registry
+
+    documents = skill_registry.skill_documents()
+    assert len(documents) == 16, len(documents)
+    for document in documents:
+        assert document["access"] in {"read", "mutate"}, document["name"]
+        assert document["plane"] in {"root", "project", "shared"}, document["name"]
+
+
+@check("permission_sets_are_derived_not_restated")
+def _no_hardcoded_permission_sets():
+    for name in ("app", "authz", "planner", "runtime", "cli"):
+        source = (ROOT / "agent" / f"{name}.py").read_text()
+        assert "READ_ONLY_SKILLS = {" not in source, name
+        assert "PROJECT_SCOPED_HIDDEN_SKILLS" not in source, name
+    authz_source = (ROOT / "agent" / "authz.py").read_text()
+    for skill in ("service.deploy", "service.redeploy", "port.manage", "qa.run"):
+        assert f'"{skill}"' not in authz_source, f"authz가 {skill}을 이름으로 들고 있음"
+
+
+@check("a_new_skill_cannot_slip_past_the_gate")
+def _sets_match_the_documents():
+    import skill_registry
+
+    read = skill_registry.read_only_skills()
+    root = skill_registry.root_only_skills()
+    project = skill_registry.project_scoped_skills()
+    # The behaviour these replaced, spelled out so a change has to be deliberate.
+    assert read == frozenset({
+        "entity.resolve", "framework.list", "help.search", "platform.help",
+        "server.health", "project.list", "repository.inspect", "service.status",
+        "service.logs", "port.suggest", "qa.run",
+    }), sorted(read)
+    assert root == frozenset({
+        "project.create", "project.ensure_agent", "server.health", "qa.run",
+    }), sorted(root)
+    assert project == frozenset({
+        "service.deploy", "service.redeploy", "service.status",
+        "service.logs", "service.control", "port.manage",
+    }), sorted(project)
+    # Root-plane skills stay refused for a namespace token.
+    from fastapi import HTTPException
+
+    for skill in sorted(root):
+        try:
+            app.namespace_scoped_arguments(skill, {}, "mine")
+        except HTTPException as exc:
+            assert exc.status_code == 403, skill
+            continue
+        raise AssertionError(f"{skill}이 네임스페이스 토큰에 허용됨")
+
+
 # --- Modules depend in one direction ----------------------------------------
 
 
 @check("module_dependencies_point_one_way")
 def _no_cycles():
-    layers = ["app", "planner", "authz", "runtime"]
+    layers = ["app", "planner", "authz", "runtime", "skill_registry"]
     allowed = {
         # A module may only import from ones below it.
-        "app": {"authz", "planner", "runtime"},
-        "planner": {"runtime"},
-        "authz": set(),
-        "runtime": set(),
-        "cli": {"runtime"},
+        "app": {"authz", "planner", "runtime", "skill_registry"},
+        "planner": {"runtime", "skill_registry"},
+        "authz": {"skill_registry"},
+        "runtime": {"skill_registry"},
+        "skill_registry": set(),
+        "cli": {"runtime", "skill_registry"},
     }
     for module, permitted in allowed.items():
         tree = ast.parse((ROOT / "agent" / f"{module}.py").read_text())

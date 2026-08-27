@@ -10,8 +10,8 @@ from typing import Any
 import requests
 
 from deployment_presets import preset_catalog
+from skill_registry import read_only_skills, skill_documents
 from runtime import (
-    READ_ONLY_SKILLS,
     command_contract,
     command_contracts,
     command_catalog,
@@ -21,7 +21,6 @@ from runtime import (
     project_list,
     service_logs,
     service_status,
-    skill_documents,
 )
 
 
@@ -94,7 +93,7 @@ def execute_via_platform_api(
         {
             "skill": skill,
             "arguments": arguments,
-            "approved": approved or skill in READ_ONLY_SKILLS,
+            "approved": approved or skill in read_only_skills(),
         },
     )["result"]
 
@@ -128,7 +127,7 @@ def preview_envelope(skill: str, arguments: dict[str, Any], preview: dict[str, A
         next_question = preview.get("next_question")
     else:
         status = "ready"
-        requires_approval = skill not in READ_ONLY_SKILLS
+        requires_approval = skill not in read_only_skills()
         next_question = None
     return {
         "skill": skill,
@@ -316,7 +315,7 @@ def main() -> int:
             return 0
         arguments = load_arguments(args.arguments, args.arguments_file)
         if args.command == "preview":
-            if args.skill in READ_ONLY_SKILLS:
+            if args.skill in read_only_skills():
                 raise ValueError("Read-only skills do not require preview")
             preview = (
                 execute_via_platform_api(
@@ -332,7 +331,7 @@ def main() -> int:
             )
             return 0
 
-        if args.skill not in READ_ONLY_SKILLS and not args.approve:
+        if args.skill not in read_only_skills() and not args.approve:
             raise ValueError("Mutation skills require --approve")
         result = (
             execute_via_platform_api(

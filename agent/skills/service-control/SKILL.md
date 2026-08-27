@@ -1,6 +1,8 @@
 ---
 name: service-control
 description: Start, stop, or restart a known Compose service through fixed Docker APIs. Use for explicit service lifecycle requests. Always require dry-run preview and user approval.
+access: mutate
+plane: project
 ---
 
 # Service Control

@@ -1,6 +1,8 @@
 ---
 name: project-list
 description: List valid Docker Compose projects and service names under the managed project root. Use at root/admin scope before selecting or operating on a project or service.
+access: read
+plane: shared
 ---
 
 # Project List

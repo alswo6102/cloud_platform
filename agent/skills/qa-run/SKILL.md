@@ -1,6 +1,8 @@
 ---
 name: qa-run
 description: Run compact deterministic checks for Docker, restart loops, unhealthy containers, duplicate Compose ports, and disk pressure. Use after operations or when asked to inspect the platform.
+access: read
+plane: root
 ---
 
 # QA Run

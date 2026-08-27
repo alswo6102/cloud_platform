@@ -1,6 +1,8 @@
 ---
 name: service-status
 description: Inspect the live service list/status inside a project, including configured ports, frontend labels, Docker state, health, restart count, published ports, and public URLs. Use when the user asks for service list, running state, frontend link, URL, port, or whether a project service is up.
+access: read
+plane: project
 ---
 
 # Service Status

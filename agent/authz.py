@@ -14,12 +14,9 @@ from typing import Any
 
 from fastapi import HTTPException, Request
 
-PROJECT_SCOPED_HIDDEN_SKILLS = {
-    "project.create",
-    "project.ensure_agent",
-    "server.health",
-    "qa.run",
-}
+from skill_registry import project_scoped_skills, root_only_skills
+
+
 
 def namespace_tokens() -> dict[str, str]:
     tokens: dict[str, str] = {}
@@ -97,14 +94,7 @@ def namespace_scoped_arguments(
     if not namespace:
         return arguments
     scoped = dict(arguments)
-    if skill in {
-        "service.deploy",
-        "service.redeploy",
-        "service.status",
-        "service.logs",
-        "service.control",
-        "port.manage",
-    }:
+    if skill in project_scoped_skills():
         requested = scoped.get("project")
         if requested and str(requested) != namespace:
             raise HTTPException(
@@ -126,7 +116,7 @@ def namespace_scoped_arguments(
                 ),
             )
         scoped["project"] = namespace
-    if skill in {"project.create", "project.ensure_agent", "server.health", "qa.run"}:
+    if skill in root_only_skills():
         raise HTTPException(
             status_code=403,
             detail=f"{skill} is only available to the root/admin plane",

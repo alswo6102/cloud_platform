@@ -1,6 +1,8 @@
 ---
 name: entity-resolve
 description: Resolve a user-supplied project, service, or framework name against live CLI data. Returns exact matches or evidence-backed similar candidates without confirming them.
+access: read
+plane: shared
 ---
 
 # Entity Resolve

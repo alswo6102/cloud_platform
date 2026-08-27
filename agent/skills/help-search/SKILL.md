@@ -1,6 +1,8 @@
 ---
 name: help-search
 description: Search the deployment guide and Skill instructions. Use for questions about Dockerfiles, Compose, ports, frontend links, reverse proxies, QA, and deployment procedures.
+access: read
+plane: shared
 ---
 
 # Help Search

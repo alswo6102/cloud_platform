@@ -1,6 +1,8 @@
 ---
 name: platform-help
 description: Return the current CLI command catalog and examples. Use when the user asks what the platform can do, how to use it, or requests general help.
+access: read
+plane: shared
 ---
 
 # Platform Help

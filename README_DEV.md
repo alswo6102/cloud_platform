@@ -31,7 +31,7 @@ reviewing every difference first.
 ## Server-Native Checks
 
 ```sh
-python3 -c 'from pathlib import Path; [compile(Path(f).read_text(), f, "exec") for f in ["admin.py", "agent/app.py", "agent/runtime.py"]]'
+python3 -c 'from pathlib import Path; [compile(Path(f).read_text(), f, "exec") for f in ["admin.py", "agent/app.py", "agent/authz.py", "agent/planner.py", "agent/runtime.py", "agent/skill_registry.py", "web/app.py", "deployment_presets.py"]]'
 curl -fsS http://127.0.0.1:8501/_stcore/health
 docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'
 ```

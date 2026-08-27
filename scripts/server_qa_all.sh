@@ -30,7 +30,7 @@ run_check() {
 check_python() {
     cd "$ROOT_DIR"
     PYTHONDONTWRITEBYTECODE=1 python3 -c \
-        'from pathlib import Path; [compile(Path(f).read_text(), f, "exec") for f in ["admin.py", "agent/app.py", "agent/runtime.py", "deployment_presets.py"]]'
+        'from pathlib import Path; [compile(Path(f).read_text(), f, "exec") for f in ["admin.py", "agent/app.py", "agent/authz.py", "agent/planner.py", "agent/runtime.py", "agent/skill_registry.py", "web/app.py", "deployment_presets.py"]]'
 }
 
 check_schemas() {

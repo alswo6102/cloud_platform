@@ -1,6 +1,8 @@
 ---
 name: port-manage
 description: Suggest an available host port or change a service host/container port mapping. Use for port allocation and Compose port changes. Changes require dry-run preview and approval.
+access: mutate
+plane: project
 ---
 
 # Port Manage

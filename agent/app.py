@@ -15,11 +15,11 @@ from pydantic import BaseModel, Field
 from deployment_presets import preset_catalog
 
 from authz import (
-    PROJECT_SCOPED_HIDDEN_SKILLS,
     authenticated_namespace,
     namespace_scoped_arguments,
     namespace_scoped_result,
 )
+from skill_registry import read_only_skills, root_only_skills, skill_documents
 from planner import (
     call_llm,
     call_llm_text,
@@ -27,7 +27,6 @@ from planner import (
     load_prompt,
 )
 from runtime import (
-    READ_ONLY_SKILLS,
     SkillError,
     attach_platform_api_to_existing_control_networks,
     command_catalog,
@@ -35,9 +34,7 @@ from runtime import (
     command_contracts,
     execute_skill,
     execute_cli_skill,
-
     project_summaries,
-    skill_documents,
 )
 
 app = FastAPI(title="Cloud Platform Skill Agent", version="0.1.0")
@@ -151,7 +148,7 @@ def project_scoped_contract(contract: dict[str, Any], namespace: str) -> dict[st
 def scoped_command_contract(skill: str, namespace: str | None) -> dict[str, Any]:
     contract = command_contract(skill)
     if namespace:
-        if skill in PROJECT_SCOPED_HIDDEN_SKILLS:
+        if skill in root_only_skills():
             raise KeyError(f"{skill} is not available in project-scoped CLI")
         return project_scoped_contract(contract, namespace)
     return contract
@@ -161,7 +158,7 @@ def scoped_command_contracts(namespace: str | None) -> dict[str, Any]:
     contracts = []
     for item in skill_documents():
         skill = item["name"]
-        if namespace and skill in PROJECT_SCOPED_HIDDEN_SKILLS:
+        if namespace and skill in root_only_skills():
             continue
         contracts.append(scoped_command_contract(skill, namespace))
     return {
@@ -952,7 +949,7 @@ def chat(request: ChatRequest, http_request: Request):
             plan.get("arguments", {}),
         )
 
-        if skill in READ_ONLY_SKILLS:
+        if skill in read_only_skills():
             result = scoped_execute(skill, arguments, dry_run=False)
             final = naturalize_read_only_result(
                 skill,
@@ -1090,7 +1087,7 @@ def chat(request: ChatRequest, http_request: Request):
 
 @app.post("/execute")
 def execute(request: ExecuteRequest, http_request: Request):
-    if request.skill not in READ_ONLY_SKILLS and not request.approved:
+    if request.skill not in read_only_skills() and not request.approved:
         raise HTTPException(status_code=409, detail="Explicit approval is required.")
     try:
         namespace = authenticated_namespace(http_request)
@@ -1125,7 +1122,7 @@ def execute(request: ExecuteRequest, http_request: Request):
 
 @app.post("/preview")
 def preview(request: PreviewRequest, http_request: Request):
-    if request.skill in READ_ONLY_SKILLS:
+    if request.skill in read_only_skills():
         raise HTTPException(status_code=400, detail="Preview is only for mutation skills.")
     try:
         namespace = authenticated_namespace(http_request)

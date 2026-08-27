@@ -1,6 +1,8 @@
 ---
 name: server-health
 description: Inspect Docker availability, container counts, restart loops, unhealthy containers, memory, and project-disk usage. Use for server health and operational status questions.
+access: read
+plane: root
 ---
 
 # Server Health

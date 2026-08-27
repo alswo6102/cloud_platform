@@ -1,6 +1,8 @@
 ---
 name: service-logs
 description: Read a bounded tail of Docker logs for a known Compose service. Use to diagnose startup, health, proxy, and runtime failures without shell access.
+access: read
+plane: project
 ---
 
 # Service Logs

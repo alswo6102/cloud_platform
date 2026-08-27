@@ -1,6 +1,8 @@
 ---
 name: service-redeploy
 description: Safely rebuild and redeploy an existing managed service from the latest default branch of its configured GitHub origin. Use after the user has pushed new code. If project or service is missing, omit it so the application can ask a follow-up question. Always require preview and approval.
+access: mutate
+plane: project
 ---
 
 # Service Redeploy

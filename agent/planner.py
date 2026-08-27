@@ -18,9 +18,8 @@ from zoneinfo import ZoneInfo
 
 import requests
 
+from skill_registry import SKILL_API_NAMES, read_only_skills
 from runtime import (
-    READ_ONLY_SKILLS,
-    SKILL_API_NAMES,
     SkillError,
     command_contract,
     execute_cli_skill,
@@ -386,7 +385,7 @@ def call_llm(
                         "error": "UnknownTool",
                         "detail": f"No such tool: {api_name}",
                     }
-                elif skill not in READ_ONLY_SKILLS:
+                elif skill not in read_only_skills():
                     # Mutations never run here. Hand the choice back so the
                     # caller can dry-run it and ask the user to approve.
                     return finish(
