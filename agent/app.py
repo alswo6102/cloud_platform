@@ -787,6 +787,9 @@ def already_asked(
         before, now = stored.get(field), arguments.get(field)
         if before and now and str(before) != str(now):
             return frozenset()
+    asked = context.get("asked")
+    if isinstance(asked, list):
+        return frozenset(str(field) for field in asked if field)
     return frozenset(
         str(item["field"])
         for item in (context.get("missing") or [])
@@ -1043,18 +1046,24 @@ def chat(request: ChatRequest, http_request: Request):
                 "requires_approval": False,
             }, plan.get("transcript"))
 
+        # Asked once, for the whole task: a user who answers the framework
+        # question is then asked the service question, and answering that must
+        # not bring the framework question back.
+        asked_before = already_asked(request.context, skill, arguments)
+        confirmed_fields: set[str] = set()
         if not preview.get("needs_input"):
             # A choice the user never made becomes a question rather than
-            # something waiting behind an approve button. Asked once: the
-            # fields the last turn put to the user are answered by this
-            # message, whether or not it repeats their values.
+            # something waiting behind an approve button.
             unconfirmed = deploy_confirmations(
                 request.message,
                 skill,
                 arguments,
-                already_asked(request.context, skill, arguments),
+                asked_before,
             )
             if unconfirmed:
+                confirmed_fields = {
+                    str(item["field"]) for item in unconfirmed if item.get("field")
+                }
                 preview = dict(preview)
                 preview["needs_input"] = unconfirmed
                 preview.setdefault(
@@ -1085,6 +1094,10 @@ def chat(request: ChatRequest, http_request: Request):
                     "skill": skill,
                     "arguments": arguments,
                     "missing": preview["needs_input"],
+                    # Only the questions this step raised. A field the preview
+                    # itself reported missing is a value that was never given,
+                    # and supplying it still deserves its confirmation.
+                    "asked": sorted(asked_before | confirmed_fields),
                 },
                 "ui": ui_hint_for_response(
                     skill=skill,

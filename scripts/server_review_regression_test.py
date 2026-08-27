@@ -694,6 +694,15 @@ def _confirmations_reset_on_a_new_task():
     )
     assert other_skill == frozenset(), other_skill
 
+    # Accumulated across the task, so answering one question does not bring an
+    # earlier one back.
+    accumulated = app.already_asked(
+        {**context, "asked": ["framework", "service"], "missing": [{"field": "service"}]},
+        "service.deploy",
+        {"project": "qa", "service": "hello"},
+    )
+    assert accumulated == frozenset({"framework", "service"}), accumulated
+
 
 # --- A project agent notices when the agent's code changed -------------------
 # The version stamped into each project's compose file is what tells the
