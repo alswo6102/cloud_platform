@@ -10,6 +10,7 @@ import type {
 import { api, errorText, isRecord } from "../lib/api";
 import { DASH, formatMb, nextFreePort } from "../lib/format";
 import { Field, FieldError } from "./Modal";
+import { looksSecret } from "./EnvModal";
 import "./DeployForm.css";
 
 const NAME_PATTERN = /^[A-Za-z0-9._-]{1,64}$/;
@@ -57,6 +58,17 @@ function previewStrings(preview: unknown, key: string): string[] {
  * run from the agent, and pressing 배포 실행 is the approval for exactly that
  * plan; the button is dead until the plan has come back.
  */
+type EnvDraftRow = {
+  key: number;
+  name: string;
+  value: string;
+  secret: boolean;
+  /** Whether the secret flag was set by hand, so typing stops re-guessing it. */
+  touched: boolean;
+};
+
+let envRowKey = 0;
+
 export function DeployForm({
   auth,
   project,
@@ -64,7 +76,7 @@ export function DeployForm({
   summary,
   frameworks,
   onCancel,
-  onDeployed
+  onStartDeploy
 }: {
   auth: AuthHeaders;
   project: string;
@@ -72,7 +84,10 @@ export function DeployForm({
   summary: SystemSummary | null;
   frameworks: FrameworkPreset[];
   onCancel: () => void;
-  onDeployed: () => void;
+  onStartDeploy: (
+    args: Record<string, unknown>,
+    envEntries: Array<{ name: string; value: string; secret: boolean }>
+  ) => void;
 }) {
   const [service, setService] = useState("");
   const [repoUrl, setRepoUrl] = useState("");
@@ -81,8 +96,7 @@ export function DeployForm({
   const [isWeb, setIsWeb] = useState(true);
   const [hostPort, setHostPort] = useState("");
   const [portTouched, setPortTouched] = useState(false);
-  const [envNames, setEnvNames] = useState<string[]>([]);
-  const [envDraft, setEnvDraft] = useState("");
+  const [envRows, setEnvRows] = useState<EnvDraftRow[]>([]);
 
   const [preview, setPreview] = useState<unknown>(null);
   // A dry run can come back asking for a field the form does not have — an
@@ -95,7 +109,6 @@ export function DeployForm({
   const [previewing, setPreviewing] = useState(false);
   const [error, setError] = useState("");
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
-  const [deploying, setDeploying] = useState(false);
 
   // The suggestion has to wait for the project list, or it recommends a port
   // something is already published on.
@@ -109,7 +122,19 @@ export function DeployForm({
   const serviceValid = NAME_PATTERN.test(service.trim());
   const repoValid = REPO_PATTERN.test(repoUrl.trim());
   const portValid = !isWeb || /^\d{4,5}$/.test(hostPort.trim());
-  const ready = serviceValid && repoValid && Boolean(framework) && portValid;
+  const envNamesForDeploy = useMemo(
+    () =>
+      envRows
+        .map((row) => row.name.trim())
+        .filter((name) => ENV_NAME_PATTERN.test(name)),
+    [envRows]
+  );
+
+  const envInvalid = envRows.some(
+    (row) => row.name.trim() && !ENV_NAME_PATTERN.test(row.name.trim())
+  );
+
+  const ready = serviceValid && repoValid && Boolean(framework) && portValid && !envInvalid;
 
   const answered = useMemo(() => {
     const extra: Record<string, unknown> = {};
@@ -128,10 +153,10 @@ export function DeployForm({
       framework,
       is_web: isWeb,
       ...(isWeb && hostPort.trim() ? { host_port: Number(hostPort.trim()) } : {}),
-      ...(envNames.length ? { environment_names: envNames } : {}),
+      ...(envNamesForDeploy.length ? { environment_names: envNamesForDeploy } : {}),
       ...answered
     }),
-    [service, repoUrl, framework, isWeb, hostPort, envNames, answered]
+    [service, repoUrl, framework, isWeb, hostPort, envNamesForDeploy, answered]
   );
 
   // The plan follows the form. Change anything and it is fetched again, so the
@@ -179,40 +204,30 @@ export function DeployForm({
     };
   }, [args, auth, project, ready]);
 
-  async function deploy() {
-    if (!preview || deploying) return;
-    setDeploying(true);
-    setError("");
-    try {
-      await api(`/api/projects/${project}/execute`, auth, {
-        method: "POST",
-        body: JSON.stringify({ skill: "service.deploy", arguments: args, approved: true })
-      });
-      onDeployed();
-    } catch (err) {
-      setError(errorText(err));
-    } finally {
-      setDeploying(false);
-    }
+  /**
+   * Hands the deploy off and leaves. A source build here runs for tens of
+   * minutes, so waiting on the response would freeze this screen for the whole
+   * build; the workspace tracks it and shows the outcome instead.
+   */
+  function submit() {
+    if (!preview) return;
+    const entries = envRows
+      .map((row) => ({ name: row.name.trim(), value: row.value, secret: row.secret }))
+      .filter((row) => ENV_NAME_PATTERN.test(row.name) && row.value !== "");
+    onStartDeploy(args, entries);
   }
 
-  function addEnvName(raw: string) {
-    const name = raw.trim().replace(/,$/, "");
-    if (!name) return;
-    if (!ENV_NAME_PATTERN.test(name)) {
-      setFieldErrors((current) => ({
-        ...current,
-        environment_names: "영문자와 밑줄로 시작하는 이름만 가능합니다."
-      }));
-      return;
-    }
-    setFieldErrors((current) => {
-      const next = { ...current };
-      delete next.environment_names;
-      return next;
-    });
-    setEnvNames((current) => (current.includes(name) ? current : [...current, name]));
-    setEnvDraft("");
+  function addEnvRow() {
+    setEnvRows((current) => [
+      ...current,
+      { key: envRowKey++, name: "", value: "", secret: false, touched: false }
+    ]);
+  }
+
+  function updateEnvRow(key: number, patch: Partial<EnvDraftRow>) {
+    setEnvRows((current) =>
+      current.map((row) => (row.key === key ? { ...row, ...patch } : row))
+    );
   }
 
   const steps = previewStrings(preview, "steps").map((step) => STEP_LABELS[step] || step);
@@ -221,6 +236,11 @@ export function DeployForm({
   const resolvedHostPort = isRecord(preview) ? preview.host_port : null;
   const diskFree = formatMb(summary?.disk_free_mb);
   const diskLow = (summary?.performance_warnings || []).includes("disk_low");
+  // The dry run already says whether this host can finish the build it implies.
+  // It was being dropped on the floor, so a build that was going to take an
+  // hour looked exactly like one that would take a minute.
+  const capacity = isRecord(preview) ? preview.build_capacity : null;
+  const slowBuild = isRecord(capacity) && capacity.likely_to_fail === true;
 
   return (
     <div className="deployPage">
@@ -337,41 +357,68 @@ export function DeployForm({
           <div className="deployRule" />
 
           <div>
-            <span className="field__label">환경변수 이름</span>
-            <div className="envBox">
-              {envNames.map((name) => (
-                <span className="envChip" key={name}>
-                  {name}
-                  <button
-                    type="button"
-                    className="envChip__remove"
-                    onClick={() => setEnvNames((current) => current.filter((item) => item !== name))}
-                    aria-label={`${name} 제거`}
-                  >
-                    <X size={10} aria-hidden="true" />
-                  </button>
-                </span>
-              ))}
-              <input
-                className="envBox__input"
-                value={envDraft}
-                onChange={(event) => setEnvDraft(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" || event.key === ",") {
-                    event.preventDefault();
-                    addEnvName(envDraft);
-                  }
-                }}
-                onBlur={() => addEnvName(envDraft)}
-                placeholder={envNames.length ? "이름 추가" : "DATABASE_URL"}
-                aria-label="환경변수 이름 추가"
-              />
-            </div>
-            {fieldErrors.environment_names ? (
-              <FieldError>{fieldErrors.environment_names}</FieldError>
+            <span className="field__label">환경변수</span>
+            {envRows.length > 0 && (
+              <div className="envGrid">
+                <div className="envGrid__head">
+                  <span>이름</span>
+                  <span>값</span>
+                  <span>비밀</span>
+                  <span />
+                </div>
+                {envRows.map((row) => (
+                  <div className="envGrid__row" key={row.key}>
+                    <input
+                      className="envGrid__name"
+                      value={row.name}
+                      placeholder="DATABASE_URL"
+                      aria-label="환경변수 이름"
+                      onChange={(event) =>
+                        updateEnvRow(row.key, {
+                          name: event.target.value,
+                          secret: row.touched ? row.secret : looksSecret(event.target.value)
+                        })
+                      }
+                    />
+                    <input
+                      className="envGrid__value"
+                      type={row.secret ? "password" : "text"}
+                      value={row.value}
+                      aria-label="환경변수 값"
+                      onChange={(event) => updateEnvRow(row.key, { value: event.target.value })}
+                    />
+                    <label className="envGrid__secret">
+                      <input
+                        type="checkbox"
+                        checked={row.secret}
+                        aria-label="비밀 값으로 저장"
+                        onChange={(event) =>
+                          updateEnvRow(row.key, { secret: event.target.checked, touched: true })
+                        }
+                      />
+                    </label>
+                    <button
+                      type="button"
+                      className="envGrid__remove"
+                      aria-label={`${row.name || "빈 행"} 제거`}
+                      onClick={() =>
+                        setEnvRows((current) => current.filter((item) => item.key !== row.key))
+                      }
+                    >
+                      <X size={11} aria-hidden="true" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <button type="button" className="envGrid__add" onClick={addEnvRow}>
+              + 변수 추가
+            </button>
+            {envInvalid ? (
+              <FieldError>영문자와 밑줄로 시작하는 이름만 가능합니다.</FieldError>
             ) : (
               <div className="field__help">
-                이름만 compose에 등록됩니다. 요청에 비밀값을 담지 않습니다.
+                값은 배포 직후 서비스에 저장됩니다. 비밀로 표시한 값은 저장 후 다시 표시되지 않습니다.
               </div>
             )}
           </div>
@@ -446,6 +493,17 @@ export function DeployForm({
             </>
           )}
 
+          {slowBuild && (
+            <div className="planCard__warn planCard__warn--slow">
+              <b>이 서버는 사양이 작아 빌드가 오래 걸립니다.</b>
+              <div className="planCard__warnBody">
+                소스에서 빌드하는 프레임워크는 <b>40~60분</b>까지 걸립니다. 배포가 도는 동안
+                다른 서비스도 함께 느려집니다. 창을 닫거나 새로고침해도 배포는 계속되고,
+                프로젝트 화면에서 진행 상황을 볼 수 있습니다.
+              </div>
+            </div>
+          )}
+
           {diskLow && diskFree && (
             <div className="planCard__warn">
               현재 디스크 여유는 {diskFree}입니다. 빌드 도중 공간이 부족할 수 있습니다.
@@ -456,15 +514,17 @@ export function DeployForm({
 
           <button
             className="btn btn--primary planCard__submit"
-            onClick={() => void deploy()}
-            disabled={!preview || previewing || deploying}
+            onClick={submit}
+            disabled={!preview || previewing}
           >
-            {deploying ? "배포 중..." : "배포 실행"}
+            {slowBuild ? "배포 실행 (40~60분 소요)" : "배포 실행"}
           </button>
           <div className="planCard__note">
             {question
               ? "답하면 실행 계획을 다시 확인합니다."
-              : "이 계획 그대로 실행합니다. 실행 전 마지막 확인입니다."}
+              : slowBuild
+                ? "누르면 프로젝트 화면으로 이동하고, 배포는 뒤에서 계속됩니다."
+                : "이 계획 그대로 실행합니다. 실행 전 마지막 확인입니다."}
           </div>
         </div>
       </div>

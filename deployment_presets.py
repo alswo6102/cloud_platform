@@ -133,6 +133,13 @@ CMD ["nginx", "-g", "daemon off;"]
 """,
         "react": """FROM node:20-alpine AS builder
 WORKDIR /app
+# CRA generates source maps by default, which is the largest single chunk of
+# heap this build needs and would also publish the original sources next to the
+# bundle. Node sizes its heap from host RAM, so on a small host the limit lands
+# well under what the build wants; raising it lets the overflow reach swap
+# instead of aborting the process.
+ENV GENERATE_SOURCEMAP=false
+ENV NODE_OPTIONS=--max-old-space-size=2048
 COPY package*.json ./
 RUN npm ci || npm install
 COPY . .

@@ -29,11 +29,15 @@ AUTO_ENSURE_PROJECT_AGENT = os.getenv("AUTO_ENSURE_PROJECT_AGENT", "1").lower() 
 }
 AUTH_STORE = Path(os.getenv("AUTH_STORE", "/var/lib/cloud-platform/auth.json"))
 FRONTEND_DIST = Path(os.getenv("FRONTEND_DIST", "/var/www/cloud-platform-console"))
-REQUEST_TIMEOUT = float(os.getenv("WEB_REQUEST_TIMEOUT", "120"))
+# Reads slow down sharply while a build is running -- both compete for a disk
+# that tops out near 100 IOPS -- so this has to tolerate a status call that
+# queues behind one.
+REQUEST_TIMEOUT = float(os.getenv("WEB_REQUEST_TIMEOUT", "180"))
 # A deploy clones, builds an image, and waits for the container to settle. The
-# runtime allows 900s for the build alone, so the read timeout has to outlast it
-# or the console gives up on work the server is still doing.
-MUTATION_REQUEST_TIMEOUT = float(os.getenv("WEB_MUTATION_TIMEOUT", "960"))
+# runtime allows SERVICE_BUILD_TIMEOUT (4200s) for the build alone, so the read
+# timeout has to outlast it or the console gives up on work the server is still
+# doing. A React build measured 3124s on this host.
+MUTATION_REQUEST_TIMEOUT = float(os.getenv("WEB_MUTATION_TIMEOUT", "4500"))
 MUTATION_SKILLS = {
     "project.create",
     "project.ensure_agent",

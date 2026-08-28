@@ -1,8 +1,13 @@
+/* Fills the shell body rather than growing with its content: the main column
+   and the agent rail each scroll on their own, so a long conversation moves
+   inside the rail instead of pushing the page down. */
 .workspace {
   display: grid;
   grid-template-columns: 1fr var(--rail-w, 420px);
   align-items: stretch;
-  min-height: calc(100vh - var(--header-h));
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
 }
 
 /* The panel keeps its mount so the conversation survives the mode change; the
@@ -24,6 +29,8 @@
 .workspace__main {
   padding: 26px var(--gutter) 40px;
   min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .workspaceHead {
@@ -191,6 +198,18 @@
   font: 12.5px var(--mono);
   font-variant-numeric: tabular-nums;
   color: var(--text-strong);
+}
+
+.serviceRow__elapsed {
+  font: 12.5px var(--mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--warn-ink);
+}
+
+.serviceRow__waiting {
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
 }
 
 .serviceRow__actions {

@@ -116,6 +116,21 @@ export type FrameworkPreset = {
   environment?: string[];
 };
 
+/**
+ * A deploy that is still running on the server. It outlives the form that
+ * started it: a source build on this host takes tens of minutes, far longer
+ * than anyone will sit on one screen, so the console tracks it here and the
+ * workspace draws a row for it.
+ */
+export type PendingDeploy = {
+  project: string;
+  service: string;
+  /** Epoch ms, so the row can say how long this has been going. */
+  startedAt: number;
+  state: "running" | "failed";
+  error?: string;
+};
+
 /** The four container states the console renders differently. */
 export type ServiceState = "running" | "restarting" | "exited" | "unknown";
 
@@ -126,7 +141,17 @@ export type ServiceAction =
   | "restart"
   | "redeploy"
   | "ports"
+  | "env"
   | "delete";
+
+export type ServiceEnvEntry = {
+  name: string;
+  secret: boolean;
+  is_set: boolean;
+  updated_at?: string | null;
+  /** Present only for entries that are not secret. */
+  value?: string;
+};
 
 export type FieldContract = {
   name?: string;

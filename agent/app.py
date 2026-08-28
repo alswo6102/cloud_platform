@@ -18,7 +18,12 @@ from authz import (
     namespace_scoped_arguments,
     namespace_scoped_result,
 )
-from skill_registry import read_only_skills, root_only_skills, skill_documents
+from skill_registry import (
+    PLANNER_WITHHELD_SKILLS,
+    read_only_skills,
+    root_only_skills,
+    skill_documents,
+)
 from planner import (
     call_llm,
     call_llm_text,
@@ -769,7 +774,9 @@ def available_skills(namespace: str | None) -> list[dict[str, Any]]:
     Handing a project agent the root-plane tools meant the planner would pick
     one, call it, and hand back a 403 as its answer. Do not offer them.
     """
-    documents = skill_documents()
+    documents = [
+        item for item in skill_documents() if item["name"] not in PLANNER_WITHHELD_SKILLS
+    ]
     if not namespace:
         return documents
     denied = root_only_skills()

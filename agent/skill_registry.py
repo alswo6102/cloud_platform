@@ -33,6 +33,8 @@ API_SKILL_NAMES = {
     "service-deploy": "service.deploy",
     "service-redeploy": "service.redeploy",
     "service-delete": "service.delete",
+    "service-env-list": "service.env.list",
+    "service-env-set": "service.env.set",
     "repository-inspect": "repository.inspect",
     "service-status": "service.status",
     "service-logs": "service.logs",
@@ -48,6 +50,12 @@ SKILL_API_NAMES = {value: key for key, value in API_SKILL_NAMES.items()}
 UNDOCUMENTED_SKILLS = {
     "project.ensure_agent": {"access": "mutate", "plane": "root"},
 }
+
+# Documented and schema-checked like any other skill, but never offered to the
+# planner: its arguments carry secret values, and a tool the model can call is
+# a tool the model can ask the user to fill in -- putting the secret into the
+# prompt and the transcript. The console calls it directly instead.
+PLANNER_WITHHELD_SKILLS = {"service.env.set"}
 
 ACCESS_VALUES = {"read", "mutate"}
 PLANE_VALUES = {"root", "project", "shared"}

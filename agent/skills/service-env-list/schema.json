@@ -1,0 +1,9 @@
+{
+  "type": "object",
+  "required": ["project", "service"],
+  "properties": {
+    "project": {"type": "string"},
+    "service": {"type": "string"}
+  },
+  "additionalProperties": false
+}
