@@ -126,7 +126,17 @@ export type ServiceAction =
   | "restart"
   | "redeploy"
   | "ports"
+  | "env"
   | "delete";
+
+export type ServiceEnvEntry = {
+  name: string;
+  secret: boolean;
+  is_set: boolean;
+  updated_at?: string | null;
+  /** Present only for entries that are not secret. */
+  value?: string;
+};
 
 export type FieldContract = {
   name?: string;

@@ -28,7 +28,7 @@ export function actionsFor(state: ServiceState): RowActions {
       primary: "start",
       primaryTone: "primary",
       secondary: "logs",
-      menu: ["ports", "redeploy", "delete"]
+      menu: ["ports", "env", "redeploy", "delete"]
     };
   }
   if (state === "restarting") {
@@ -37,7 +37,7 @@ export function actionsFor(state: ServiceState): RowActions {
       primary: "logs",
       primaryTone: "primary",
       secondary: "stop",
-      menu: ["ports", "restart", "redeploy", "delete"]
+      menu: ["ports", "env", "restart", "redeploy", "delete"]
     };
   }
   if (state === "unknown") {
@@ -45,19 +45,20 @@ export function actionsFor(state: ServiceState): RowActions {
       primary: "logs",
       primaryTone: "quiet",
       secondary: null,
-      menu: ["ports", "restart", "redeploy", "delete"]
+      menu: ["ports", "env", "restart", "redeploy", "delete"]
     };
   }
   return {
     primary: "logs",
     primaryTone: "quiet",
     secondary: "restart",
-    menu: ["ports", "stop", "redeploy", "delete"]
+    menu: ["ports", "env", "stop", "redeploy", "delete"]
   };
 }
 
 const MENU_META: Record<string, MenuItem> = {
   ports: { id: "ports", label: "포트 변경", section: "설정", hint: "승인 필요" },
+  env: { id: "env", label: "환경변수", section: "설정", hint: "승인 필요" },
   restart: { id: "restart", label: "재시작", section: "중단·교체", hint: "가역" },
   stop: { id: "stop", label: "중지", section: "중단·교체", hint: "가역" },
   redeploy: {

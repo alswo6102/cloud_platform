@@ -243,6 +243,104 @@ def save_service_metadata(project: str, services: dict[str, dict[str, Any]]) -> 
     temporary.replace(path)
 
 
+# --------------------------------------------------------------- service env
+#
+# Values live in a Compose env_file rather than in the Compose file itself, so
+# a secret never lands in docker-compose.yml or the .bak copies deploy leaves
+# behind. Which names are secret is a console concern, not something Compose
+# can express, so it is kept beside the file rather than in it.
+SERVICE_ENV_DIR = "env"
+SECRET_NAME_HINTS = (
+    "SECRET",
+    "KEY",
+    "TOKEN",
+    "PASSWORD",
+    "PASSWD",
+    "CREDENTIAL",
+    "PRIVATE",
+    "DSN",
+    "DATABASE_URL",
+)
+
+
+def looks_secret(name: str) -> bool:
+    upper = name.upper()
+    return any(hint in upper for hint in SECRET_NAME_HINTS)
+
+
+def service_env_dir(project: str) -> Path:
+    return project_path(project) / SERVICE_METADATA_DIR / SERVICE_ENV_DIR
+
+
+def service_env_path(project: str, service: str) -> Path:
+    return service_env_dir(project) / f"{service}.env"
+
+
+def service_env_meta_path(project: str, service: str) -> Path:
+    return service_env_dir(project) / f"{service}.meta.json"
+
+
+def compose_env_file_ref(service: str) -> str:
+    """The env_file path as Compose resolves it: relative to the Compose file."""
+    return f"./{SERVICE_METADATA_DIR}/{SERVICE_ENV_DIR}/{service}.env"
+
+
+def load_service_env(project: str, service: str) -> dict[str, str]:
+    path = service_env_path(project, service)
+    try:
+        text = path.read_text()
+    except (FileNotFoundError, OSError):
+        return {}
+    values: dict[str, str] = {}
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        name, _, value = stripped.partition("=")
+        name = name.strip()
+        if ENV_NAME_PATTERN.fullmatch(name):
+            values[name] = value
+    return values
+
+
+def save_service_env(project: str, service: str, values: dict[str, str]) -> Path:
+    path = service_env_path(project, service)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    os.chmod(path.parent, 0o700)
+    body = "".join(f"{name}={values[name]}\n" for name in sorted(values))
+    temporary = path.with_suffix(".env.tmp")
+    temporary.write_text(body)
+    os.chmod(temporary, 0o600)
+    temporary.replace(path)
+    return path
+
+
+def load_env_meta(project: str, service: str) -> dict[str, dict[str, Any]]:
+    path = service_env_meta_path(project, service)
+    try:
+        data = json.loads(path.read_text())
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return {}
+    entries = data.get("entries") if isinstance(data, dict) else {}
+    if not isinstance(entries, dict):
+        return {}
+    return {str(name): value for name, value in entries.items() if isinstance(value, dict)}
+
+
+def save_env_meta(project: str, service: str, entries: dict[str, dict[str, Any]]) -> None:
+    path = service_env_meta_path(project, service)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    os.chmod(path.parent, 0o700)
+    payload = {
+        "version": 1,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "entries": entries,
+    }
+    temporary = path.with_suffix(".json.tmp")
+    temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=str))
+    temporary.replace(path)
+
+
 def labels_as_dict(labels: Any) -> dict[str, str]:
     if isinstance(labels, dict):
         return {str(key): str(value) for key, value in labels.items()}
@@ -1068,6 +1166,30 @@ def rollback_compose(project: str, backup: Path) -> None:
         backup.replace(compose_path(project))
 
 
+def masked_audit_arguments(skill: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    """Keep the shape of a call without writing the values it carried.
+
+    Only one skill carries secrets, and it would otherwise deposit them in
+    plaintext in a log that is never rotated by us.
+    """
+    if skill != "service.env.set":
+        return arguments
+    masked = dict(arguments)
+    entries = masked.get("entries")
+    if isinstance(entries, list):
+        masked["entries"] = [
+            {
+                "name": item.get("name"),
+                "secret": item.get("secret"),
+                "value": "***",
+            }
+            if isinstance(item, dict)
+            else "***"
+            for item in entries
+        ]
+    return masked
+
+
 def audit(
     skill: str,
     arguments: dict[str, Any],
@@ -1084,7 +1206,7 @@ def audit(
         # a rehearsal and the deletion it rehearsed wrote the same line, and the
         # log could not answer the one question it exists to answer.
         "dry_run": dry_run,
-        "arguments": arguments,
+        "arguments": masked_audit_arguments(skill, arguments),
         "status": status,
         "result": result,
     }
@@ -1906,10 +2028,21 @@ def service_deploy(
             service_definition["ports"] = [f"{selected_host_port}:{container_port}"]
         else:
             service_definition["expose"] = [str(container_port)]
-        if environment_names:
-            service_definition["environment"] = {
-                name: "" for name in environment_names
-            }
+        # An `environment` mapping would win over env_file, so a name declared
+        # here with an empty value would permanently shadow whatever the console
+        # stores. The names are carried by the env file alone; the file is
+        # created empty when it does not exist yet, because Compose refuses to
+        # start a service whose env_file is missing.
+        existing_values = load_service_env(project, service)
+        for name in environment_names:
+            existing_values.setdefault(name, "")
+        save_service_env(project, service, existing_values)
+        meta = load_env_meta(project, service)
+        for name in environment_names:
+            if name not in meta:
+                meta[name] = {"secret": looks_secret(name), "updated_at": None}
+        save_env_meta(project, service, meta)
+        service_definition["env_file"] = [compose_env_file_ref(service)]
         data["services"][service] = service_definition
         temp = compose_path(project).with_suffix(".yml.skill-agent.tmp")
         temp.write_text(yaml.safe_dump(data, sort_keys=False))
@@ -2128,6 +2261,143 @@ def service_images(project: str, service: str) -> list[str]:
     except Exception:
         return []
     return sorted(set(tags))
+
+
+def service_env_list(project: str | None, service: str | None) -> dict[str, Any]:
+    incomplete = missing_input(
+        "service.env.list",
+        [
+            ("project", "서비스를 보유한 프로젝트 이름"),
+            ("service", "환경변수를 조회할 서비스 이름"),
+        ],
+        {"project": project, "service": service},
+    )
+    if incomplete:
+        return incomplete
+
+    project = str(project)
+    service = str(service)
+    service_config(project, service)
+    values = load_service_env(project, service)
+    meta = load_env_meta(project, service)
+    entries = []
+    for name in sorted(values):
+        info = meta.get(name) or {}
+        secret = bool(info.get("secret", looks_secret(name)))
+        entry: dict[str, Any] = {
+            "name": name,
+            "secret": secret,
+            "is_set": bool(values[name]),
+            "updated_at": info.get("updated_at"),
+        }
+        # A secret's value never leaves this process. The key is absent rather
+        # than empty so a caller cannot mistake "hidden" for "not set".
+        if not secret:
+            entry["value"] = values[name]
+        entries.append(entry)
+    return {
+        "project": project,
+        "service": service,
+        "entries": entries,
+        "unset_count": sum(1 for item in entries if not item["is_set"]),
+    }
+
+
+def service_env_set(
+    project: str | None,
+    service: str | None,
+    entries: list[dict[str, Any]] | None,
+    removals: list[str] | None,
+    restart: bool,
+    dry_run: bool,
+) -> dict[str, Any]:
+    incomplete = missing_input(
+        "service.env.set",
+        [
+            ("project", "서비스를 보유한 프로젝트 이름"),
+            ("service", "환경변수를 설정할 서비스 이름"),
+        ],
+        {"project": project, "service": service},
+    )
+    if incomplete:
+        return incomplete
+
+    project = str(project)
+    service = str(service)
+    service_config(project, service)
+
+    requested = entries or []
+    removing = [str(name).strip() for name in (removals or []) if str(name).strip()]
+    parsed: list[tuple[str, str, bool]] = []
+    for item in requested:
+        if not isinstance(item, dict):
+            raise SkillError("환경변수 항목은 객체여야 합니다.", field="entries")
+        name = str(item.get("name") or "").strip()
+        if not ENV_NAME_PATTERN.fullmatch(name):
+            raise SkillError(
+                f"환경변수 이름 형식이 올바르지 않습니다: {name}",
+                code="environment_name_invalid",
+                field="entries",
+                hint="환경변수 이름은 영문자 또는 밑줄로 시작하고, 영문자·숫자·밑줄만 사용할 수 있습니다. 예: API_KEY",
+            )
+        value = "" if item.get("value") is None else str(item.get("value"))
+        # Compose reads env_file one line at a time, so a newline would silently
+        # truncate the value and turn the remainder into a bogus variable.
+        if "\n" in value or "\r" in value:
+            raise SkillError(
+                f"환경변수 값에 줄바꿈을 넣을 수 없습니다: {name}",
+                code="environment_value_invalid",
+                field="entries",
+            )
+        secret = item.get("secret")
+        parsed.append((name, value, looks_secret(name) if secret is None else bool(secret)))
+
+    if dry_run:
+        return {
+            "dry_run": True,
+            "project": project,
+            "service": service,
+            # Names and counts only: a preview is echoed back to the console and
+            # must not become another place the values exist.
+            "setting": [name for name, _, _ in parsed],
+            "secret_count": sum(1 for _, _, secret in parsed if secret),
+            "removing": removing,
+            "restart": restart,
+            "steps": (
+                ["write the service env file"]
+                + (["recreate the container so it picks the values up"] if restart else [])
+            ),
+        }
+
+    values = load_service_env(project, service)
+    meta = load_env_meta(project, service)
+    now = datetime.now(timezone.utc).isoformat()
+    for name, value, secret in parsed:
+        values[name] = value
+        meta[name] = {"secret": secret, "updated_at": now}
+    for name in removing:
+        values.pop(name, None)
+        meta.pop(name, None)
+    save_service_env(project, service, values)
+    save_env_meta(project, service, meta)
+
+    # The env file is only read when a container is created, so restarting the
+    # existing one would not pick up a single new value.
+    recreated = False
+    if restart:
+        compose_command(project, "up", "-d", "--no-build", service, timeout=300)
+        wait_stable(project, service)
+        recreated = True
+
+    return {
+        "dry_run": False,
+        "project": project,
+        "service": service,
+        "set": [name for name, _, _ in parsed],
+        "removed": removing,
+        "recreated": recreated,
+        "names": sorted(values),
+    }
 
 
 def service_delete(
@@ -2426,6 +2696,20 @@ def execute_skill(skill: str, arguments: dict[str, Any], dry_run: bool) -> dict[
             result = service_delete(
                 arguments.get("project"),
                 arguments.get("service"),
+                dry_run,
+            )
+        elif skill == "service.env.list":
+            result = service_env_list(
+                arguments.get("project"),
+                arguments.get("service"),
+            )
+        elif skill == "service.env.set":
+            result = service_env_set(
+                arguments.get("project"),
+                arguments.get("service"),
+                arguments.get("entries"),
+                arguments.get("removals"),
+                bool(arguments.get("restart", True)),
                 dry_run,
             )
         elif skill == "service.status":

@@ -16,6 +16,7 @@ import {
   serviceStateOf
 } from "../lib/format";
 import { ServiceRow } from "./ServiceRow";
+import { EnvModal } from "./EnvModal";
 import { EmptyState, ErrorPanel, InlineConfirm, TableSkeleton, useDelayedFlag } from "./States";
 import "./ProjectWorkspace.css";
 
@@ -68,6 +69,7 @@ export function ProjectWorkspace({
   const [busyAction, setBusyAction] = useState("");
   const [log, setLog] = useState<LogOutput | null>(null);
   const [openMenuFor, setOpenMenuFor] = useState<string | null>(null);
+  const [envFor, setEnvFor] = useState<string | null>(null);
   const [confirming, setConfirming] = useState<{ service: string; action: ServiceAction } | null>(
     null
   );
@@ -151,6 +153,12 @@ export function ProjectWorkspace({
     // comes back with a real plan; a redeploy needs nothing but the service.
     if (action === "ports") {
       onAskAgent(`${service} 서비스의 호스트 포트를 바꾸고 싶어`);
+      return;
+    }
+    // Values are typed here rather than said to the agent: this form calls the
+    // skill directly, so a secret never reaches the planner or the transcript.
+    if (action === "env") {
+      setEnvFor(service);
       return;
     }
     const approvalSkill = APPROVAL_SKILLS[action];
@@ -330,6 +338,16 @@ export function ProjectWorkspace({
           </p>
         )}
       </main>
+
+      {envFor && (
+        <EnvModal
+          project={projectName}
+          service={envFor}
+          auth={auth}
+          onClose={() => setEnvFor(null)}
+          onSaved={() => void Promise.all([onRefreshProjects(), refreshRuntime(true)])}
+        />
+      )}
 
       {railSlot}
       {dock && <div className="agentDock">{dock}</div>}
