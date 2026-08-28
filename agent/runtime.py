@@ -37,6 +37,13 @@ from deployment_presets import (
 )
 
 PROJECTS_ROOT = Path(os.getenv("PROJECTS_ROOT", "/srv/projects"))
+# A source build on this host takes tens of minutes: a React build measured
+# 3124s against a disk that caps out near 10MB/s and 100 IOPS. The old 900s
+# killed builds that were going to succeed, and the rollback below then erased
+# the evidence that they had ever started. Everything outside this call has to
+# outlast it -- SERVICE_BUILD_TIMEOUT < WEB_MUTATION_TIMEOUT < PLATFORM_API_TIMEOUT
+# -- or the console gives up on work the server is still doing.
+SERVICE_BUILD_TIMEOUT = int(os.getenv("SERVICE_BUILD_TIMEOUT", "4200"))
 DOCS_ROOT = Path(os.getenv("DOCS_ROOT", "/app/docs"))
 AUDIT_LOG = Path(os.getenv("AUDIT_LOG", "/var/log/skill-agent/audit.jsonl"))
 NAMESPACE_TOKEN_STORE = Path(
@@ -2048,7 +2055,7 @@ def service_deploy(
         temp.write_text(yaml.safe_dump(data, sort_keys=False))
         temp.replace(compose_path(project))
 
-        compose_command(project, "up", "-d", "--build", service, timeout=900)
+        compose_command(project, "up", "-d", "--build", service, timeout=SERVICE_BUILD_TIMEOUT)
         verified = wait_stable(project, service)
         if is_web:
             expected = {"host": selected_host_port, "container": container_port}
@@ -2215,7 +2222,7 @@ def service_redeploy(
             "--build",
             "--force-recreate",
             service,
-            timeout=900,
+            timeout=SERVICE_BUILD_TIMEOUT,
         )
         verified = wait_stable(project, service)
         metadata = record_service_deploy_metadata(
@@ -2742,7 +2749,7 @@ def execute_skill(skill: str, arguments: dict[str, Any], dry_run: bool) -> dict[
         raise
 
 
-PLATFORM_API_TIMEOUT = float(os.getenv("PLATFORM_API_TIMEOUT", "1000"))
+PLATFORM_API_TIMEOUT = float(os.getenv("PLATFORM_API_TIMEOUT", "4800"))
 
 
 def call_platform_api_skill(
