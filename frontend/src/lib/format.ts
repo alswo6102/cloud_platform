@@ -176,6 +176,15 @@ export function formatRelativeDate(value?: string | null) {
   return "방금 전";
 }
 
+/** Elapsed time for a running deploy, coarse on purpose. */
+export function formatElapsed(startedAt: number, now = Date.now()) {
+  const seconds = Math.max(0, Math.round((now - startedAt) / 1000));
+  if (seconds < 60) return `${seconds}초`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}분`;
+  return `${Math.floor(minutes / 60)}시간 ${minutes % 60}분`;
+}
+
 export function formatClock(date = new Date()) {
   return date.toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit", hour12: false });
 }

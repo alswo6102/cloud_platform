@@ -200,6 +200,18 @@
   color: var(--text-strong);
 }
 
+.serviceRow__elapsed {
+  font: 12.5px var(--mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--warn-ink);
+}
+
+.serviceRow__waiting {
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
 .serviceRow__actions {
   display: flex;
   align-items: center;

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   AuthHeaders,
+  PendingDeploy,
   Project,
   ServiceAction,
   ServiceRuntime,
@@ -8,6 +9,8 @@ import type {
 } from "../types";
 import { api, errorText, isRecord } from "../lib/api";
 import {
+  DASH,
+  formatElapsed,
   formatMb,
   formatPercent,
   formatRelativeDate,
@@ -33,6 +36,77 @@ const APPROVAL_SKILLS: Partial<Record<ServiceAction, string>> = {
   delete: "service.delete"
 };
 
+/**
+ * The row for a deploy that is still running. The service is in the compose
+ * file long before its container exists, so without this the table would show
+ * it as "확인 전" -- indistinguishable from one whose container had died.
+ */
+function PendingRow({
+  pending,
+  onDismiss
+}: {
+  pending: PendingDeploy;
+  onDismiss: () => void;
+}) {
+  const [, setTick] = useState(0);
+  const failed = pending.state === "failed";
+
+  // Only to re-render the elapsed label; the value itself lives in the pending.
+  useEffect(() => {
+    if (failed) return;
+    const timer = window.setInterval(() => setTick((n) => n + 1), 30000);
+    return () => window.clearInterval(timer);
+  }, [failed]);
+
+  return (
+    <div className={failed ? "serviceRow serviceRow--attention" : "serviceRow"}>
+      <div style={{ minWidth: 0 }}>
+        <div className="serviceRow__name">
+          <strong className="truncate" title={pending.service}>
+            {pending.service}
+          </strong>
+        </div>
+        <div className="serviceRow__sub truncate">
+          {failed
+            ? pending.error || "배포에 실패했습니다."
+            : "저장소를 받아 이미지를 빌드하는 중입니다"}
+        </div>
+      </div>
+
+      <div>
+        <span className={failed ? "badge badge--danger" : "badge badge--warn"}>
+          <span
+            className={`badgeGlyph badgeGlyph--${failed ? "bar" : "diamond"}`}
+            aria-hidden="true"
+          />
+          {failed ? "배포 실패" : "배포 중"}
+        </span>
+      </div>
+
+      <div className="serviceRow__facts">
+        <div className="cellEmpty">{DASH}</div>
+        <div className="serviceRow__memory">
+          {failed ? (
+            <span className="cellEmpty">{DASH}</span>
+          ) : (
+            <span className="serviceRow__elapsed">{formatElapsed(pending.startedAt)} 경과</span>
+          )}
+        </div>
+      </div>
+
+      <div className="serviceRow__actions">
+        {failed ? (
+          <button className="btn btn--quiet" onClick={onDismiss}>
+            닫기
+          </button>
+        ) : (
+          <span className="serviceRow__waiting">이 서버에서 40~60분</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function ProjectWorkspace({
   auth,
   project,
@@ -42,6 +116,9 @@ export function ProjectWorkspace({
   onDeploy,
   onRequestApproval,
   onAskAgent,
+  pendingDeploy,
+  onPendingDone,
+  onPendingDismiss,
   refreshToken,
   railSlot,
   railCollapsed,
@@ -56,6 +133,10 @@ export function ProjectWorkspace({
   onDeploy: () => void;
   onRequestApproval: (skill: string, args: Record<string, unknown>) => void;
   onAskAgent: (text: string) => void;
+  /** A deploy running on the server, owned by App so it survives this screen. */
+  pendingDeploy: PendingDeploy | null;
+  onPendingDone: () => void;
+  onPendingDismiss: () => void;
   /** Bumped when the agent panel executes a change, to re-read service state. */
   refreshToken: number;
   railSlot?: React.ReactNode;
@@ -121,6 +202,24 @@ export function ProjectWorkspace({
     if (refreshToken > 0) void refreshRuntime(true);
   }, [refreshToken, refreshRuntime]);
 
+  // While a build runs, the console has to find out on its own that it landed:
+  // the request that started it may belong to a tab that is gone. Slow on
+  // purpose -- these reads compete with the build for the same disk.
+  useEffect(() => {
+    if (pendingDeploy?.state !== "running") return;
+    const timer = window.setInterval(() => {
+      void refreshRuntime(true);
+      void onRefreshProjects();
+    }, 20000);
+    return () => window.clearInterval(timer);
+  }, [pendingDeploy?.state, refreshRuntime, onRefreshProjects]);
+
+  useEffect(() => {
+    if (pendingDeploy?.state !== "running") return;
+    const live = runtime[pendingDeploy.service];
+    if (live && serviceStateOf(live) === "running") onPendingDone();
+  }, [runtime, pendingDeploy, onPendingDone]);
+
   async function run(service: string, action: ServiceAction) {
     setBusyAction(`${service}:${action}`);
     setLog(null);
@@ -174,6 +273,12 @@ export function ProjectWorkspace({
   }
 
   const services = projectServiceNames(project);
+  // Early in a deploy the service is not in the compose file yet, so the row has
+  // to be prepended; once it appears there, the entry is already in place.
+  const rows =
+    pendingDeploy && !services.includes(pendingDeploy.service)
+      ? [pendingDeploy.service, ...services]
+      : services;
   const summaries = new Map(
     (project.service_summaries || []).map((item) => [String(item.service || item.name), item])
   );
@@ -237,6 +342,15 @@ export function ProjectWorkspace({
                   <span>
                     마지막 배포 <b>{lastDeployed || "기록 없음"}</b>
                   </span>
+                  {pendingDeploy?.state === "running" && (
+                    <>
+                      <span className="workspaceMeta__sep">·</span>
+                      <span className="workspaceMeta__dot workspaceMeta__dot--warn">
+                        <i aria-hidden="true" />
+                        {pendingDeploy.service} 배포 중
+                      </span>
+                    </>
+                  )}
                 </>
               )}
             </div>
@@ -285,7 +399,7 @@ export function ProjectWorkspace({
             <div />
           </div>
 
-          {services.length === 0 ? (
+          {rows.length === 0 ? (
             <EmptyState
               title="아직 서비스가 없습니다"
               body="GitHub 저장소 하나로 첫 서비스를 올릴 수 있습니다."
@@ -295,26 +409,30 @@ export function ProjectWorkspace({
                 </button>
               }
             />
-          ) : showSkeleton && runtimeList.length === 0 ? (
+          ) : showSkeleton && runtimeList.length === 0 && !pendingDeploy ? (
             <TableSkeleton
-              rows={services.length}
+              rows={rows.length}
               note="Docker stats를 읽는 중입니다 · 3초 넘으면 캐시된 값을 먼저 보여줍니다"
             />
           ) : (
-            services.map((service) => (
-              <ServiceRow
-                key={service}
-                service={service}
-                runtime={runtime[service]}
-                summary={summaries.get(service)}
-                busyAction={
-                  busyAction.startsWith(`${service}:`) ? busyAction.split(":")[1] || "" : ""
-                }
-                menuOpen={openMenuFor === service}
-                onMenuOpenChange={(open) => setOpenMenuFor(open ? service : null)}
-                onAction={(action) => handleAction(service, action)}
-              />
-            ))
+            rows.map((service) =>
+              pendingDeploy && pendingDeploy.service === service ? (
+                <PendingRow key={service} pending={pendingDeploy} onDismiss={onPendingDismiss} />
+              ) : (
+                <ServiceRow
+                  key={service}
+                  service={service}
+                  runtime={runtime[service]}
+                  summary={summaries.get(service)}
+                  busyAction={
+                    busyAction.startsWith(`${service}:`) ? busyAction.split(":")[1] || "" : ""
+                  }
+                  menuOpen={openMenuFor === service}
+                  onMenuOpenChange={(open) => setOpenMenuFor(open ? service : null)}
+                  onAction={(action) => handleAction(service, action)}
+                />
+              )
+            )
           )}
         </div>
 
@@ -331,7 +449,7 @@ export function ProjectWorkspace({
           </div>
         )}
 
-        {services.length > 0 && (
+        {rows.length > 0 && (
           <p className="tableNote">
             재시작이 반복되는 서비스는 주 동작이 <b>로그 보기</b>로 바뀝니다. 원인을 보기 전에
             재시작을 다시 누르게 하지 않습니다.

@@ -382,6 +382,18 @@
   color: var(--warn-ink);
 }
 
+/* The build here can run for an hour. That is the single most important thing
+   on this card, so it gets a heavier rule than the disk note beside it. */
+.planCard__warn--slow {
+  border-left-width: 3px;
+}
+
+.planCard__warnBody {
+  margin-top: 5px;
+  color: inherit;
+  opacity: 0.92;
+}
+
 .planCard__submit {
   width: 100%;
   height: 36px;

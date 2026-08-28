@@ -1,4 +1,4 @@
-import type { AuthSession } from "../types";
+import type { AuthSession, PendingDeploy } from "../types";
 import { isRecord } from "./api";
 
 const SESSION_STORAGE_KEY = "cloud-platform-console-session";
@@ -58,5 +58,45 @@ export function storeRailWidth(width: number) {
     window.localStorage.setItem(RAIL_WIDTH_KEY, String(Math.round(width)));
   } catch {
     /* width just does not persist */
+  }
+}
+
+const PENDING_DEPLOY_KEY = "cloud-platform-console-pending-deploy";
+/** Past this a stored deploy is stale rather than slow, and is dropped. */
+const PENDING_DEPLOY_MAX_AGE_MS = 3 * 60 * 60 * 1000;
+
+/**
+ * A build here runs for tens of minutes, so a reload in the middle is normal.
+ * Without this the row would come back as "확인 전" and be indistinguishable
+ * from a service whose container had died.
+ */
+export function loadPendingDeploy(): PendingDeploy | null {
+  try {
+    const raw = window.localStorage.getItem(PENDING_DEPLOY_KEY);
+    if (!raw) return null;
+    const data = JSON.parse(raw);
+    if (!isRecord(data)) return null;
+    if (typeof data.project !== "string" || typeof data.service !== "string") return null;
+    if (typeof data.startedAt !== "number") return null;
+    if (data.state !== "running" && data.state !== "failed") return null;
+    if (Date.now() - data.startedAt > PENDING_DEPLOY_MAX_AGE_MS) return null;
+    return {
+      project: data.project,
+      service: data.service,
+      startedAt: data.startedAt,
+      state: data.state,
+      error: typeof data.error === "string" ? data.error : undefined
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function storePendingDeploy(pending: PendingDeploy | null) {
+  try {
+    if (!pending) window.localStorage.removeItem(PENDING_DEPLOY_KEY);
+    else window.localStorage.setItem(PENDING_DEPLOY_KEY, JSON.stringify(pending));
+  } catch {
+    /* private mode: the row just does not survive a reload */
   }
 }

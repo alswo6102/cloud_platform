@@ -7,6 +7,7 @@ import type {
   IncompleteProject,
   Page,
   PanelMode,
+  PendingDeploy,
   Project,
   Scope,
   SystemSummary
@@ -15,8 +16,10 @@ import { api, errorText, publicApi, visitorAuth } from "./lib/api";
 import { useMediaQuery } from "./lib/useMediaQuery";
 import {
   clearStoredSession,
+  loadPendingDeploy,
   loadRailWidth,
   loadStoredSession,
+  storePendingDeploy,
   storeRailWidth,
   storeSession
 } from "./lib/session";
@@ -29,6 +32,9 @@ import { NewProjectModal } from "./components/NewProjectModal";
 import { AgentPanel, RAIL_MIN, type AgentRequest } from "./components/agent/AgentPanel";
 import { EmptyState, ErrorPanel } from "./components/States";
 import "./styles.css";
+
+/** Values typed on the deploy form, sent after the service exists. */
+type DeployEnvEntry = { name: string; value: string; secret: boolean };
 
 type ProjectsResponse = {
   projects: Project[];
@@ -77,6 +83,12 @@ export function App() {
   const [railWidth, setRailWidth] = useState(() => loadRailWidth(RAIL_MIN));
   const [agentRequest, setAgentRequest] = useState<AgentRequest | null>(null);
   const [mutationCount, setMutationCount] = useState(0);
+  // A source build on this host runs for tens of minutes. The request is owned
+  // here rather than by the form, so leaving the deploy screen -- or reloading
+  // -- does not throw away the only record that it is running.
+  const [pendingDeploy, setPendingDeploy] = useState<PendingDeploy | null>(() =>
+    loadPendingDeploy()
+  );
 
   // Below this the rail has no room; the panel becomes a bottom button that
   // opens fullscreen, per 2k.
@@ -165,6 +177,65 @@ export function App() {
     setMutationCount((count) => count + 1);
     void refreshAll();
   }, [refreshAll]);
+
+  function clearPending(refresh: boolean) {
+    setPendingDeploy(null);
+    storePendingDeploy(null);
+    if (refresh) void refreshAll();
+  }
+
+  /**
+   * Hands the deploy to the server and returns immediately. The workspace shows
+   * a row for it; this promise only exists to record the outcome, so nothing
+   * here navigates or depends on the user still being on any given screen.
+   */
+  function startDeploy(
+    targetProject: string,
+    args: Record<string, unknown>,
+    envEntries: DeployEnvEntry[]
+  ) {
+    const service = String(args.service || "");
+    const pending: PendingDeploy = {
+      project: targetProject,
+      service,
+      startedAt: Date.now(),
+      state: "running"
+    };
+    setPendingDeploy(pending);
+    storePendingDeploy(pending);
+    navigate({ kind: "project", project: targetProject });
+
+    void (async () => {
+      try {
+        await api(`/api/projects/${targetProject}/execute`, auth, {
+          method: "POST",
+          body: JSON.stringify({ skill: "service.deploy", arguments: args, approved: true })
+        });
+        // Values go in a second call: service.deploy is on the planner's tool
+        // list, so its arguments must stay free of secrets. The service has to
+        // exist first, and the container is recreated so the first run sees them.
+        if (envEntries.length) {
+          await api(`/api/projects/${targetProject}/execute`, auth, {
+            method: "POST",
+            body: JSON.stringify({
+              skill: "service.env.set",
+              arguments: { service, entries: envEntries, restart: true },
+              approved: true
+            })
+          });
+        }
+        setPendingDeploy(null);
+        storePendingDeploy(null);
+        await refreshAll();
+      } catch (err) {
+        // The row keeps the reason on screen. A failed deploy rolls the compose
+        // file back, so without this the service simply vanishes with no cause.
+        const failed: PendingDeploy = { ...pending, state: "failed", error: errorText(err) };
+        setPendingDeploy(failed);
+        storePendingDeploy(failed);
+      }
+    })();
+  }
 
   useEffect(() => {
     void refreshAll();
@@ -315,10 +386,7 @@ export function App() {
         summary={summary}
         frameworks={frameworks}
         onCancel={() => navigate({ kind: "project", project: page.project })}
-        onDeployed={async () => {
-          await refreshAll();
-          navigate({ kind: "project", project: page.project });
-        }}
+        onStartDeploy={(args, envEntries) => startDeploy(page.project, args, envEntries)}
       />
     );
   } else {
@@ -356,6 +424,11 @@ export function App() {
         onDeploy={() => navigate({ kind: "deploy", project: page.project })}
         onRequestApproval={requestApproval}
         onAskAgent={askAgent}
+        pendingDeploy={
+          pendingDeploy && pendingDeploy.project === page.project ? pendingDeploy : null
+        }
+        onPendingDone={() => clearPending(true)}
+        onPendingDismiss={() => clearPending(false)}
         refreshToken={mutationCount}
         railCollapsed={panelMode === "full" || narrow || !panelOpen}
         railSlot={panel}

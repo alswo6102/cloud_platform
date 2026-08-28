@@ -76,7 +76,7 @@ export function DeployForm({
   summary,
   frameworks,
   onCancel,
-  onDeployed
+  onStartDeploy
 }: {
   auth: AuthHeaders;
   project: string;
@@ -84,7 +84,10 @@ export function DeployForm({
   summary: SystemSummary | null;
   frameworks: FrameworkPreset[];
   onCancel: () => void;
-  onDeployed: () => void;
+  onStartDeploy: (
+    args: Record<string, unknown>,
+    envEntries: Array<{ name: string; value: string; secret: boolean }>
+  ) => void;
 }) {
   const [service, setService] = useState("");
   const [repoUrl, setRepoUrl] = useState("");
@@ -106,7 +109,6 @@ export function DeployForm({
   const [previewing, setPreviewing] = useState(false);
   const [error, setError] = useState("");
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
-  const [deploying, setDeploying] = useState(false);
 
   // The suggestion has to wait for the project list, or it recommends a port
   // something is already published on.
@@ -202,39 +204,17 @@ export function DeployForm({
     };
   }, [args, auth, project, ready]);
 
-  async function deploy() {
-    if (!preview || deploying) return;
-    setDeploying(true);
-    setError("");
-    try {
-      await api(`/api/projects/${project}/execute`, auth, {
-        method: "POST",
-        body: JSON.stringify({ skill: "service.deploy", arguments: args, approved: true })
-      });
-
-      // Values go in a second call. service.deploy is on the planner's tool
-      // list, so its arguments must stay free of secrets; this call is not.
-      // It runs after the deploy because the service has to exist first, and
-      // the container is recreated so the first run already sees the values.
-      const entries = envRows
-        .map((row) => ({ name: row.name.trim(), value: row.value, secret: row.secret }))
-        .filter((row) => ENV_NAME_PATTERN.test(row.name) && row.value !== "");
-      if (entries.length) {
-        await api(`/api/projects/${project}/execute`, auth, {
-          method: "POST",
-          body: JSON.stringify({
-            skill: "service.env.set",
-            arguments: { service: service.trim(), entries, restart: true },
-            approved: true
-          })
-        });
-      }
-      onDeployed();
-    } catch (err) {
-      setError(errorText(err));
-    } finally {
-      setDeploying(false);
-    }
+  /**
+   * Hands the deploy off and leaves. A source build here runs for tens of
+   * minutes, so waiting on the response would freeze this screen for the whole
+   * build; the workspace tracks it and shows the outcome instead.
+   */
+  function submit() {
+    if (!preview) return;
+    const entries = envRows
+      .map((row) => ({ name: row.name.trim(), value: row.value, secret: row.secret }))
+      .filter((row) => ENV_NAME_PATTERN.test(row.name) && row.value !== "");
+    onStartDeploy(args, entries);
   }
 
   function addEnvRow() {
@@ -256,6 +236,11 @@ export function DeployForm({
   const resolvedHostPort = isRecord(preview) ? preview.host_port : null;
   const diskFree = formatMb(summary?.disk_free_mb);
   const diskLow = (summary?.performance_warnings || []).includes("disk_low");
+  // The dry run already says whether this host can finish the build it implies.
+  // It was being dropped on the floor, so a build that was going to take an
+  // hour looked exactly like one that would take a minute.
+  const capacity = isRecord(preview) ? preview.build_capacity : null;
+  const slowBuild = isRecord(capacity) && capacity.likely_to_fail === true;
 
   return (
     <div className="deployPage">
@@ -508,6 +493,17 @@ export function DeployForm({
             </>
           )}
 
+          {slowBuild && (
+            <div className="planCard__warn planCard__warn--slow">
+              <b>이 서버는 사양이 작아 빌드가 오래 걸립니다.</b>
+              <div className="planCard__warnBody">
+                소스에서 빌드하는 프레임워크는 <b>40~60분</b>까지 걸립니다. 배포가 도는 동안
+                다른 서비스도 함께 느려집니다. 창을 닫거나 새로고침해도 배포는 계속되고,
+                프로젝트 화면에서 진행 상황을 볼 수 있습니다.
+              </div>
+            </div>
+          )}
+
           {diskLow && diskFree && (
             <div className="planCard__warn">
               현재 디스크 여유는 {diskFree}입니다. 빌드 도중 공간이 부족할 수 있습니다.
@@ -518,15 +514,17 @@ export function DeployForm({
 
           <button
             className="btn btn--primary planCard__submit"
-            onClick={() => void deploy()}
-            disabled={!preview || previewing || deploying}
+            onClick={submit}
+            disabled={!preview || previewing}
           >
-            {deploying ? "배포 중..." : "배포 실행"}
+            {slowBuild ? "배포 실행 (40~60분 소요)" : "배포 실행"}
           </button>
           <div className="planCard__note">
             {question
               ? "답하면 실행 계획을 다시 확인합니다."
-              : "이 계획 그대로 실행합니다. 실행 전 마지막 확인입니다."}
+              : slowBuild
+                ? "누르면 프로젝트 화면으로 이동하고, 배포는 뒤에서 계속됩니다."
+                : "이 계획 그대로 실행합니다. 실행 전 마지막 확인입니다."}
           </div>
         </div>
       </div>
