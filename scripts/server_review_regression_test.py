@@ -931,7 +931,7 @@ def _permissions_are_declared():
     import skill_registry
 
     documents = skill_registry.skill_documents()
-    assert len(documents) == 17, len(documents)
+    assert len(documents) == 19, len(documents)
     for document in documents:
         assert document["access"] in {"read", "mutate"}, document["name"]
         assert document["plane"] in {"root", "project", "shared"}, document["name"]
@@ -959,7 +959,7 @@ def _sets_match_the_documents():
     assert read == frozenset({
         "entity.resolve", "framework.list", "help.search", "platform.help",
         "server.health", "project.list", "repository.inspect", "service.status",
-        "service.logs", "port.suggest", "qa.run",
+        "service.logs", "port.suggest", "qa.run", "service.env.list",
     }), sorted(read)
     assert root == frozenset({
         "project.create", "project.ensure_agent", "server.health", "qa.run",
@@ -967,7 +967,19 @@ def _sets_match_the_documents():
     assert project == frozenset({
         "service.deploy", "service.redeploy", "service.delete", "service.status",
         "service.logs", "service.control", "port.manage",
+        "service.env.list", "service.env.set",
     }), sorted(project)
+
+    # Withholding is what keeps secret values out of the prompt and the
+    # transcript, so it is pinned the same way the permission sets are: the
+    # skill has to stay off the tool list on both planes.
+    assert skill_registry.PLANNER_WITHHELD_SKILLS == frozenset({"service.env.set"}), (
+        sorted(skill_registry.PLANNER_WITHHELD_SKILLS)
+    )
+    for namespace in (None, "mine"):
+        offered = {item["name"] for item in app.available_skills(namespace)}
+        assert "service.env.set" not in offered, namespace
+        assert "service.env.list" in offered, namespace
     # Root-plane skills stay refused for a namespace token.
     from fastapi import HTTPException
 

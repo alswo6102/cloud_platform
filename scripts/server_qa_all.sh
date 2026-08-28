@@ -68,7 +68,7 @@ h=requests.get(b+"/health",timeout=5).json()
 s=requests.get(b+"/skills",timeout=5).json()
 f=requests.get(b+"/frameworks",timeout=5).json()
 assert h["status"]=="ok"
-assert len(s["skills"])==16, len(s["skills"])
+assert len(s["skills"])==19, len(s["skills"])
 assert len(f["frameworks"])>=10, len(f["frameworks"])
 '
 }
@@ -109,7 +109,7 @@ check_cli() {
     docker exec cloud-platform-skill-agent cloud-platform skills | python3 -c '
 import json, sys
 data=json.load(sys.stdin)
-assert len(data["skills"]) == 17
+assert len(data["skills"]) == 19
 '
     docker exec cloud-platform-skill-agent cloud-platform projects >/dev/null
     docker exec cloud-platform-skill-agent cloud-platform frameworks | python3 -c '
