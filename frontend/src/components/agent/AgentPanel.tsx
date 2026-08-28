@@ -21,6 +21,8 @@ import { Message } from "./Message";
 import "./AgentPanel.css";
 
 export const RAIL_MIN = 420;
+// How far from the bottom still counts as "following the conversation".
+const FOLLOW_THRESHOLD = 80;
 export const RAIL_MAX = 720;
 
 /** A job handed to the panel from outside — a prompt, or a plan to approve. */
@@ -124,6 +126,11 @@ export function AgentPanel({
 
   const abortRef = useRef<AbortController | null>(null);
   const endRef = useRef<HTMLDivElement | null>(null);
+  const bodyRef = useRef<HTMLDivElement | null>(null);
+  // Whether new content should pull the view down. Reading back in the
+  // transcript has to survive the next token arriving, so anything but a
+  // near-bottom position turns the follow off until the reader returns.
+  const stickRef = useRef(true);
   const nextId = useRef(1);
   const overlayRef = useRef<HTMLDivElement | null>(null);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
@@ -160,9 +167,33 @@ export function AgentPanel({
     return id;
   }, []);
 
+  // Scroll the transcript itself, not whatever ancestor happens to scroll:
+  // scrollIntoView walks up and would move the page behind the rail. A
+  // MutationObserver covers streamed text too, which arrives as character data
+  // on an existing node and so never changes `messages`.
   useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+    const el = bodyRef.current;
+    if (!el) return;
+    const follow = () => {
+      if (stickRef.current) el.scrollTop = el.scrollHeight;
+    };
+    follow();
+    const observer = new MutationObserver(follow);
+    observer.observe(el, { childList: true, subtree: true, characterData: true });
+    return () => observer.disconnect();
+  }, [mode]);
+
+  useEffect(() => {
+    const el = bodyRef.current;
+    if (el && stickRef.current) el.scrollTop = el.scrollHeight;
   }, [messages, busy]);
+
+  const handleBodyScroll = useCallback(() => {
+    const el = bodyRef.current;
+    if (!el) return;
+    const remaining = el.scrollHeight - el.scrollTop - el.clientHeight;
+    stickRef.current = remaining <= FOLLOW_THRESHOLD;
+  }, []);
 
   // ------------------------------------------------------------- sending
   const send = useCallback(
@@ -171,6 +202,9 @@ export function AgentPanel({
       if (!trimmed || busy) return;
       setInput("");
       setFailure("");
+      // Sending is a return to the live end of the conversation, whatever the
+      // reader was looking at a moment ago.
+      stickRef.current = true;
       addMessage({ from: "user", text: trimmed });
       setBusy(true);
 
@@ -428,6 +462,8 @@ export function AgentPanel({
 
   const body = (
     <div
+      ref={bodyRef}
+      onScroll={handleBodyScroll}
       className={messages.length === 0 ? "agentPanel__body agentPanel__body--empty" : "agentPanel__body"}
       aria-live="polite"
     >
