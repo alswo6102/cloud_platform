@@ -562,6 +562,24 @@ def _project_list_is_scoped():
         )
 
 
+# --- A change the console makes waits for it and invalidates the reads --------
+# The web layer has to outlast the agent, not the other way round: a mutation
+# left off this list gets the read timeout, so a slow one comes back as a
+# failure for work that succeeded, and the cached rows keep the old state.
+
+
+@check("every_mutation_the_console_calls_is_listed_as_one")
+def _mutations_are_listed():
+    import skill_registry
+
+    listed = web_namespace({"MUTATION_SKILLS"})["MUTATION_SKILLS"]
+    mutating = set(skill_registry.project_scoped_skills()) - set(
+        skill_registry.read_only_skills()
+    )
+    missing = mutating - listed
+    assert not missing, f"긴 타임아웃과 캐시 무효화를 받지 못하는 변경 스킬: {sorted(missing)}"
+
+
 # --- The console offers the same presets the platform does -------------------
 
 
