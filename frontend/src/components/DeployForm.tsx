@@ -122,12 +122,16 @@ export function DeployForm({
   const serviceValid = NAME_PATTERN.test(service.trim());
   const repoValid = REPO_PATTERN.test(repoUrl.trim());
   const portValid = !isWeb || /^\d{4,5}$/.test(hostPort.trim());
+  // Keyed on the names alone. Memoizing on `envRows` produced a new array for
+  // every keystroke in a *value* field too, and a new array meant new `args`,
+  // which sent the dry run again -- with a request body that had not changed.
+  const envNameKey = envRows
+    .map((row) => row.name.trim())
+    .filter((name) => ENV_NAME_PATTERN.test(name))
+    .join(",");
   const envNamesForDeploy = useMemo(
-    () =>
-      envRows
-        .map((row) => row.name.trim())
-        .filter((name) => ENV_NAME_PATTERN.test(name)),
-    [envRows]
+    () => (envNameKey ? envNameKey.split(",") : []),
+    [envNameKey]
   );
 
   const envInvalid = envRows.some(
@@ -163,7 +167,14 @@ export function DeployForm({
   // summary can never describe a deploy other than the one about to run.
   useEffect(() => {
     if (!ready) {
+      // Everything the plan panel shows, not just the plan: an in-flight
+      // request is cancelled here rather than finishing, so its `finally` never
+      // runs and the panel used to sit on "확인하는 중" until the form was
+      // complete again -- next to a question about a deploy no longer described.
       setPreview(null);
+      setPreviewing(false);
+      setQuestion(null);
+      setQuestionNote("");
       return;
     }
     let cancelled = false;
