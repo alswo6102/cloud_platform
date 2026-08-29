@@ -99,6 +99,7 @@ export function AgentPanel({
   onRailWidthChange,
   onClose,
   request,
+  onRequestHandled,
   onMutationDone,
   frameworks
 }: {
@@ -111,6 +112,8 @@ export function AgentPanel({
   onRailWidthChange: (width: number) => void;
   onClose: () => void;
   request?: AgentRequest | null;
+  /** Called once the request has been taken, so it is not offered again. */
+  onRequestHandled: () => void;
   onMutationDone: () => void;
   frameworks: FrameworkPreset[];
 }) {
@@ -299,10 +302,20 @@ export function AgentPanel({
   );
 
   // --------------------------------------------------- outside-in requests
+  // The nonce alone could not remember anything: it lives in this panel, and
+  // closing the panel unmounts it while the request stays in the page above.
+  // Reopening then replayed the last one -- a delete card the user had already
+  // cancelled came back on its own. The request is handed back instead.
   const handledNonce = useRef(0);
   useEffect(() => {
     if (!request || request.nonce === handledNonce.current) return;
+    // Mid-answer, hold it rather than spend it: `send` refuses while busy, and
+    // a spent nonce meant a row action pressed at the wrong moment vanished
+    // with no message and no way to retry. `send` changes identity when busy
+    // clears, so this effect comes back for it.
+    if (busy) return;
     handledNonce.current = request.nonce;
+    onRequestHandled();
 
     if (request.kind === "prompt") {
       void send(request.text);
@@ -334,7 +347,7 @@ export function AgentPanel({
       });
       setStreamingId(id);
     })();
-  }, [request, send, withPreview, addMessage]);
+  }, [request, busy, send, withPreview, addMessage, onRequestHandled]);
 
   // ------------------------------------------------------------ approving
   function updatePlan(id: number, patch: Partial<ApprovalPlan>) {

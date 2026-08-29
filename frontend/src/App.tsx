@@ -172,6 +172,11 @@ export function App() {
     await Promise.all([refreshProjects(), refreshCatalog(), refreshSummary()]);
   }, [refreshProjects, refreshCatalog, refreshSummary]);
 
+  // Cleared as soon as the panel takes it. Left standing, it was handed to the
+  // panel again on the next mount -- reopening the panel replayed the last
+  // approval or prompt on its own.
+  const handleRequestHandled = useCallback(() => setAgentRequest(null), []);
+
   /** A change the agent executed invalidates the summaries and the live rows. */
   const handleMutationDone = useCallback(() => {
     setMutationCount((count) => count + 1);
@@ -409,6 +414,7 @@ export function App() {
           setPanelMode("rail");
         }}
         request={agentRequest}
+        onRequestHandled={handleRequestHandled}
         onMutationDone={handleMutationDone}
         frameworks={frameworks}
       />
@@ -501,6 +507,7 @@ export function App() {
             setPanelMode("rail");
           }}
           request={agentRequest}
+          onRequestHandled={handleRequestHandled}
           onMutationDone={handleMutationDone}
           frameworks={frameworks}
         />
