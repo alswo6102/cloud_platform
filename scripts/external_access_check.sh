@@ -15,7 +15,7 @@ check_port() {
   fi
 }
 
-check_port "$REMOTE_PORT"
+check_port "$REMOTE_WEB_PORT"
 
 published_ports="$(
   ssh_base "docker ps --format '{{.Ports}}'" \

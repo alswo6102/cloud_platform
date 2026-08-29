@@ -6,7 +6,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib.sh"
 load_env
 
-ssh_base "REMOTE_SERVICE_NAME='$REMOTE_SERVICE_NAME' REMOTE_AGENT_NAME='$REMOTE_AGENT_NAME' REMOTE_PORT='$REMOTE_PORT' bash -s" <<'REMOTE'
+ssh_base "REMOTE_AGENT_NAME='$REMOTE_AGENT_NAME' REMOTE_WEB_NAME='$REMOTE_WEB_NAME' REMOTE_WEB_PORT='$REMOTE_WEB_PORT' bash -s" <<'REMOTE'
 set -euo pipefail
 
 docker info >/dev/null
@@ -26,11 +26,11 @@ else
   exit 1
 fi
 
-dashboard_running="$(docker inspect -f '{{.State.Running}}' "$REMOTE_SERVICE_NAME")"
-dashboard_restart="$(docker inspect -f '{{.HostConfig.RestartPolicy.Name}}' "$REMOTE_SERVICE_NAME")"
-test "$dashboard_running" = "true"
-test "$dashboard_restart" = "unless-stopped"
-echo "OK dashboard_always_on"
+web_running="$(docker inspect -f '{{.State.Running}}' "$REMOTE_WEB_NAME")"
+web_restart="$(docker inspect -f '{{.HostConfig.RestartPolicy.Name}}' "$REMOTE_WEB_NAME")"
+test "$web_running" = "true"
+test "$web_restart" = "unless-stopped"
+echo "OK web_api_always_on"
 
 agent_running="$(docker inspect -f '{{.State.Running}}' "$REMOTE_AGENT_NAME")"
 agent_restart="$(docker inspect -f '{{.HostConfig.RestartPolicy.Name}}' "$REMOTE_AGENT_NAME")"
@@ -40,11 +40,11 @@ test "$agent_restart" = "unless-stopped"
 test "$agent_ports" = "{}"
 echo "OK skill_agent_internal_only"
 
-curl -fsS "http://127.0.0.1:$REMOTE_PORT/_stcore/health" >/dev/null
-echo "OK dashboard_health"
+curl -fsS "http://127.0.0.1:$REMOTE_WEB_PORT/api/health" >/dev/null
+echo "OK console_health"
 
-docker exec "$REMOTE_SERVICE_NAME" docker ps >/dev/null
-echo "OK dashboard_docker_socket"
+docker exec "$REMOTE_AGENT_NAME" docker ps >/dev/null
+echo "OK skill_agent_docker_socket"
 
 if docker ps --filter status=restarting --format '{{.Names}}' | grep -q .; then
   echo "FAIL restarting_containers"

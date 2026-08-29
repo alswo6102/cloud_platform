@@ -14,11 +14,10 @@ load_env() {
   : "${NCP_PORT:=22}"
   : "${NCP_AUTH_METHOD:=password}"
   : "${REMOTE_DIR:=/opt/cloud_platform}"
-  : "${REMOTE_APP:=admin.py}"
-  : "${REMOTE_PORT:=8501}"
   : "${REMOTE_PROJECTS_ROOT:=/srv/projects}"
-  : "${REMOTE_SERVICE_NAME:=cloud-platform-dashboard}"
   : "${REMOTE_AGENT_NAME:=cloud-platform-skill-agent}"
+  : "${REMOTE_WEB_NAME:=cloud-platform-web-api}"
+  : "${REMOTE_WEB_PORT:=8000}"
 
   if [[ "$NCP_AUTH_METHOD" == "key" ]]; then
     : "${NCP_SSH_KEY:?NCP_SSH_KEY is required when NCP_AUTH_METHOD=key.}"

@@ -30,7 +30,7 @@ run_check() {
 check_python() {
     cd "$ROOT_DIR"
     PYTHONDONTWRITEBYTECODE=1 python3 -c \
-        'from pathlib import Path; [compile(Path(f).read_text(), f, "exec") for f in ["admin.py", "agent/app.py", "agent/authz.py", "agent/planner.py", "agent/runtime.py", "agent/skill_registry.py", "web/app.py", "deployment_presets.py"]]'
+        'from pathlib import Path; [compile(Path(f).read_text(), f, "exec") for f in ["agent/app.py", "agent/authz.py", "agent/planner.py", "agent/runtime.py", "agent/skill_registry.py", "web/app.py", "deployment_presets.py"]]'
 }
 
 check_schemas() {
@@ -56,12 +56,14 @@ check_llm_fallback() {
         python scripts/server_llm_fallback_test.py
 }
 
-check_dashboard() {
-    curl -fsS http://127.0.0.1:8501/_stcore/health | grep -q '^ok$'
+check_console() {
+    curl -fsS http://127.0.0.1:8000/api/health | grep -q '"status":"ok"'
 }
 
+# Asked from the web API rather than the agent itself: it is the agent's real
+# caller, so this also proves the control network still resolves.
 check_agent() {
-    docker exec cloud-platform-dashboard python -c '
+    docker exec cloud-platform-web-api python -c '
 import requests
 b="http://cloud-platform-skill-agent:8080"
 h=requests.get(b+"/health",timeout=5).json()
@@ -83,7 +85,7 @@ check_runtime_qa() {
     local token
     token="$(root_token)"
     [[ -n "$token" ]] || { echo "PLATFORM_ROOT_TOKEN is not set on the agent"; return 1; }
-    docker exec -e QA_ROOT_TOKEN="$token" cloud-platform-dashboard python -c '
+    docker exec -e QA_ROOT_TOKEN="$token" cloud-platform-web-api python -c '
 import os
 import requests
 r=requests.post(
@@ -170,7 +172,7 @@ run_check schemas "Skill schemas" check_schemas
 run_check secrets "Secret exclusion" check_secrets
 run_check fallback "LLM rate-limit fallback" check_llm_fallback
 run_check regressions "Reviewed defects stay fixed" check_review_regressions
-run_check dashboard "Dashboard health" check_dashboard
+run_check console "Console API health" check_console
 run_check agent "Agent, skill catalog, and presets" check_agent
 run_check runtime "Runtime deterministic QA" check_runtime_qa
 run_check cli "Strict CLI adapter and approval guard" check_cli

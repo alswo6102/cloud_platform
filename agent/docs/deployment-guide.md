@@ -6,7 +6,6 @@ The dashboard manages Docker Compose projects under `/srv/projects`.
 - Container ports default to `3000`, but the Compose mapping can be changed per service.
 - Frontend services need the `is_web_service=true` label to show an Open button.
 - A frontend reverse proxy must reference the exact Compose backend service name.
-- The dashboard runs on port `8501`.
 - The skill agent is internal-only and is not published to a host port.
 - Use `qa_fast.sh` for compact operational checks and `qa_all.sh` for deployment plus smoke tests.
 

@@ -9,11 +9,14 @@ checkout over this directory.
 
 - Application source and Git repository: `/opt/cloud_platform`
 - Managed project data: `/srv/projects`
-- Dashboard container: `cloud-platform-dashboard`
 - Skill Agent container: `cloud-platform-skill-agent`
-- Dashboard URL: port `8501`
+- Platform API container: `cloud-platform-platform-api`
+- Console API container: `cloud-platform-web-api`
+- Console URL: port `8000`
+- Console bundle, bind-mounted into the console API:
+  `/var/www/cloud-platform-console`
 
-Both application containers use `restart: unless-stopped`.
+All three containers use `restart: unless-stopped`.
 
 ## Development Loop
 
@@ -31,8 +34,8 @@ reviewing every difference first.
 ## Server-Native Checks
 
 ```sh
-python3 -c 'from pathlib import Path; [compile(Path(f).read_text(), f, "exec") for f in ["admin.py", "agent/app.py", "agent/authz.py", "agent/planner.py", "agent/runtime.py", "agent/skill_registry.py", "web/app.py", "deployment_presets.py"]]'
-curl -fsS http://127.0.0.1:8501/_stcore/health
+python3 -c 'from pathlib import Path; [compile(Path(f).read_text(), f, "exec") for f in ["agent/app.py", "agent/authz.py", "agent/planner.py", "agent/runtime.py", "agent/skill_registry.py", "web/app.py", "deployment_presets.py"]]'
+curl -fsS http://127.0.0.1:8000/api/health
 docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'
 ```
 
@@ -70,8 +73,8 @@ if verification fails.
 
 Framework Dockerfiles are defined in `deployment_presets.py`, which is copied
 into both application images. This is the single source of truth for the
-dashboard selector, manuals, Agent schemas, generated Dockerfiles, default port
-3000, and suggested environment-variable names.
+console's framework list, manuals, Agent schemas, generated Dockerfiles,
+default port 3000, and suggested environment-variable names.
 
 ## Strict Conversation and CLI Boundaries
 
@@ -114,10 +117,12 @@ Multiple planner models can be configured in preferred order:
 LLM_MODELS=gemini-3.1-flash-lite,gemini-3-flash-preview,gemini-2.5-flash,gemini-2.5-flash-lite
 ```
 
-The Agent moves to the next model only for HTTP 429 rate-limit responses and
-temporarily skips models that are cooling down. Authentication, malformed
-request, and permission errors fail immediately instead of being hidden by a
-fallback.
+A 429 puts that model on a cooldown taken from `Retry-After`; any other 4xx
+retires it for `DEAD_MODEL_COOLDOWN`, because a model gets renamed or withdrawn
+from a key without warning and the list exists so the next one gets its turn.
+Cooldowns are a preference, not a refusal: with every model cooling down they
+are all tried anyway, least recently limited first. A key that authenticates
+nowhere therefore exhausts the list and fails naming every model it tried.
 
 ## Output Rule
 

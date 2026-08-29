@@ -1,5 +1,0 @@
-streamlit
-pyyaml
-docker
-psutil
-requests

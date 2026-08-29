@@ -2,13 +2,12 @@
 # Rebuild the control-plane images and restart the running containers on new
 # code, keeping the configuration they already carry.
 #
-# deploy_to_ncp.sh only knows about the Streamlit dashboard and the root skill
-# agent. The stack actually serving users is three containers -- the skill
-# agent, a platform API, and the React console API -- assembled by hand with
-# environment variables no script in this repository sets, and joined to one
-# control network per project. Recreating them from a fixed command line would
-# silently drop that configuration, so this reads each container's own
-# environment and network membership and puts them back.
+# The stack serving users is three containers -- the skill agent, a platform
+# API, and the React console API -- assembled by hand with environment
+# variables no script in this repository sets, and joined to one control
+# network per project. Recreating them from a fixed command line would silently
+# drop that configuration, so this reads each container's own environment and
+# network membership and puts them back.
 #
 # Runs on the server, from REMOTE_DIR.
 set -euo pipefail

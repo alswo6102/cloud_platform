@@ -6,9 +6,8 @@ Runs inside the skill-agent image with a throwaway PROJECTS_ROOT and no Docker
 daemon, so it can run anywhere the image runs.
 
 Some of the code under test lives in processes this image does not carry --
-the Streamlit dashboard and the web API -- so those functions are lifted out
-of their module by AST and executed against stubs, the same technique
-remote_smoke_test.sh already uses for the dashboard's port allocator.
+the web API -- so those functions are lifted out of their module by AST and
+executed against stubs.
 """
 import ast
 import json
@@ -18,7 +17,6 @@ import shutil
 import subprocess
 import sys
 import textwrap
-import types
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -383,65 +381,46 @@ def _no_none_port_reaches_the_compose_file():
     raise AssertionError('"None:8080" 매핑이 계획에 들어갔다')
 
 
-# --- The dashboard never offers the project agent for deletion ---------------
+# --- Deletion never targets the agent or the project root --------------------
 # The agent has no build context, so its folder resolved to the project
-# directory and deleting it removed every other service's source.
+# directory and deleting it took every other service's source with it. The
+# screen that once listed what could be deleted is gone; the refusal and the
+# path resolution moved into the skill, and they are what is checked here.
 
 
-@check("dashboard_hides_the_agent_and_never_targets_the_project_root")
-def _dashboard_service_list_is_safe():
-    compose = {
-        "services": {
-            "agent": {
-                "image": "cloud-platform-skill-agent:latest",
-                "labels": [
-                    "cloud.platform.project=demoa",
-                    "cloud.platform.role=agent",
-                ],
-            },
-            "frontend": {
-                "build": {"context": "./frontend"},
-                "labels": ["is_web_service=true"],
-            },
-            "backend": {"build": {"context": "./backend"}, "labels": []},
-            "imageonly": {"image": "example/x", "labels": []},
-        }
-    }
+@check("deletion_refuses_the_agent_and_never_targets_the_project_root")
+def _delete_targets_are_inside_the_project():
     project = write_project(
-        "dashqa",
-        "version: '3.8'\nservices:\n  frontend:\n    build:\n      context: ./frontend\n",
+        "delqa",
+        "services:\n"
+        "  agent:\n"
+        "    image: cloud-platform-skill-agent:latest\n"
+        "  frontend:\n"
+        "    build:\n"
+        "      context: ./frontend\n"
+        "  backend:\n"
+        "    build: ./backend\n"
+        "  imageonly:\n"
+        "    image: example/x\n",
     )
 
-    class DockerUnavailable(Exception):
-        pass
+    try:
+        runtime.service_delete("delqa", "agent", dry_run=True)
+    except runtime.SkillError as exc:
+        assert exc.code == "service_is_project_agent", exc.code
+    else:
+        raise AssertionError("에이전트가 삭제 가능한 서비스로 노출된다")
 
-    def refuse():
-        raise DockerUnavailable("no docker in this check")
-
-    namespace = lift(
-        ROOT / "admin.py",
-        {"get_project_services"},
-        {
-            "Path": Path,
-            "PROJECTS_ROOT": PROJECTS,
-            "yaml": types.SimpleNamespace(
-                safe_load=lambda handle: compose, YAMLError=Exception
-            ),
-            "docker": types.SimpleNamespace(
-                from_env=refuse,
-                errors=types.SimpleNamespace(DockerException=DockerUnavailable),
-            ),
-            "st": types.SimpleNamespace(error=lambda *args: None),
-        },
-    )
-    services, _ = namespace["get_project_services"]("dashqa")
-
-    assert "agent" not in services, "에이전트가 삭제 가능한 서비스로 노출된다"
-    assert set(services) == {"frontend", "backend", "imageonly"}, services
-    for name, meta in services.items():
-        target = (project / meta["folder"]).resolve()
-        assert target != project.resolve(), f"{name}의 삭제 대상이 프로젝트 루트다"
-        assert project.resolve() in target.parents, f"{name}이 프로젝트 밖을 가리킨다"
+    compose = runtime.load_compose("delqa")
+    for service in ("frontend", "backend", "imageonly"):
+        config = compose["services"][service]
+        source = runtime.service_source_path("delqa", service, config)
+        if source is None:
+            # No build context is nothing to delete, which is the safe answer.
+            continue
+        target = source.resolve()
+        assert target != project.resolve(), f"{service}의 삭제 대상이 프로젝트 루트다"
+        assert project.resolve() in target.parents, f"{service}이 프로젝트 밖을 가리킨다"
 
 
 # --- The web layer ships no default credential and no public repo URLs -------
