@@ -1031,6 +1031,35 @@ def _env_values_are_withheld_from_the_planner():
     assert planner.withheld_from_the_planner("service.status", other) is other
 
 
+# --- Deleting a service takes its stored values with it ----------------------
+# The card calls the deletion irreversible and lists what goes. The env file
+# used to survive it, so the secrets stayed on disk and the next service
+# deployed under the same name inherited them.
+
+
+@check("deleting_a_service_removes_its_stored_environment")
+def _delete_plan_and_code_cover_the_env_file():
+    write_project(
+        "envdelete",
+        "services:\n  api:\n    image: busybox\n",
+    )
+    runtime.save_service_env("envdelete", "api", {"DB_PASSWORD": "hunter2"})
+
+    plan = runtime.service_delete("envdelete", "api", dry_run=True)
+    assert any("환경변수" in item for item in plan["removes"]), plan["removes"]
+
+    # The dry run cannot prove the unlink happens, and the real path needs a
+    # Docker daemon, so the deletion itself is pinned in the source.
+    source = runtime_source_between("def service_delete(", "def port_manage(")
+    assert "service_env_path(project, service)" in source, "삭제가 env 파일을 지우지 않음"
+    assert "service_env_meta_path(project, service)" in source, "삭제가 meta 파일을 지우지 않음"
+    # After the compose rollback, or Compose would refuse to restore a service
+    # whose env_file had already gone.
+    assert source.index("rollback_compose") < source.index("env_file.unlink"), (
+        "env 파일을 롤백 경로보다 먼저 지움"
+    )
+
+
 # --- Modules depend in one direction ----------------------------------------
 
 

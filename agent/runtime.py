@@ -2452,12 +2452,18 @@ def service_delete(
     ]
     images = service_images(project, service)
     metadata = load_service_metadata(project)
+    stored_env = load_service_env(project, service)
 
     removes = ["컨테이너 중지 및 삭제", "docker-compose.yml에서 서비스 항목 제거"]
     if source is not None:
         removes.append(f"서버의 소스 사본 {source.name}/ 삭제")
     if service in metadata:
         removes.append("배포 기록 삭제")
+    if stored_env:
+        # Named in the plan because the values outlive everything else here:
+        # left behind, they come back as the environment of the next service
+        # deployed under the same name.
+        removes.append(f"저장된 환경변수 {len(stored_env)}개 (값 포함)")
     if images:
         removes.append(f"이 서비스 전용 이미지 {len(images)}개 삭제")
 
@@ -2514,6 +2520,17 @@ def service_delete(
         metadata.pop(service)
         save_service_metadata(project, metadata)
 
+    # With the source, because both are past the last rollback: Compose
+    # refuses to start a service whose env_file is missing, so removing these
+    # any earlier would leave the restore above with nothing to bring back.
+    env_removed = False
+    env_file = service_env_path(project, service)
+    env_meta = service_env_meta_path(project, service)
+    if env_file.exists() or env_meta.exists():
+        env_file.unlink(missing_ok=True)
+        env_meta.unlink(missing_ok=True)
+        env_removed = True
+
     source_removed = False
     if source is not None and source.is_dir():
         # Last, because it is the one step no rollback above can undo.
@@ -2528,6 +2545,7 @@ def service_delete(
         "verified": {
             "container_removed": find_container(project, service) is None,
             "compose_entry_removed": service not in load_compose(project)["services"],
+            "env_removed": env_removed,
             "source_removed": source_removed,
             "removed_images": removed_images,
         },
