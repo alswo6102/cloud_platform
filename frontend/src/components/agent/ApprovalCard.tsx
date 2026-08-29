@@ -60,7 +60,11 @@ const STATUS_LABEL: Record<ApprovalPlan["status"], string> = {
   pending: "승인 대기",
   executing: "실행 중",
   done: "완료",
-  failed: "취소됨"
+  // A plan that ran and threw is not a plan nobody ran. Deletion removes the
+  // container before it can fail, so "취소됨" on a failure said the opposite of
+  // what had happened.
+  failed: "실행 실패",
+  cancelled: "취소됨"
 };
 
 export function ApprovalCard({

@@ -530,7 +530,7 @@ export function AgentPanel({
                       summary={summary}
                       result={results[message.id]}
                       onApprove={() => approve(message.id, message.approval!)}
-                      onCancel={() => updatePlan(message.id, { status: "failed" })}
+                      onCancel={() => updatePlan(message.id, { status: "cancelled" })}
                     />
                   </div>
                 )}
