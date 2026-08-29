@@ -19,6 +19,11 @@ export function Modal({
 }) {
   const ref = useRef<HTMLDivElement | null>(null);
   const restoreRef = useRef<HTMLElement | null>(null);
+  // Callers pass an inline arrow, so depending on it re-ran the effect below on
+  // every render of the page behind the modal -- which stole the caret back to
+  // the first field mid-typing, once per refresh.
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
 
   useEffect(() => {
     restoreRef.current = document.activeElement as HTMLElement;
@@ -27,7 +32,7 @@ export function Modal({
     ref.current?.querySelector<HTMLInputElement>("input")?.focus();
 
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
+      if (event.key === "Escape") closeRef.current();
     };
     document.addEventListener("keydown", onKeyDown);
     return () => {
@@ -35,7 +40,7 @@ export function Modal({
       document.body.style.overflow = previousOverflow;
       restoreRef.current?.focus?.();
     };
-  }, [onClose]);
+  }, []);
 
   return (
     <div
