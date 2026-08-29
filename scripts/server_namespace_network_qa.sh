@@ -3,11 +3,6 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PROJECTS_ROOT="${PROJECTS_ROOT:-/srv/projects}"
-# The port the platform hands its project agents. runtime.py reads the same
-# name with the same default, and the two must not drift: an agent pointed at a
-# port nothing listens on fails as "planner not configured", which reads like a
-# missing API key rather than a URL that goes nowhere.
-PLATFORM_API_PORT="${PLATFORM_API_PORT:-8080}"
 IMAGE="${IMAGE:-cloud-platform-skill-agent:latest}"
 API_NAME="nsqa-platform-api"
 A_PROJECT="nsqa_a"
@@ -71,7 +66,7 @@ services:
     environment:
       PLATFORM_NAMESPACE: ${project}
       PLATFORM_TOKEN: ${token}
-      PLATFORM_API: http://platform-api:${PLATFORM_API_PORT}
+      PLATFORM_API: http://platform-api:5000
       PROJECTS_ROOT: /srv/projects
     networks:
       app-net: {}
@@ -137,11 +132,10 @@ setup_fixture() {
 
 wait_ready() {
     docker exec -i "${A_PROJECT}-agent-1" python - <<'PY'
-import os
 import requests, time
 for _ in range(60):
     try:
-        if requests.get(os.environ["PLATFORM_API"] + "/health", timeout=2).json()["status"] == "ok":
+        if requests.get("http://platform-api:5000/health", timeout=2).json()["status"] == "ok":
             raise SystemExit(0)
     except Exception:
         time.sleep(1)
@@ -196,7 +190,7 @@ import os
 import requests
 
 response = requests.post(
-    os.environ["PLATFORM_API"] + "/chat",
+    "http://platform-api:5000/chat",
     json={"message": "nsqa_b의 frontend 로그 40줄 보여줘"},
     headers={"Authorization": "Bearer " + os.environ["PLATFORM_TOKEN"]},
     timeout=60,
@@ -216,7 +210,7 @@ import os
 import requests
 
 response = requests.post(
-    os.environ["PLATFORM_API"] + "/chat",
+    "http://platform-api:5000/chat",
     json={"message": "서비스 목록 보여줘"},
     headers={"Authorization": "Bearer " + os.environ["PLATFORM_TOKEN"]},
     timeout=60,
