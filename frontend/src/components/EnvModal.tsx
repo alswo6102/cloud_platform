@@ -32,7 +32,15 @@ type Row = {
   /** Already on the server: its name is fixed and a secret keeps its value. */
   stored: boolean;
   storedSet: boolean;
+  /** Edited at all, so a stored secret left alone is not resent. */
   touched: boolean;
+  /**
+   * Whether the secret flag was set by hand, so typing stops re-guessing it.
+   * Separate from `touched`: that one is set by every edit, which used to make
+   * this true before the first keystroke and left `looksSecret` unreachable --
+   * so a value named API_KEY was stored unmasked and read back in the clear.
+   */
+  secretTouched: boolean;
 };
 
 let rowKey = 0;
@@ -45,7 +53,8 @@ function toRow(entry: ServiceEnvEntry): Row {
     secret: entry.secret,
     stored: true,
     storedSet: entry.is_set,
-    touched: false
+    touched: false,
+    secretTouched: true
   };
 }
 
@@ -115,7 +124,16 @@ export function EnvModal({
   function addRow() {
     setRows((items) => [
       ...items,
-      { key: rowKey++, name: "", value: "", secret: false, stored: false, storedSet: false, touched: true }
+      {
+        key: rowKey++,
+        name: "",
+        value: "",
+        secret: false,
+        stored: false,
+        storedSet: false,
+        touched: true,
+        secretTouched: false
+      }
     ]);
   }
 
@@ -188,7 +206,7 @@ export function EnvModal({
                     onChange={(event) =>
                       update(row.key, {
                         name: event.target.value,
-                        secret: row.touched ? row.secret : looksSecret(event.target.value)
+                        secret: row.secretTouched ? row.secret : looksSecret(event.target.value)
                       })
                     }
                   />
@@ -208,7 +226,9 @@ export function EnvModal({
                     <input
                       type="checkbox"
                       checked={row.secret}
-                      onChange={(event) => update(row.key, { secret: event.target.checked })}
+                      onChange={(event) =>
+                        update(row.key, { secret: event.target.checked, secretTouched: true })
+                      }
                     />
                   </label>
                   <button

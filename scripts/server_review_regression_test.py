@@ -11,6 +11,7 @@ of their module by AST and executed against stubs, the same technique
 remote_smoke_test.sh already uses for the dashboard's port allocator.
 """
 import ast
+import json
 import os
 import re
 import shutil
@@ -990,6 +991,44 @@ def _sets_match_the_documents():
             assert exc.status_code == 403, skill
             continue
         raise AssertionError(f"{skill}이 네임스페이스 토큰에 허용됨")
+
+
+# --- A stored value never reaches the model ---------------------------------
+# Withholding `service.env.set` keeps values out of the arguments the planner
+# writes. It says nothing about what comes back from a read: `service.env.list`
+# hands the console the values it needs to fill its form, and the planner may
+# call the same skill. One mis-flagged variable was enough to put a live token
+# in the prompt and the transcript, so the value is stripped at the boundary
+# rather than left to whoever set the flag.
+
+
+@check("a_stored_value_never_reaches_the_planner")
+def _env_values_are_withheld_from_the_planner():
+    write_project(
+        "envwithhold",
+        "services:\n  api:\n    image: busybox\n",
+    )
+    runtime.save_service_env("envwithhold", "api", {"API_KEY": "live-token", "PORT": "3000"})
+    # Flagged not-secret on purpose: this is the console bug's outcome, and the
+    # boundary has to hold without depending on the flag being right.
+    runtime.save_env_meta("envwithhold", "api", {
+        "API_KEY": {"secret": False, "updated_at": None},
+        "PORT": {"secret": False, "updated_at": None},
+    })
+
+    listed = runtime.service_env_list("envwithhold", "api")
+    # The console still gets what it needs to fill the form.
+    assert any(entry.get("value") == "live-token" for entry in listed["entries"]), listed
+
+    masked = planner.withheld_from_the_planner("service.env.list", listed)
+    assert "live-token" not in json.dumps(masked, ensure_ascii=False), masked
+    assert {entry["name"] for entry in masked["entries"]} == {"API_KEY", "PORT"}, masked
+    assert all("value" not in entry for entry in masked["entries"]), masked
+    # Names and whether a value is set still answer the question the planner asks.
+    assert all("is_set" in entry for entry in masked["entries"]), masked
+    # Every other read is handed over untouched.
+    other = {"services": [{"service": "api", "container": {"status": "running"}}]}
+    assert planner.withheld_from_the_planner("service.status", other) is other
 
 
 # --- Modules depend in one direction ----------------------------------------
