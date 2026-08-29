@@ -523,6 +523,45 @@ def _catalog_projection_is_narrow():
         assert key in summary, f"콘솔이 쓰는 {key}가 사라졌다"
 
 
+# --- The project list names only what the caller can see ---------------------
+# Rows are filtered by membership, but the owner names were being resolved from
+# the unfiltered list and returned alongside them, which told a member of one
+# project every other project's name and whose it is.
+
+
+@check("the_project_list_names_only_projects_the_caller_can_see")
+def _project_list_is_scoped():
+    tree = ast.parse((ROOT / "web" / "app.py").read_text())
+    function = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "list_projects"
+    )
+
+    filtered = None
+    for node in ast.walk(function):
+        if (
+            isinstance(node, ast.Assign)
+            and isinstance(node.value, ast.Call)
+            and getattr(node.value.func, "id", "") == "visible_projects"
+            and isinstance(node.targets[0], ast.Name)
+        ):
+            filtered = node.targets[0].id
+    assert filtered, "list_projects가 멤버십으로 목록을 거르지 않는다"
+
+    calls = [
+        node
+        for node in ast.walk(function)
+        if isinstance(node, ast.Call) and getattr(node.func, "id", "") == "project_owners"
+    ]
+    assert calls, "소유자를 붙이지 않는다"
+    for call in calls:
+        argument = call.args[0]
+        assert isinstance(argument, ast.Name) and argument.id == filtered, (
+            f"소유자를 거르지 않은 목록에서 만든다: {ast.unparse(argument)}"
+        )
+
+
 # --- The console offers the same presets the platform does -------------------
 
 
