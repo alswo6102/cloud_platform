@@ -58,7 +58,9 @@ export function actionsFor(state: ServiceState): RowActions {
 
 const MENU_META: Record<string, MenuItem> = {
   ports: { id: "ports", label: "포트 변경", section: "설정", hint: "승인 필요" },
-  env: { id: "env", label: "환경변수", section: "설정", hint: "승인 필요" },
+  // No approval card: values are typed into a form that calls the skill
+  // directly, so they never reach the planner. The hint has to say that.
+  env: { id: "env", label: "환경변수", section: "설정", hint: "즉시 적용" },
   restart: { id: "restart", label: "재시작", section: "중단·교체", hint: "가역" },
   stop: { id: "stop", label: "중지", section: "중단·교체", hint: "가역" },
   redeploy: {

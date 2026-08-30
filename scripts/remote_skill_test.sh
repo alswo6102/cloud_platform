@@ -6,7 +6,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib.sh"
 load_env
 
-ssh_base "docker exec -i '$REMOTE_SERVICE_NAME' python -" <<'PYTHON'
+ssh_base "docker exec -i '$REMOTE_AGENT_NAME' python -" <<'PYTHON'
 import requests
 
 base = "http://cloud-platform-skill-agent:8080"

@@ -6,18 +6,17 @@ Runs inside the skill-agent image with a throwaway PROJECTS_ROOT and no Docker
 daemon, so it can run anywhere the image runs.
 
 Some of the code under test lives in processes this image does not carry --
-the Streamlit dashboard and the web API -- so those functions are lifted out
-of their module by AST and executed against stubs, the same technique
-remote_smoke_test.sh already uses for the dashboard's port allocator.
+the web API -- so those functions are lifted out of their module by AST and
+executed against stubs.
 """
 import ast
+import json
 import os
 import re
 import shutil
 import subprocess
 import sys
 import textwrap
-import types
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -382,65 +381,46 @@ def _no_none_port_reaches_the_compose_file():
     raise AssertionError('"None:8080" 매핑이 계획에 들어갔다')
 
 
-# --- The dashboard never offers the project agent for deletion ---------------
+# --- Deletion never targets the agent or the project root --------------------
 # The agent has no build context, so its folder resolved to the project
-# directory and deleting it removed every other service's source.
+# directory and deleting it took every other service's source with it. The
+# screen that once listed what could be deleted is gone; the refusal and the
+# path resolution moved into the skill, and they are what is checked here.
 
 
-@check("dashboard_hides_the_agent_and_never_targets_the_project_root")
-def _dashboard_service_list_is_safe():
-    compose = {
-        "services": {
-            "agent": {
-                "image": "cloud-platform-skill-agent:latest",
-                "labels": [
-                    "cloud.platform.project=demoa",
-                    "cloud.platform.role=agent",
-                ],
-            },
-            "frontend": {
-                "build": {"context": "./frontend"},
-                "labels": ["is_web_service=true"],
-            },
-            "backend": {"build": {"context": "./backend"}, "labels": []},
-            "imageonly": {"image": "example/x", "labels": []},
-        }
-    }
+@check("deletion_refuses_the_agent_and_never_targets_the_project_root")
+def _delete_targets_are_inside_the_project():
     project = write_project(
-        "dashqa",
-        "version: '3.8'\nservices:\n  frontend:\n    build:\n      context: ./frontend\n",
+        "delqa",
+        "services:\n"
+        "  agent:\n"
+        "    image: cloud-platform-skill-agent:latest\n"
+        "  frontend:\n"
+        "    build:\n"
+        "      context: ./frontend\n"
+        "  backend:\n"
+        "    build: ./backend\n"
+        "  imageonly:\n"
+        "    image: example/x\n",
     )
 
-    class DockerUnavailable(Exception):
-        pass
+    try:
+        runtime.service_delete("delqa", "agent", dry_run=True)
+    except runtime.SkillError as exc:
+        assert exc.code == "service_is_project_agent", exc.code
+    else:
+        raise AssertionError("에이전트가 삭제 가능한 서비스로 노출된다")
 
-    def refuse():
-        raise DockerUnavailable("no docker in this check")
-
-    namespace = lift(
-        ROOT / "admin.py",
-        {"get_project_services"},
-        {
-            "Path": Path,
-            "PROJECTS_ROOT": PROJECTS,
-            "yaml": types.SimpleNamespace(
-                safe_load=lambda handle: compose, YAMLError=Exception
-            ),
-            "docker": types.SimpleNamespace(
-                from_env=refuse,
-                errors=types.SimpleNamespace(DockerException=DockerUnavailable),
-            ),
-            "st": types.SimpleNamespace(error=lambda *args: None),
-        },
-    )
-    services, _ = namespace["get_project_services"]("dashqa")
-
-    assert "agent" not in services, "에이전트가 삭제 가능한 서비스로 노출된다"
-    assert set(services) == {"frontend", "backend", "imageonly"}, services
-    for name, meta in services.items():
-        target = (project / meta["folder"]).resolve()
-        assert target != project.resolve(), f"{name}의 삭제 대상이 프로젝트 루트다"
-        assert project.resolve() in target.parents, f"{name}이 프로젝트 밖을 가리킨다"
+    compose = runtime.load_compose("delqa")
+    for service in ("frontend", "backend", "imageonly"):
+        config = compose["services"][service]
+        source = runtime.service_source_path("delqa", service, config)
+        if source is None:
+            # No build context is nothing to delete, which is the safe answer.
+            continue
+        target = source.resolve()
+        assert target != project.resolve(), f"{service}의 삭제 대상이 프로젝트 루트다"
+        assert project.resolve() in target.parents, f"{service}이 프로젝트 밖을 가리킨다"
 
 
 # --- The web layer ships no default credential and no public repo URLs -------
@@ -520,6 +500,63 @@ def _catalog_projection_is_narrow():
     summary = view["service_summaries"][0]
     for key in ("service", "framework", "framework_label", "frontend", "host_port", "status"):
         assert key in summary, f"콘솔이 쓰는 {key}가 사라졌다"
+
+
+# --- The project list names only what the caller can see ---------------------
+# Rows are filtered by membership, but the owner names were being resolved from
+# the unfiltered list and returned alongside them, which told a member of one
+# project every other project's name and whose it is.
+
+
+@check("the_project_list_names_only_projects_the_caller_can_see")
+def _project_list_is_scoped():
+    tree = ast.parse((ROOT / "web" / "app.py").read_text())
+    function = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "list_projects"
+    )
+
+    filtered = None
+    for node in ast.walk(function):
+        if (
+            isinstance(node, ast.Assign)
+            and isinstance(node.value, ast.Call)
+            and getattr(node.value.func, "id", "") == "visible_projects"
+            and isinstance(node.targets[0], ast.Name)
+        ):
+            filtered = node.targets[0].id
+    assert filtered, "list_projects가 멤버십으로 목록을 거르지 않는다"
+
+    calls = [
+        node
+        for node in ast.walk(function)
+        if isinstance(node, ast.Call) and getattr(node.func, "id", "") == "project_owners"
+    ]
+    assert calls, "소유자를 붙이지 않는다"
+    for call in calls:
+        argument = call.args[0]
+        assert isinstance(argument, ast.Name) and argument.id == filtered, (
+            f"소유자를 거르지 않은 목록에서 만든다: {ast.unparse(argument)}"
+        )
+
+
+# --- A change the console makes waits for it and invalidates the reads --------
+# The web layer has to outlast the agent, not the other way round: a mutation
+# left off this list gets the read timeout, so a slow one comes back as a
+# failure for work that succeeded, and the cached rows keep the old state.
+
+
+@check("every_mutation_the_console_calls_is_listed_as_one")
+def _mutations_are_listed():
+    import skill_registry
+
+    listed = web_namespace({"MUTATION_SKILLS"})["MUTATION_SKILLS"]
+    mutating = set(skill_registry.project_scoped_skills()) - set(
+        skill_registry.read_only_skills()
+    )
+    missing = mutating - listed
+    assert not missing, f"긴 타임아웃과 캐시 무효화를 받지 못하는 변경 스킬: {sorted(missing)}"
 
 
 # --- The console offers the same presets the platform does -------------------
@@ -990,6 +1027,73 @@ def _sets_match_the_documents():
             assert exc.status_code == 403, skill
             continue
         raise AssertionError(f"{skill}이 네임스페이스 토큰에 허용됨")
+
+
+# --- A stored value never reaches the model ---------------------------------
+# Withholding `service.env.set` keeps values out of the arguments the planner
+# writes. It says nothing about what comes back from a read: `service.env.list`
+# hands the console the values it needs to fill its form, and the planner may
+# call the same skill. One mis-flagged variable was enough to put a live token
+# in the prompt and the transcript, so the value is stripped at the boundary
+# rather than left to whoever set the flag.
+
+
+@check("a_stored_value_never_reaches_the_planner")
+def _env_values_are_withheld_from_the_planner():
+    write_project(
+        "envwithhold",
+        "services:\n  api:\n    image: busybox\n",
+    )
+    runtime.save_service_env("envwithhold", "api", {"API_KEY": "live-token", "PORT": "3000"})
+    # Flagged not-secret on purpose: this is the console bug's outcome, and the
+    # boundary has to hold without depending on the flag being right.
+    runtime.save_env_meta("envwithhold", "api", {
+        "API_KEY": {"secret": False, "updated_at": None},
+        "PORT": {"secret": False, "updated_at": None},
+    })
+
+    listed = runtime.service_env_list("envwithhold", "api")
+    # The console still gets what it needs to fill the form.
+    assert any(entry.get("value") == "live-token" for entry in listed["entries"]), listed
+
+    masked = planner.withheld_from_the_planner("service.env.list", listed)
+    assert "live-token" not in json.dumps(masked, ensure_ascii=False), masked
+    assert {entry["name"] for entry in masked["entries"]} == {"API_KEY", "PORT"}, masked
+    assert all("value" not in entry for entry in masked["entries"]), masked
+    # Names and whether a value is set still answer the question the planner asks.
+    assert all("is_set" in entry for entry in masked["entries"]), masked
+    # Every other read is handed over untouched.
+    other = {"services": [{"service": "api", "container": {"status": "running"}}]}
+    assert planner.withheld_from_the_planner("service.status", other) is other
+
+
+# --- Deleting a service takes its stored values with it ----------------------
+# The card calls the deletion irreversible and lists what goes. The env file
+# used to survive it, so the secrets stayed on disk and the next service
+# deployed under the same name inherited them.
+
+
+@check("deleting_a_service_removes_its_stored_environment")
+def _delete_plan_and_code_cover_the_env_file():
+    write_project(
+        "envdelete",
+        "services:\n  api:\n    image: busybox\n",
+    )
+    runtime.save_service_env("envdelete", "api", {"DB_PASSWORD": "hunter2"})
+
+    plan = runtime.service_delete("envdelete", "api", dry_run=True)
+    assert any("환경변수" in item for item in plan["removes"]), plan["removes"]
+
+    # The dry run cannot prove the unlink happens, and the real path needs a
+    # Docker daemon, so the deletion itself is pinned in the source.
+    source = runtime_source_between("def service_delete(", "def port_manage(")
+    assert "service_env_path(project, service)" in source, "삭제가 env 파일을 지우지 않음"
+    assert "service_env_meta_path(project, service)" in source, "삭제가 meta 파일을 지우지 않음"
+    # After the compose rollback, or Compose would refuse to restore a service
+    # whose env_file had already gone.
+    assert source.index("rollback_compose") < source.index("env_file.unlink"), (
+        "env 파일을 롤백 경로보다 먼저 지움"
+    )
 
 
 # --- Modules depend in one direction ----------------------------------------

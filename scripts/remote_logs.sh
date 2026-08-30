@@ -7,4 +7,4 @@ source "$SCRIPT_DIR/lib.sh"
 load_env
 
 TAIL_LINES="${1:-80}"
-ssh_base "printf '%s\n' '--- dashboard ---'; docker logs --tail '$TAIL_LINES' '$REMOTE_SERVICE_NAME' 2>&1 || true; printf '%s\n' '--- skill-agent ---'; docker logs --tail '$TAIL_LINES' '$REMOTE_AGENT_NAME' 2>&1 || true"
+ssh_base "printf '%s\n' '--- skill-agent ---'; docker logs --tail '$TAIL_LINES' '$REMOTE_AGENT_NAME' 2>&1 || true; printf '%s\n' '--- web-api ---'; docker logs --tail '$TAIL_LINES' '$REMOTE_WEB_NAME' 2>&1 || true"

@@ -45,6 +45,7 @@ MUTATION_SKILLS = {
     "service.redeploy",
     "service.control",
     "service.delete",
+    "service.env.set",
     "port.manage",
 }
 PROJECT_AGENT_ENSURE_TTL = float(os.getenv("PROJECT_AGENT_ENSURE_TTL", "300"))
@@ -650,9 +651,10 @@ def list_projects(
         ttl=cache_ttl,
         generated_at=generated_at,
     )
-    all_projects = data.get("projects", [])
-    projects = visible_projects(role, user_id, all_projects)
-    owners = project_owners(all_projects)
+    projects = visible_projects(role, user_id, data.get("projects", []))
+    # Only the rows this caller can see. Naming owners for the whole platform
+    # told a member of one project every other project's name and whose it is.
+    owners = project_owners(projects)
     # Membership, not visibility. An admin sees every project but is a member of
     # only their own, and the console's "내 프로젝트" filter means the latter.
     memberships = load_auth_store().get("memberships", {})
@@ -665,7 +667,6 @@ def list_projects(
         "user": {"id": user_id, "role": role},
         "projects": [{**item, "owner": owners.get(str(item.get("name")))} for item in projects],
         "member_of": member_of,
-        "owners": owners,
         "incomplete_projects": data.get("incomplete_projects", []),
         "membership_mode": "json-table",
     }

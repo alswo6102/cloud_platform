@@ -239,6 +239,32 @@ def llm_chat_completion(
         f"failures: {failures or 'none'}; cooldowns: {cooling}"
     )
 
+def withheld_from_the_planner(skill: str, observation: Any) -> Any:
+    """Strip what a read-only result carries that the model must not see.
+
+    `service.env.list` hands values back so the console can fill its form. The
+    console asks for that over its own endpoint; the planner reads the same
+    skill and would put whatever came back into the prompt and the transcript,
+    where it stays. Only names, whether a value is set, and when it changed are
+    an answer the planner needs -- so the value is dropped here rather than
+    trusting every caller to have flagged it secret.
+    """
+    if skill != "service.env.list" or not isinstance(observation, dict):
+        return observation
+    entries = observation.get("entries")
+    if not isinstance(entries, list):
+        return observation
+    return {
+        **observation,
+        "entries": [
+            {key: value for key, value in entry.items() if key != "value"}
+            if isinstance(entry, dict)
+            else entry
+            for entry in entries
+        ],
+    }
+
+
 def call_llm(
     message: str,
     skills: list[dict[str, Any]],
@@ -441,10 +467,9 @@ def call_llm(
                     )
                 else:
                     try:
-                        observation = run_tool(
+                        observation = withheld_from_the_planner(
                             skill,
-                            arguments,
-                            dry_run=False,
+                            run_tool(skill, arguments, dry_run=False),
                         )
                         steps.append({
                             "skill": skill,

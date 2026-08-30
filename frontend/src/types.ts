@@ -207,7 +207,7 @@ export type ApprovalPlan = {
   arguments: Record<string, unknown>;
   preview?: unknown;
   resume?: unknown;
-  status: "pending" | "executing" | "done" | "failed";
+  status: "pending" | "executing" | "done" | "failed" | "cancelled";
 };
 
 export type AgentMessage = {

@@ -9,7 +9,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "agent"))
 
-import runtime
+# The planner moved out of runtime; everything this exercises went with it.
+import planner
 
 
 class FakeResponse:
@@ -24,7 +25,7 @@ class FakeResponse:
 
     def raise_for_status(self):
         if self.status_code >= 400:
-            error = runtime.requests.HTTPError(f"HTTP {self.status_code}")
+            error = planner.requests.HTTPError(f"HTTP {self.status_code}")
             error.response = self
             raise error
 
@@ -39,24 +40,13 @@ skills = [
     }
 ]
 
+# A finished answer, not a tool call. What these three checks are about is
+# which model gets asked, and a tool call would send the planner round its loop
+# against a fixture that answers the same thing every time -- twelve steps and
+# a model list that no longer matches what was asked.
 success = FakeResponse(
     200,
-    {
-        "choices": [
-            {
-                "message": {
-                    "tool_calls": [
-                        {
-                            "function": {
-                                "name": "server-health",
-                                "arguments": "{}",
-                            }
-                        }
-                    ]
-                }
-            }
-        ]
-    },
+    {"choices": [{"message": {"content": "메모리 32%, 디스크 47%입니다."}}]},
 )
 limited = FakeResponse(429, {"error": {"status": "RESOURCE_EXHAUSTED"}})
 
@@ -65,7 +55,7 @@ os.environ["LLM_API_URL"] = "https://example.invalid"
 os.environ["LLM_MODELS"] = "model-a,model-b"
 os.environ.pop("LLM_MODEL", None)
 
-runtime.MODEL_COOLDOWNS.clear()
+planner.MODEL_COOLDOWNS.clear()
 calls = []
 
 
@@ -75,23 +65,23 @@ def first_run(url, **kwargs):
     return limited if model == "model-a" else success
 
 
-with patch.object(runtime.requests, "post", side_effect=first_run):
-    result = runtime.call_llm("서버 상태", skills)
+with patch.object(planner.requests, "post", side_effect=first_run):
+    result = planner.call_llm("서버 상태", skills)
 
 assert calls == ["model-a", "model-b"], calls
 assert result["model"] == "model-b", result
-assert runtime.llm_status()["cooldowns"]["model-a"] > 0
+assert planner.llm_status()["cooldowns"]["model-a"] > 0
 print("OK fallback_on_429")
 
 calls.clear()
-with patch.object(runtime.requests, "post", side_effect=first_run):
-    result = runtime.call_llm("서버 상태", skills)
+with patch.object(planner.requests, "post", side_effect=first_run):
+    result = planner.call_llm("서버 상태", skills)
 
 assert calls == ["model-b"], calls
 assert result["model"] == "model-b", result
 print("OK skip_model_during_cooldown")
 
-runtime.MODEL_COOLDOWNS.clear()
+planner.MODEL_COOLDOWNS.clear()
 unauthorized = FakeResponse(401, {"error": {"status": "UNAUTHENTICATED"}})
 calls.clear()
 
@@ -101,18 +91,23 @@ def auth_failure(url, **kwargs):
     return unauthorized
 
 
+# A 4xx retires the model that returned it and the list moves on, so a bad key
+# exhausts every model rather than stopping at the first. That costs two futile
+# requests and buys a failure that names all of them -- and the cooldowns it
+# leaves are advisory, so the next request still tries them.
 try:
-    with patch.object(runtime.requests, "post", side_effect=auth_failure):
-        runtime.call_llm("서버 상태", skills)
-except runtime.requests.HTTPError:
-    pass
+    with patch.object(planner.requests, "post", side_effect=auth_failure):
+        planner.call_llm("서버 상태", skills)
+except planner.SkillError as exc:
+    assert "model-a: 401" in str(exc), exc
+    assert "model-b: 401" in str(exc), exc
 else:
-    raise AssertionError("401 must not fall back to another model")
+    raise AssertionError("a key that authenticates nowhere must not look like an answer")
 
-assert calls == ["model-a"], calls
-print("OK no_fallback_on_auth_error")
+assert calls == ["model-a", "model-b"], calls
+print("OK auth_error_names_every_model_it_tried")
 
-runtime.MODEL_COOLDOWNS.clear()
+planner.MODEL_COOLDOWNS.clear()
 os.environ["LLM_MODELS"] = "model-a"
 framework_skill = {
     "name": "framework.list",
@@ -174,17 +169,19 @@ reply_response = FakeResponse(
 
 with (
     patch.object(
-        runtime.requests,
+        planner.requests,
         "post",
         side_effect=[discovery_response, reply_response],
     ),
     patch.object(
-        runtime,
+        # planner imports the name, so patching it on runtime patches nothing
+        # the planner will actually call.
+        planner,
         "execute_cli_skill",
         return_value={"frameworks": [{"id": "vite"}, {"id": "nextjs"}]},
     ) as cli_call,
 ):
-    result = runtime.call_llm(
+    result = planner.call_llm(
         "프레임워크 프리셋 뭐 있어?",
         [framework_skill],
     )
@@ -218,8 +215,8 @@ history_response = FakeResponse(
         ]
     },
 )
-with patch.object(runtime.requests, "post", return_value=history_response) as post:
-    result = runtime.call_llm(
+with patch.object(planner.requests, "post", return_value=history_response) as post:
+    result = planner.call_llm(
         "그걸로 진행해줘",
         [framework_skill],
         history=[
@@ -230,9 +227,14 @@ with patch.object(runtime.requests, "post", return_value=history_response) as po
             },
         ],
     )
+# Counted from the front, past the system prompt. The tail belongs to the
+# planner's own loop -- the call this inspects is its last one, so by then it
+# has appended its tool call and the result -- and what is being checked is
+# that the history arrives ahead of the new message, in the order it was had.
 payload_messages = post.call_args.kwargs["json"]["messages"]
-assert payload_messages[-3]["content"] == "horse_race에 서비스를 배포할래"
-assert payload_messages[-2]["role"] == "assistant"
-assert payload_messages[-1]["content"] == "그걸로 진행해줘"
+assert payload_messages[0]["role"] == "system", payload_messages[0]
+assert payload_messages[1]["content"] == "horse_race에 서비스를 배포할래"
+assert payload_messages[2]["role"] == "assistant"
+assert payload_messages[3]["content"] == "그걸로 진행해줘"
 assert result["kind"] == "answer", result
 print("OK llm_session_history")

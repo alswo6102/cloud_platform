@@ -30,7 +30,7 @@ run_check() {
 check_python() {
     cd "$ROOT_DIR"
     PYTHONDONTWRITEBYTECODE=1 python3 -c \
-        'from pathlib import Path; [compile(Path(f).read_text(), f, "exec") for f in ["admin.py", "agent/app.py", "agent/authz.py", "agent/planner.py", "agent/runtime.py", "agent/skill_registry.py", "web/app.py", "deployment_presets.py"]]'
+        'from pathlib import Path; [compile(Path(f).read_text(), f, "exec") for f in ["agent/app.py", "agent/authz.py", "agent/planner.py", "agent/runtime.py", "agent/skill_registry.py", "web/app.py", "deployment_presets.py"]]'
 }
 
 check_schemas() {
@@ -56,12 +56,14 @@ check_llm_fallback() {
         python scripts/server_llm_fallback_test.py
 }
 
-check_dashboard() {
-    curl -fsS http://127.0.0.1:8501/_stcore/health | grep -q '^ok$'
+check_console() {
+    curl -fsS http://127.0.0.1:8000/api/health | grep -q '"status":"ok"'
 }
 
+# Asked from the web API rather than the agent itself: it is the agent's real
+# caller, so this also proves the control network still resolves.
 check_agent() {
-    docker exec cloud-platform-dashboard python -c '
+    docker exec cloud-platform-web-api python -c '
 import requests
 b="http://cloud-platform-skill-agent:8080"
 h=requests.get(b+"/health",timeout=5).json()
@@ -83,7 +85,7 @@ check_runtime_qa() {
     local token
     token="$(root_token)"
     [[ -n "$token" ]] || { echo "PLATFORM_ROOT_TOKEN is not set on the agent"; return 1; }
-    docker exec -e QA_ROOT_TOKEN="$token" cloud-platform-dashboard python -c '
+    docker exec -e QA_ROOT_TOKEN="$token" cloud-platform-web-api python -c '
 import os
 import requests
 r=requests.post(
@@ -103,6 +105,34 @@ check_review_regressions() {
         -w /workspace \
         cloud-platform-skill-agent:latest \
         python scripts/server_review_regression_test.py
+}
+
+# A deploy that leaves an agent behind is invisible until someone opens that
+# project and waits out the rebuild, behind a table that claims to be reading
+# Docker stats. Cheap to ask, so ask.
+check_project_agents_current() {
+    docker exec -i cloud-platform-skill-agent python - <<'PY'
+import sys
+
+sys.path.insert(0, "/app")
+
+import docker
+
+import runtime
+
+current = runtime.project_agent_template_version()
+client = docker.from_env()
+stale = []
+for container in client.containers.list(filters={"label": "cloud.platform.role=agent"}):
+    running = ""
+    for entry in container.attrs["Config"]["Env"]:
+        name, _, value = entry.partition("=")
+        if name == "PROJECT_AGENT_TEMPLATE_VERSION":
+            running = value
+    if running != current:
+        stale.append(f"{container.name}={running or '(none)'}")
+assert not stale, f"현재 {current}인데 뒤처진 에이전트: {sorted(stale)}"
+PY
 }
 
 check_cli() {
@@ -170,9 +200,10 @@ run_check schemas "Skill schemas" check_schemas
 run_check secrets "Secret exclusion" check_secrets
 run_check fallback "LLM rate-limit fallback" check_llm_fallback
 run_check regressions "Reviewed defects stay fixed" check_review_regressions
-run_check dashboard "Dashboard health" check_dashboard
+run_check console "Console API health" check_console
 run_check agent "Agent, skill catalog, and presets" check_agent
 run_check runtime "Runtime deterministic QA" check_runtime_qa
+run_check agents "Project agents run the deployed template" check_project_agents_current
 run_check cli "Strict CLI adapter and approval guard" check_cli
 run_check namespace "Namespace agent, control network, and ownership guard" \
     "$ROOT_DIR/scripts/server_namespace_network_qa.sh"

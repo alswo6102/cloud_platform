@@ -2,13 +2,12 @@
 # Rebuild the control-plane images and restart the running containers on new
 # code, keeping the configuration they already carry.
 #
-# deploy_to_ncp.sh only knows about the Streamlit dashboard and the root skill
-# agent. The stack actually serving users is three containers -- the skill
-# agent, a platform API, and the React console API -- assembled by hand with
-# environment variables no script in this repository sets, and joined to one
-# control network per project. Recreating them from a fixed command line would
-# silently drop that configuration, so this reads each container's own
-# environment and network membership and puts them back.
+# The stack serving users is three containers -- the skill agent, a platform
+# API, and the React console API -- assembled by hand with environment
+# variables no script in this repository sets, and joined to one control
+# network per project. Recreating them from a fixed command line would silently
+# drop that configuration, so this reads each container's own environment and
+# network membership and puts them back.
 #
 # Runs on the server, from REMOTE_DIR.
 set -euo pipefail
@@ -105,3 +104,47 @@ recreate cloud-platform-web-api cloud-platform-web-api:dev \
     -p 8000:8000 \
     -v "$ROOT_DIR/data:/var/lib/cloud-platform" \
     -v "$ROOT_DIR/frontend/dist:/var/www/cloud-platform-console:ro"
+
+# Any change under agent/ -- a prompt, a SKILL.md, one line of Python -- moves
+# the template hash, and a project agent is rebuilt on the first request that
+# finds it stale. That rebuild measured 16s on this disk, and it was landing on
+# whoever opened the project first, behind a table that says it is reading
+# Docker stats. The deploy already knows the sources changed, so it pays here.
+#
+# Set WARM_PROJECT_AGENTS=0 to skip: the agents are still correct either way,
+# the cost just moves back to the first person through the door.
+warm_project_agents() {
+    if [[ "${WARM_PROJECT_AGENTS:-1}" == "0" ]]; then
+        echo "SKIP project_agents (WARM_PROJECT_AGENTS=0)"
+        return 0
+    fi
+    docker exec -i cloud-platform-skill-agent python - <<'PY'
+import sys
+import time
+
+sys.path.insert(0, "/app")
+
+import runtime
+
+try:
+    projects = [item["name"] for item in runtime.project_list()["projects"]]
+except Exception as exc:  # noqa: BLE001 - report, do not fail the deploy
+    print(f"SKIP project_agents ({type(exc).__name__}: {exc})")
+    raise SystemExit(0)
+
+current = runtime.project_agent_template_version()
+for project in projects:
+    started = time.monotonic()
+    try:
+        result = runtime.ensure_project_agent(project, dry_run=False)
+    except Exception as exc:  # noqa: BLE001 - one bad project is not the deploy
+        print(f"WARN project_agent_{project} ({type(exc).__name__}: {exc})")
+        continue
+    elapsed = time.monotonic() - started
+    state = "rebuilt" if result.get("changed") else "current"
+    print(f"OK project_agent_{project} ({state}, {elapsed:.0f}s)")
+print(f"OK project_agents_at_{current}")
+PY
+}
+
+warm_project_agents

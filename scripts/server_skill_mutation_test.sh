@@ -22,7 +22,7 @@ if [[ -z "$ROOT_TOKEN" ]]; then
     exit 1
 fi
 
-docker exec -i cloud-platform-dashboard python - "$AGENT" "$ROOT_TOKEN" <<'PYTHON'
+docker exec -i cloud-platform-skill-agent python - "$AGENT" "$ROOT_TOKEN" <<'PYTHON'
 import sys
 
 import requests
