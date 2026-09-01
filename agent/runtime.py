@@ -66,6 +66,12 @@ def project_agent_template_version() -> str:
     explicit = os.getenv("PROJECT_AGENT_TEMPLATE_VERSION", "").strip()
     if explicit and os.getenv("PLATFORM_NAMESPACE", "").strip():
         return explicit
+    # Deliberately not memoised. Caching the first answer for the life of the
+    # process is true of a deployed container -- a deploy replaces it rather
+    # than editing files inside it -- but it breaks the guard that checks this
+    # function actually tracks its sources, and that guard is worth more than
+    # the 6ms. Nothing calls this on a request path any more: the reconciler
+    # and the deploy are the only callers, and neither is waiting on a user.
     root = Path(__file__).resolve().parent
     # Every file that decides how a project agent behaves, found rather than
     # listed. A list goes stale the moment the agent gains a module: the
@@ -746,7 +752,13 @@ def ensure_project_agent(project: str, dry_run: bool = False) -> dict[str, Any]:
             rollback_compose(project, backup)
             raise
     else:
-        compose_command(project, "up", "-d", "agent", timeout=300)
+        # The definition already matches, so all this branch owes is a running
+        # agent. Asking Docker costs one API call; docker-compose is a 61MB
+        # binary whose cold read measured 5.9s on this disk, and it was paid on
+        # every console read of a project.
+        container = find_container(project, "agent")
+        if container is None or container.status != "running":
+            compose_command(project, "up", "-d", "agent", timeout=300)
     container = find_container(project, "agent")
     return {
         "dry_run": False,
