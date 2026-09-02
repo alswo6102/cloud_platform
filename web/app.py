@@ -49,10 +49,6 @@ MUTATION_SKILLS = {
     "port.manage",
 }
 PROJECT_AGENT_ENSURE_TTL = float(os.getenv("PROJECT_AGENT_ENSURE_TTL", "300"))
-PROJECT_AGENT_RECONCILE_INTERVAL = float(os.getenv("PROJECT_AGENT_RECONCILE_INTERVAL", "900"))
-# The first pass waits: at startup the box is still settling the containers the
-# deploy just recreated, and this is background work by definition.
-PROJECT_AGENT_RECONCILE_DELAY = float(os.getenv("PROJECT_AGENT_RECONCILE_DELAY", "30"))
 SESSION_TOKEN_TTL = float(os.getenv("SESSION_TOKEN_TTL", str(60 * 60 * 12)))
 PROJECT_SUMMARY_CACHE_TTL = float(os.getenv("WEB_PROJECT_SUMMARY_CACHE_TTL", "10"))
 CATALOG_CACHE_TTL = float(os.getenv("WEB_CATALOG_CACHE_TTL", "10"))
@@ -434,13 +430,21 @@ def project_agent_request(
     url = f"{project_agent_url(project).rstrip('/')}{path}"
     headers = project_agent_headers(project)
     read_timeout = timeout or REQUEST_TIMEOUT
-    # No ensure here. It used to run ahead of every call, including the
-    # workspace's read-only status poll, and it is the expensive half: cold, it
-    # measured 18-20s against 0.05s warm, behind a table that says it is reading
-    # Docker stats. Three things already keep an agent current without making
-    # anyone wait for it -- the deploy warms every agent (redeploy_stack.sh),
-    # QA fails on one left behind, and the RequestException path below rebuilds
-    # an agent that does not answer. The reconciler thread covers the rest.
+    # No ensure here, and no periodic one either. It used to run ahead of every
+    # call, including the workspace's read-only status poll, and it is the
+    # expensive half: cold, it measured 18-20s against 0.05s warm, behind a
+    # table that says it is reading Docker stats. Worse, the memo that hid the
+    # cost was a 300s timer rather than anything about the code, so the bill
+    # came back every time nobody had opened the project for five minutes --
+    # which is exactly when someone does open it.
+    #
+    # Nothing here needs to check, because only one thing can make an agent
+    # stale: a change under agent/, which is a platform deploy. No console
+    # action moves the template version. And the deploy already rebuilds every
+    # agent on its way out (warm_project_agents in redeploy_stack.sh), so the
+    # condition is repaired by the same event that creates it. What is left is
+    # an agent that does not answer at all, and the RequestException path below
+    # rebuilds that one.
     try:
         response = requests.request(
             method,
@@ -508,41 +512,6 @@ def ensure_project_agent(project: str, *, force: bool = False) -> None:
     wait_project_agent_ready(project)
     with PROJECT_AGENT_ENSURE_LOCK:
         PROJECT_AGENT_ENSURED_AT[project] = time.monotonic()
-
-
-def reconcile_project_agents() -> None:
-    """Find out on a timer what a console read used to find out for us.
-
-    An agent that answers is not necessarily an agent running deployed code, so
-    something has to compare the two. That was every request; it is this thread
-    now. The TTL memo still applies, so a project the recovery path just rebuilt
-    is left alone here.
-    """
-    time.sleep(PROJECT_AGENT_RECONCILE_DELAY)
-    while True:
-        try:
-            projects = sorted(project_names())
-        except Exception:
-            projects = []
-        for project in projects:
-            try:
-                ensure_project_agent(project)
-            except Exception:
-                # One project that cannot be reached is not a reason to leave
-                # the others stale, and the next pass tries again anyway.
-                continue
-        time.sleep(PROJECT_AGENT_RECONCILE_INTERVAL)
-
-
-@app.on_event("startup")
-def start_project_agent_reconciler() -> None:
-    if not AUTO_ENSURE_PROJECT_AGENT:
-        return
-    threading.Thread(
-        target=reconcile_project_agents,
-        name="project-agent-reconciler",
-        daemon=True,
-    ).start()
 
 
 def require_login(role: Role) -> None:

@@ -70,8 +70,8 @@ def project_agent_template_version() -> str:
     # process is true of a deployed container -- a deploy replaces it rather
     # than editing files inside it -- but it breaks the guard that checks this
     # function actually tracks its sources, and that guard is worth more than
-    # the 6ms. Nothing calls this on a request path any more: the reconciler
-    # and the deploy are the only callers, and neither is waiting on a user.
+    # the 6ms. No read path calls it any more: the callers are the deploy and
+    # the mutations, and none of them is a status poll waiting on an answer.
     root = Path(__file__).resolve().parent
     # Every file that decides how a project agent behaves, found rather than
     # listed. A list goes stale the moment the agent gains a module: the
@@ -752,13 +752,14 @@ def ensure_project_agent(project: str, dry_run: bool = False) -> dict[str, Any]:
             rollback_compose(project, backup)
             raise
     else:
-        # The definition already matches, so all this branch owes is a running
-        # agent. Asking Docker costs one API call; docker-compose is a 61MB
-        # binary whose cold read measured 5.9s on this disk, and it was paid on
-        # every console read of a project.
-        container = find_container(project, "agent")
-        if container is None or container.status != "running":
-            compose_command(project, "up", "-d", "agent", timeout=300)
+        # Unconditional on purpose. Skipping this whenever the container merely
+        # reports "running" would save a 5.9s cold read of docker-compose, but
+        # that read is no longer on anybody's critical path, and compose is the
+        # only thing here that reconciles a live container against the file --
+        # a network recreated under a running agent, say. Dropping it also
+        # disarms the force-ensure the web layer calls when a project agent has
+        # stopped answering, which is the one moment the call has to do work.
+        compose_command(project, "up", "-d", "agent", timeout=300)
     container = find_container(project, "agent")
     return {
         "dry_run": False,
