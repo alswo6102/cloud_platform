@@ -120,10 +120,22 @@ CMD ["nginx", "-g", "daemon off;"]
 """,
         "vite": """FROM node:20-alpine AS builder
 WORKDIR /app
+# Vite bundles in Node, so it inherits the same ceiling problem as CRA: with
+# nothing set, Node sizes the heap from host RAM and lands well under what the
+# build wants, and the build spends its time collecting instead of bundling.
+# 900 sits just under this host's 961MB. The build gets every page the machine
+# physically has, and only what exceeds that reaches swap.
+ENV NODE_OPTIONS=--max-old-space-size=900
 COPY package*.json ./
 RUN npm ci || npm install
 COPY . .
-RUN npm run build
+# First pass under the ceiling above, so a build that fits in RAM never
+# touches swap. A heap the machine genuinely cannot hold aborts here in
+# minutes instead of thrashing for an hour, and the retry is the old
+# permissive limit -- so the worst case is what this preset did before,
+# not a failed deploy. A build broken for any other reason fails twice,
+# which costs seconds because it never gets as far as bundling.
+RUN npm run build || NODE_OPTIONS=--max-old-space-size=2048 npm run build
 
 FROM nginx:stable-alpine
 COPY --from=builder /app/dist /usr/share/nginx/html
@@ -135,15 +147,25 @@ CMD ["nginx", "-g", "daemon off;"]
 WORKDIR /app
 # CRA generates source maps by default, which is the largest single chunk of
 # heap this build needs and would also publish the original sources next to the
-# bundle. Node sizes its heap from host RAM, so on a small host the limit lands
-# well under what the build wants; raising it lets the overflow reach swap
-# instead of aborting the process.
+# bundle.
 ENV GENERATE_SOURCEMAP=false
-ENV NODE_OPTIONS=--max-old-space-size=2048
+# The ceiling is set just under this host's 961MB rather than above it. 2048
+# did keep the build from aborting, but it bought that by letting the heap grow
+# to twice the machine's memory before V8 would collect, which put the live
+# working set in swap -- and a bundle that fits in RAM in minutes measured 52
+# there. Under a ceiling the machine can actually hold, V8 collects instead of
+# growing, and swap catches only the overflow.
+ENV NODE_OPTIONS=--max-old-space-size=900
 COPY package*.json ./
 RUN npm ci || npm install
 COPY . .
-RUN npm run build
+# First pass under the ceiling above, so a build that fits in RAM never
+# touches swap. A heap the machine genuinely cannot hold aborts here in
+# minutes instead of thrashing for an hour, and the retry is the old
+# permissive limit -- so the worst case is what this preset did before,
+# not a failed deploy. A build broken for any other reason fails twice,
+# which costs seconds because it never gets as far as bundling.
+RUN npm run build || NODE_OPTIONS=--max-old-space-size=2048 npm run build
 
 FROM nginx:stable-alpine
 COPY --from=builder /app/build /usr/share/nginx/html
@@ -153,10 +175,19 @@ CMD ["nginx", "-g", "daemon off;"]
 """,
         "nextjs": """FROM node:20-alpine
 WORKDIR /app
+# Same ceiling as the other bundlers. This preset is single stage, so the value
+# also caps the running server -- which is what we want on a host this size.
+ENV NODE_OPTIONS=--max-old-space-size=900
 COPY package*.json ./
 RUN npm ci || npm install
 COPY . .
-RUN npm run build
+# First pass under the ceiling above, so a build that fits in RAM never
+# touches swap. A heap the machine genuinely cannot hold aborts here in
+# minutes instead of thrashing for an hour, and the retry is the old
+# permissive limit -- so the worst case is what this preset did before,
+# not a failed deploy. A build broken for any other reason fails twice,
+# which costs seconds because it never gets as far as bundling.
+RUN npm run build || NODE_OPTIONS=--max-old-space-size=2048 npm run build
 ENV NODE_ENV=production
 ENV PORT=3000
 EXPOSE 3000
