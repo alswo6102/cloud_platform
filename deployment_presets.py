@@ -128,8 +128,6 @@ WORKDIR /app
 # the old permissive ceiling the same build did not abort -- it spent 45+
 # minutes in swap and hit the deploy timeout instead, three times.
 ENV GENERATE_SOURCEMAP=false
-COPY package*.json ./
-RUN npm ci || npm install
 # Placed after npm ci on purpose: the ceiling is a number we retune, and
 # in front of the COPY it would throw away the dependency layer -- 13
 # minutes on this disk -- every time the number moves.
@@ -141,14 +139,20 @@ RUN npm ci || npm install
 # here, where a build measured 98% iowait against 1-2% user CPU.
 ENV NODE_OPTIONS=--max-old-space-size=420
 COPY . .
-# First pass under the ceiling above, so a build that fits in RAM never
-# touches swap. A heap the machine genuinely cannot hold aborts here in
-# minutes instead of thrashing for an hour, and the retry is the old
-# permissive limit -- so the worst case is what this preset did before,
-# not a failed deploy. A build broken for any other reason fails twice,
-# which costs seconds because it never gets as far as bundling.
-RUN npm run build || NODE_OPTIONS=--max-old-space-size=2048 npm run build
-
+# Install and bundle in one layer, then drop node_modules before the layer is
+# committed. Measured on this host with a cold cache: npm ci itself ran 11m37s,
+# and Docker then spent 18m55s writing node_modules into its own layer -- half
+# the build, and more than the install and the bundle put together. The builder
+# stage throws node_modules away anyway; only /app/{dist,build} is copied out.
+#
+# The cost is the dependency cache: a redeploy that changes only source used to
+# reuse the npm ci layer and finish in 11 minutes, and now reinstalls. That is
+# the right side to lose on a platform where a service is deployed once and
+# left alone -- 37m32s down to roughly 19 for the deploy that actually happens.
+RUN set -e; \
+    npm ci --no-audit --fund=false || npm install --no-audit --fund=false; \
+    npm run build || NODE_OPTIONS=--max-old-space-size=2048 npm run build; \
+    rm -rf node_modules
 FROM nginx:stable-alpine
 COPY --from=builder /app/dist /usr/share/nginx/html
 RUN printf 'server { listen 3000; location / { root /usr/share/nginx/html; try_files $uri /index.html; } location /healthz { return 200 "OK"; } }' > /etc/nginx/conf.d/default.conf
@@ -161,8 +165,6 @@ WORKDIR /app
 # heap this build needs and would also publish the original sources next to the
 # bundle.
 ENV GENERATE_SOURCEMAP=false
-COPY package*.json ./
-RUN npm ci || npm install
 # Placed after npm ci on purpose: the ceiling is a number we retune, and
 # in front of the COPY it would throw away the dependency layer -- 13
 # minutes on this disk -- every time the number moves.
@@ -172,14 +174,20 @@ RUN npm ci || npm install
 # so V8 collects rather than growing.
 ENV NODE_OPTIONS=--max-old-space-size=420
 COPY . .
-# First pass under the ceiling above, so a build that fits in RAM never
-# touches swap. A heap the machine genuinely cannot hold aborts here in
-# minutes instead of thrashing for an hour, and the retry is the old
-# permissive limit -- so the worst case is what this preset did before,
-# not a failed deploy. A build broken for any other reason fails twice,
-# which costs seconds because it never gets as far as bundling.
-RUN npm run build || NODE_OPTIONS=--max-old-space-size=2048 npm run build
-
+# Install and bundle in one layer, then drop node_modules before the layer is
+# committed. Measured on this host with a cold cache: npm ci itself ran 11m37s,
+# and Docker then spent 18m55s writing node_modules into its own layer -- half
+# the build, and more than the install and the bundle put together. The builder
+# stage throws node_modules away anyway; only /app/{dist,build} is copied out.
+#
+# The cost is the dependency cache: a redeploy that changes only source used to
+# reuse the npm ci layer and finish in 11 minutes, and now reinstalls. That is
+# the right side to lose on a platform where a service is deployed once and
+# left alone -- 37m32s down to roughly 19 for the deploy that actually happens.
+RUN set -e; \
+    npm ci --no-audit --fund=false || npm install --no-audit --fund=false; \
+    npm run build || NODE_OPTIONS=--max-old-space-size=2048 npm run build; \
+    rm -rf node_modules
 FROM nginx:stable-alpine
 COPY --from=builder /app/build /usr/share/nginx/html
 RUN printf 'server { listen 3000; location / { root /usr/share/nginx/html; try_files $uri /index.html; } location /healthz { return 200 "OK"; } }' > /etc/nginx/conf.d/default.conf
