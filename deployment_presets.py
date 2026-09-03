@@ -120,6 +120,11 @@ CMD ["nginx", "-g", "daemon off;"]
 """,
         "vite": """FROM node:20-alpine AS builder
 WORKDIR /app
+COPY package*.json ./
+RUN npm ci || npm install
+# Placed after npm ci on purpose: the ceiling is a number we retune, and
+# in front of the COPY it would throw away the dependency layer -- 13
+# minutes on this disk -- every time the number moves.
 # Measured on this host: with nothing set Node picks a 493MB ceiling, and only
 # about 450-500MB of the machine's 961MB is ever physically free once the
 # daemons and the running containers are resident. So the default already sits
@@ -127,8 +132,6 @@ WORKDIR /app
 # the machine can hold, which trades GC cycles for page faults -- a good trade
 # here, where a build measured 98% iowait against 1-2% user CPU.
 ENV NODE_OPTIONS=--max-old-space-size=420
-COPY package*.json ./
-RUN npm ci || npm install
 COPY . .
 # First pass under the ceiling above, so a build that fits in RAM never
 # touches swap. A heap the machine genuinely cannot hold aborts here in
@@ -150,13 +153,16 @@ WORKDIR /app
 # heap this build needs and would also publish the original sources next to the
 # bundle.
 ENV GENERATE_SOURCEMAP=false
+COPY package*.json ./
+RUN npm ci || npm install
+# Placed after npm ci on purpose: the ceiling is a number we retune, and
+# in front of the COPY it would throw away the dependency layer -- 13
+# minutes on this disk -- every time the number moves.
 # 2048 on a 961MB host let the heap grow past twice the machine's memory before
 # V8 would collect, which put the live working set in swap. The ceiling now
 # sits under what is physically free (see the vite preset for the measurement),
 # so V8 collects rather than growing.
 ENV NODE_OPTIONS=--max-old-space-size=420
-COPY package*.json ./
-RUN npm ci || npm install
 COPY . .
 # First pass under the ceiling above, so a build that fits in RAM never
 # touches swap. A heap the machine genuinely cannot hold aborts here in
@@ -174,11 +180,14 @@ CMD ["nginx", "-g", "daemon off;"]
 """,
         "nextjs": """FROM node:20-alpine
 WORKDIR /app
+COPY package*.json ./
+RUN npm ci || npm install
+# Placed after npm ci on purpose: the ceiling is a number we retune, and
+# in front of the COPY it would throw away the dependency layer -- 13
+# minutes on this disk -- every time the number moves.
 # Same ceiling as the other bundlers. This preset is single stage, so the value
 # also caps the running server -- which is what we want on a host this size.
 ENV NODE_OPTIONS=--max-old-space-size=420
-COPY package*.json ./
-RUN npm ci || npm install
 COPY . .
 # First pass under the ceiling above, so a build that fits in RAM never
 # touches swap. A heap the machine genuinely cannot hold aborts here in
