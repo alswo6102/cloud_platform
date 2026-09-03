@@ -120,6 +120,14 @@ CMD ["nginx", "-g", "daemon off;"]
 """,
         "vite": """FROM node:20-alpine AS builder
 WORKDIR /app
+# Vite ignores this and already ships production builds without maps, but
+# a create-react-app repo deployed under this preset does not: react-scripts
+# writes source maps by default, and generating them is what actually blows
+# the heap on this host. Measured on nowsalefrontend: 6m06s with maps off,
+# and an out-of-memory abort with them on, everything else held equal. Under
+# the old permissive ceiling the same build did not abort -- it spent 45+
+# minutes in swap and hit the deploy timeout instead, three times.
+ENV GENERATE_SOURCEMAP=false
 COPY package*.json ./
 RUN npm ci || npm install
 # Placed after npm ci on purpose: the ceiling is a number we retune, and
@@ -180,6 +188,14 @@ CMD ["nginx", "-g", "daemon off;"]
 """,
         "nextjs": """FROM node:20-alpine
 WORKDIR /app
+# Vite ignores this and already ships production builds without maps, but
+# a create-react-app repo deployed under this preset does not: react-scripts
+# writes source maps by default, and generating them is what actually blows
+# the heap on this host. Measured on nowsalefrontend: 6m06s with maps off,
+# and an out-of-memory abort with them on, everything else held equal. Under
+# the old permissive ceiling the same build did not abort -- it spent 45+
+# minutes in swap and hit the deploy timeout instead, three times.
+ENV GENERATE_SOURCEMAP=false
 COPY package*.json ./
 RUN npm ci || npm install
 # Placed after npm ci on purpose: the ceiling is a number we retune, and
