@@ -120,12 +120,13 @@ CMD ["nginx", "-g", "daemon off;"]
 """,
         "vite": """FROM node:20-alpine AS builder
 WORKDIR /app
-# Vite bundles in Node, so it inherits the same ceiling problem as CRA: with
-# nothing set, Node sizes the heap from host RAM and lands well under what the
-# build wants, and the build spends its time collecting instead of bundling.
-# 900 sits just under this host's 961MB. The build gets every page the machine
-# physically has, and only what exceeds that reaches swap.
-ENV NODE_OPTIONS=--max-old-space-size=900
+# Measured on this host: with nothing set Node picks a 493MB ceiling, and only
+# about 450-500MB of the machine's 961MB is ever physically free once the
+# daemons and the running containers are resident. So the default already sits
+# at the edge, and raising it only buys swap. 420 puts the ceiling under what
+# the machine can hold, which trades GC cycles for page faults -- a good trade
+# here, where a build measured 98% iowait against 1-2% user CPU.
+ENV NODE_OPTIONS=--max-old-space-size=420
 COPY package*.json ./
 RUN npm ci || npm install
 COPY . .
@@ -149,13 +150,11 @@ WORKDIR /app
 # heap this build needs and would also publish the original sources next to the
 # bundle.
 ENV GENERATE_SOURCEMAP=false
-# The ceiling is set just under this host's 961MB rather than above it. 2048
-# did keep the build from aborting, but it bought that by letting the heap grow
-# to twice the machine's memory before V8 would collect, which put the live
-# working set in swap -- and a bundle that fits in RAM in minutes measured 52
-# there. Under a ceiling the machine can actually hold, V8 collects instead of
-# growing, and swap catches only the overflow.
-ENV NODE_OPTIONS=--max-old-space-size=900
+# 2048 on a 961MB host let the heap grow past twice the machine's memory before
+# V8 would collect, which put the live working set in swap. The ceiling now
+# sits under what is physically free (see the vite preset for the measurement),
+# so V8 collects rather than growing.
+ENV NODE_OPTIONS=--max-old-space-size=420
 COPY package*.json ./
 RUN npm ci || npm install
 COPY . .
@@ -177,7 +176,7 @@ CMD ["nginx", "-g", "daemon off;"]
 WORKDIR /app
 # Same ceiling as the other bundlers. This preset is single stage, so the value
 # also caps the running server -- which is what we want on a host this size.
-ENV NODE_OPTIONS=--max-old-space-size=900
+ENV NODE_OPTIONS=--max-old-space-size=420
 COPY package*.json ./
 RUN npm ci || npm install
 COPY . .
