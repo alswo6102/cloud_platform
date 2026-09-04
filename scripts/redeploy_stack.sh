@@ -128,21 +128,33 @@ import runtime
 
 try:
     projects = [item["name"] for item in runtime.project_list()["projects"]]
-except Exception as exc:  # noqa: BLE001 - report, do not fail the deploy
-    print(f"SKIP project_agents ({type(exc).__name__}: {exc})")
-    raise SystemExit(0)
+except Exception as exc:  # noqa: BLE001 - nothing was warmed; say so and fail
+    print(f"FAIL project_agents ({type(exc).__name__}: {exc})")
+    raise SystemExit(1)
 
 current = runtime.project_agent_template_version()
+failed = []
 for project in projects:
     started = time.monotonic()
     try:
         result = runtime.ensure_project_agent(project, dry_run=False)
-    except Exception as exc:  # noqa: BLE001 - one bad project is not the deploy
+    except Exception as exc:  # noqa: BLE001 - one bad project is not the rest
         print(f"WARN project_agent_{project} ({type(exc).__name__}: {exc})")
+        failed.append(project)
         continue
     elapsed = time.monotonic() - started
     state = "rebuilt" if result.get("changed") else "current"
     print(f"OK project_agent_{project} ({state}, {elapsed:.0f}s)")
+
+# This warm is the only thing that puts new agent code on a project. Nothing
+# else checks afterwards, on a request or on a timer, so a project missed here
+# stays on the previous release until the next deploy. One WARN in a wall of
+# OK lines is not enough to carry that -- 1 vCPU means an agent recreate can
+# lose a race for the box and fail on a deploy that is otherwise fine.
+if failed:
+    print(f"FAIL project_agents ({len(failed)}/{len(projects)}: {', '.join(failed)})")
+    print("     control plane is deployed; rerun ensure for the projects above")
+    raise SystemExit(1)
 print(f"OK project_agents_at_{current}")
 PY
 }

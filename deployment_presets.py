@@ -120,11 +120,39 @@ CMD ["nginx", "-g", "daemon off;"]
 """,
         "vite": """FROM node:20-alpine AS builder
 WORKDIR /app
-COPY package*.json ./
-RUN npm ci || npm install
+# Vite ignores this and already ships production builds without maps, but
+# a create-react-app repo deployed under this preset does not: react-scripts
+# writes source maps by default, and generating them is what actually blows
+# the heap on this host. Measured on nowsalefrontend: 6m06s with maps off,
+# and an out-of-memory abort with them on, everything else held equal. Under
+# the old permissive ceiling the same build did not abort -- it spent 45+
+# minutes in swap and hit the deploy timeout instead, three times.
+ENV GENERATE_SOURCEMAP=false
+# Placed after npm ci on purpose: the ceiling is a number we retune, and
+# in front of the COPY it would throw away the dependency layer -- 13
+# minutes on this disk -- every time the number moves.
+# Measured on this host: with nothing set Node picks a 493MB ceiling, and only
+# about 450-500MB of the machine's 961MB is ever physically free once the
+# daemons and the running containers are resident. So the default already sits
+# at the edge, and raising it only buys swap. 420 puts the ceiling under what
+# the machine can hold, which trades GC cycles for page faults -- a good trade
+# here, where a build measured 98% iowait against 1-2% user CPU.
+ENV NODE_OPTIONS=--max-old-space-size=420
 COPY . .
-RUN npm run build
-
+# Install and bundle in one layer, then drop node_modules before the layer is
+# committed. Measured on this host with a cold cache: npm ci itself ran 11m37s,
+# and Docker then spent 18m55s writing node_modules into its own layer -- half
+# the build, and more than the install and the bundle put together. The builder
+# stage throws node_modules away anyway; only /app/{dist,build} is copied out.
+#
+# The cost is the dependency cache: a redeploy that changes only source used to
+# reuse the npm ci layer and finish in 11 minutes, and now reinstalls. That is
+# the right side to lose on a platform where a service is deployed once and
+# left alone -- 37m32s down to roughly 19 for the deploy that actually happens.
+RUN set -e; \
+    npm ci --no-audit --fund=false || npm install --no-audit --fund=false; \
+    npm run build || NODE_OPTIONS=--max-old-space-size=2048 npm run build; \
+    rm -rf node_modules
 FROM nginx:stable-alpine
 COPY --from=builder /app/dist /usr/share/nginx/html
 RUN printf 'server { listen 3000; location / { root /usr/share/nginx/html; try_files $uri /index.html; } location /healthz { return 200 "OK"; } }' > /etc/nginx/conf.d/default.conf
@@ -135,16 +163,31 @@ CMD ["nginx", "-g", "daemon off;"]
 WORKDIR /app
 # CRA generates source maps by default, which is the largest single chunk of
 # heap this build needs and would also publish the original sources next to the
-# bundle. Node sizes its heap from host RAM, so on a small host the limit lands
-# well under what the build wants; raising it lets the overflow reach swap
-# instead of aborting the process.
+# bundle.
 ENV GENERATE_SOURCEMAP=false
-ENV NODE_OPTIONS=--max-old-space-size=2048
-COPY package*.json ./
-RUN npm ci || npm install
+# Placed after npm ci on purpose: the ceiling is a number we retune, and
+# in front of the COPY it would throw away the dependency layer -- 13
+# minutes on this disk -- every time the number moves.
+# 2048 on a 961MB host let the heap grow past twice the machine's memory before
+# V8 would collect, which put the live working set in swap. The ceiling now
+# sits under what is physically free (see the vite preset for the measurement),
+# so V8 collects rather than growing.
+ENV NODE_OPTIONS=--max-old-space-size=420
 COPY . .
-RUN npm run build
-
+# Install and bundle in one layer, then drop node_modules before the layer is
+# committed. Measured on this host with a cold cache: npm ci itself ran 11m37s,
+# and Docker then spent 18m55s writing node_modules into its own layer -- half
+# the build, and more than the install and the bundle put together. The builder
+# stage throws node_modules away anyway; only /app/{dist,build} is copied out.
+#
+# The cost is the dependency cache: a redeploy that changes only source used to
+# reuse the npm ci layer and finish in 11 minutes, and now reinstalls. That is
+# the right side to lose on a platform where a service is deployed once and
+# left alone -- 37m32s down to roughly 19 for the deploy that actually happens.
+RUN set -e; \
+    npm ci --no-audit --fund=false || npm install --no-audit --fund=false; \
+    npm run build || NODE_OPTIONS=--max-old-space-size=2048 npm run build; \
+    rm -rf node_modules
 FROM nginx:stable-alpine
 COPY --from=builder /app/build /usr/share/nginx/html
 RUN printf 'server { listen 3000; location / { root /usr/share/nginx/html; try_files $uri /index.html; } location /healthz { return 200 "OK"; } }' > /etc/nginx/conf.d/default.conf
@@ -153,10 +196,30 @@ CMD ["nginx", "-g", "daemon off;"]
 """,
         "nextjs": """FROM node:20-alpine
 WORKDIR /app
+# Vite ignores this and already ships production builds without maps, but
+# a create-react-app repo deployed under this preset does not: react-scripts
+# writes source maps by default, and generating them is what actually blows
+# the heap on this host. Measured on nowsalefrontend: 6m06s with maps off,
+# and an out-of-memory abort with them on, everything else held equal. Under
+# the old permissive ceiling the same build did not abort -- it spent 45+
+# minutes in swap and hit the deploy timeout instead, three times.
+ENV GENERATE_SOURCEMAP=false
 COPY package*.json ./
 RUN npm ci || npm install
+# Placed after npm ci on purpose: the ceiling is a number we retune, and
+# in front of the COPY it would throw away the dependency layer -- 13
+# minutes on this disk -- every time the number moves.
+# Same ceiling as the other bundlers. This preset is single stage, so the value
+# also caps the running server -- which is what we want on a host this size.
+ENV NODE_OPTIONS=--max-old-space-size=420
 COPY . .
-RUN npm run build
+# First pass under the ceiling above, so a build that fits in RAM never
+# touches swap. A heap the machine genuinely cannot hold aborts here in
+# minutes instead of thrashing for an hour, and the retry is the old
+# permissive limit -- so the worst case is what this preset did before,
+# not a failed deploy. A build broken for any other reason fails twice,
+# which costs seconds because it never gets as far as bundling.
+RUN npm run build || NODE_OPTIONS=--max-old-space-size=2048 npm run build
 ENV NODE_ENV=production
 ENV PORT=3000
 EXPOSE 3000

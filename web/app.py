@@ -430,8 +430,21 @@ def project_agent_request(
     url = f"{project_agent_url(project).rstrip('/')}{path}"
     headers = project_agent_headers(project)
     read_timeout = timeout or REQUEST_TIMEOUT
-    if AUTO_ENSURE_PROJECT_AGENT:
-        ensure_project_agent(project)
+    # No ensure here, and no periodic one either. It used to run ahead of every
+    # call, including the workspace's read-only status poll, and it is the
+    # expensive half: cold, it measured 18-20s against 0.05s warm, behind a
+    # table that says it is reading Docker stats. Worse, the memo that hid the
+    # cost was a 300s timer rather than anything about the code, so the bill
+    # came back every time nobody had opened the project for five minutes --
+    # which is exactly when someone does open it.
+    #
+    # Nothing here needs to check, because only one thing can make an agent
+    # stale: a change under agent/, which is a platform deploy. No console
+    # action moves the template version. And the deploy already rebuilds every
+    # agent on its way out (warm_project_agents in redeploy_stack.sh), so the
+    # condition is repaired by the same event that creates it. What is left is
+    # an agent that does not answer at all, and the RequestException path below
+    # rebuilds that one.
     try:
         response = requests.request(
             method,
