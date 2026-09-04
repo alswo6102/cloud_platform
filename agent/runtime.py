@@ -874,6 +874,62 @@ def git_clone(repo_url: str, destination: Path) -> None:
         )
 
 
+def redeploy_source_plan(source: Path, repo_url: str) -> dict[str, Any]:
+    """Decide whether a redeploy has to clone at all.
+
+    A redeploy exists to bring in commits that were pushed since the last one.
+    When there are none it was still paying for a full clone, and when the
+    origin has gone away -- renamed, made private, deleted -- it could not run
+    at all, even though the server holds a complete checkout of exactly the
+    source that is running. Both cases are answered by one `ls-remote`.
+
+    Falling back to the local checkout is never silent: the reason lands in the
+    plan, so the preview says which source the build will use before anyone
+    approves it.
+    """
+    local = subprocess.run(
+        ["git", "-C", str(source), "rev-parse", "HEAD"],
+        check=False, capture_output=True, text=True, timeout=30,
+    )
+    local_commit = local.stdout.strip() if local.returncode == 0 else ""
+    try:
+        remote = subprocess.run(
+            ["git", "ls-remote", repo_url, "HEAD"],
+            check=False, capture_output=True, text=True, timeout=60,
+            env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+        )
+    except subprocess.TimeoutExpired:
+        return {
+            "source_mode": "local",
+            "source_reason": "원격 저장소 응답이 없어 서버에 있는 소스로 다시 빌드합니다.",
+            "local_commit": local_commit[:12],
+            "remote_commit": None,
+        }
+    if remote.returncode != 0 or not remote.stdout.strip():
+        detail = (remote.stderr or remote.stdout).strip().splitlines()
+        return {
+            "source_mode": "local",
+            "source_reason": "원격 저장소에 접근할 수 없어 서버에 있는 소스로 다시 빌드합니다.",
+            "source_detail": detail[-1][:200] if detail else "",
+            "local_commit": local_commit[:12],
+            "remote_commit": None,
+        }
+    remote_commit = remote.stdout.split()[0]
+    if local_commit and remote_commit == local_commit:
+        return {
+            "source_mode": "local",
+            "source_reason": "원격에 새 커밋이 없어 clone 없이 서버에 있는 소스로 다시 빌드합니다.",
+            "local_commit": local_commit[:12],
+            "remote_commit": remote_commit[:12],
+        }
+    return {
+        "source_mode": "clone",
+        "source_reason": "원격에 새 커밋이 있어 최신 소스를 clone합니다.",
+        "local_commit": local_commit[:12] or None,
+        "remote_commit": remote_commit[:12],
+    }
+
+
 def validate_github_repository_access(repo_url: str) -> None:
     if not GITHUB_HTTPS_PATTERN.fullmatch(repo_url):
         raise invalid_repo_url_error()
@@ -2174,10 +2230,12 @@ def service_redeploy(
         timeout=30,
     )
     repo_url = normalized_github_remote(remote_result.stdout.strip())
+    source_plan = redeploy_source_plan(source, repo_url)
     plan = {
         "project": project,
         "service": service,
         "repo_url": repo_url,
+        **source_plan,
         "framework": framework,
         "dockerfile": (
             f"regenerate the {framework} preset Dockerfile"
@@ -2185,7 +2243,11 @@ def service_redeploy(
             else "use repository Dockerfile"
         ),
         "steps": [
-            "clone the latest default branch into a temporary directory",
+            (
+                "clone the latest default branch into a temporary directory"
+                if source_plan["source_mode"] == "clone"
+                else "copy the checkout already on the server into a temporary directory"
+            ),
             (
                 "regenerate the framework preset Dockerfile in the new clone"
                 if regenerate_dockerfile
@@ -2207,7 +2269,12 @@ def service_redeploy(
         raise SkillError("A previous redeploy workspace still exists")
 
     try:
-        git_clone(repo_url, fresh)
+        if source_plan["source_mode"] == "clone":
+            git_clone(repo_url, fresh)
+        else:
+            # Same shape as a clone, so the swap, the build and the rollback
+            # below do not need to know which one produced it.
+            shutil.copytree(source, fresh, symlinks=True)
         # The preset Dockerfile only ever existed in the server-side clone, so a
         # fresh clone never carries it. Regenerating it here is what makes a
         # preset-deployed service redeployable at all.
